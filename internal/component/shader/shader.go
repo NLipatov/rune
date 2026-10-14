@@ -28,3 +28,41 @@ type Shader interface {
 	// or returns false if this Shader's animation is done.
 	Shade(frame, total int, in [][]term.Cell)
 }
+
+// ImageShader is a Shader that also shades the image placements drawn
+// over the cells it shades.
+type ImageShader interface {
+	Shader
+	// ShadeImages shades in like Shade, and returns the placements to
+	// draw over it in place of images, in drawing order. It may modify
+	// images and return a slice sharing its backing array.
+	ShadeImages(frame, total int, in [][]term.Cell, images []term.Image) []term.Image
+}
+
+// Reveal is an [ImageShader] that starts on a snapshot of the screen it
+// takes over, rather than on the first cells it shades, and uncovers the
+// cells it shades in its place.
+type Reveal interface {
+	ImageShader
+	// SetInitialCells sets the snapshot. The slice is retained as-is, so
+	// callers that may mutate it should pass a clone.
+	SetInitialCells(cells [][]term.Cell)
+	// SetInitialImages sets the placements drawn over the snapshot.
+	// Their pixels are copied, since a writer only keeps those until its
+	// next frame.
+	SetInitialImages(images []term.Image)
+	// SetInitialDesaturation desaturates the snapshot and its placements
+	// toward gray by amount, clamped to [0, 1]. It applies to what the
+	// setters above have set so far.
+	SetInitialDesaturation(amount float64)
+}
+
+// ShadeImages shades in with s, and returns the placements to draw over
+// it: the ones s returns if it is an [ImageShader], and images otherwise.
+func ShadeImages(s Shader, frame, total int, in [][]term.Cell, images []term.Image) []term.Image {
+	if is, ok := s.(ImageShader); ok {
+		return is.ShadeImages(frame, total, in, images)
+	}
+	s.Shade(frame, total, in)
+	return images
+}

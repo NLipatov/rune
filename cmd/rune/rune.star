@@ -228,6 +228,9 @@ config = {
         # (addWorkspace). The default gray-fade desaturates the
         # screen to signal the IDE is busy.
         "loading_workspace": True,
+        # Plays the intro of the built-in logo (workspace.wallpaper_logo)
+        # when Rune starts. Your own wallpapers have no intro.
+        "intro": True,
         # Plays when a workspace finishes installing. The default
         # is a quick burn sweep that reveals the new content.
         "open_workspace": {
@@ -946,9 +949,25 @@ config = {
         "auto_restore": True,
         # Index workspace symbols for faster lookups.
         "symboldb":     True,
-        # Attributes for custom ASCII or image wallpapers.
-        "wallpaper_attr":            attr(fg = "blue", bg = "default"),
-        "wallpaper_background_attr": attr(bg = "default"),
+        # Windows without a tab show the first of these wallpapers that is
+        # not empty: a PNG encoded as ASCII art, else ASCII art drawn as
+        # written, else a built-in logo, "rune" or "unstable_build", which
+        # plays its intro at startup (animations.intro). Your own
+        # wallpapers have no intro. Set all three empty for blank windows.
+        "wallpaper_image":              "",
+        "wallpaper_ascii":              "",
+        # Display Rune's logo as the wallpaper by default. A terminal
+        # (rune --tui) shows "unstable_build" whichever logo this names.
+        "wallpaper_logo":               "rune",
+        # Characters an image wallpaper is drawn with, from the darkest
+        # pixels to the brightest.
+        "wallpaper_density_characters": " ▓▓▓▓",
+        # wallpaper_attr styles the characters of wallpaper_ascii; image
+        # wallpapers take their colors from the image.
+        # wallpaper_background_attr fills the window behind any
+        # wallpaper, the built-in logo included.
+        "wallpaper_attr":               attr(fg = "blue", bg = "default"),
+        "wallpaper_background_attr":    attr(bg = "default"),
         # Character drawn on the bottom row of the workspace tab bar to
         # highlight the workspace currently in focus.
         "focus_tab_highlight_char":  "",

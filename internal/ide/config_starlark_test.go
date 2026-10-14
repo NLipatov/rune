@@ -34,7 +34,6 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
-	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/component/shader/shaderloop"
 	"unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/ide/idepreset"
@@ -372,7 +371,7 @@ func TestRuneStarFixture(t *testing.T) {
 			c.checks(t, cfg)
 
 			var ide ideConfig
-			initConfig(&ide, cfg, browser.NopWallpaper(), term.RingBell, term.ScheduleNextTick, "")
+			initConfig(&ide, cfg, nil, term.RingBell, term.ScheduleNextTick, "")
 			status := ide.tabStatusConfig()
 			assert.False(t, status.ContentTab.Progress)
 			ws := status.WorkspaceTab
@@ -426,7 +425,7 @@ func TestRuneStarAsDefaultConfig(t *testing.T) {
 	data := readRuneStar(t)
 
 	var cfg ideConfig
-	require.NoError(t, loadConfig(&cfg, "nonExistent", browser.NopWallpaper(),
+	require.NoError(t, loadConfig(&cfg, "nonExistent", nil,
 		DefaultConfig{
 			src:   string(data),
 			modal: true,
@@ -630,7 +629,7 @@ func TestLoadConfigStarUserOverlayPreservesEmbeddedRuneStar(t *testing.T) {
 		[]byte(`config = {"log_level": "debug"}`), 0o644))
 
 	var cfg ideConfig
-	require.NoError(t, loadConfig(&cfg, userPath, browser.NopWallpaper(),
+	require.NoError(t, loadConfig(&cfg, userPath, nil,
 		DefaultConfig{
 			src:   string(data),
 			modal: true,
@@ -730,7 +729,7 @@ func TestHelixPresetLoads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, os.WriteFile(path, preset, 0o644))
 	var cfg ideConfig
-	require.NoError(t, loadConfig(&cfg, path, browser.NopWallpaper(),
+	require.NoError(t, loadConfig(&cfg, path, nil,
 		DefaultConfig{src: string(readRuneStar(t)), modal: true},
 		term.RingBell, term.ScheduleNextTick))
 
@@ -883,7 +882,7 @@ config["editor"]["modal"]["message_bar"] = {"attr": {"fg": "white", "bg": "navy"
 			require.NoError(t, os.WriteFile(userPath, []byte(user.src), 0o644))
 		}
 		var cfg ideConfig
-		require.NoError(t, loadConfig(&cfg, userPath, browser.NopWallpaper(),
+		require.NoError(t, loadConfig(&cfg, userPath, nil,
 			DefaultConfig{src: string(runeStar), modal: true},
 			term.RingBell, term.ScheduleNextTick))
 		if ws.name == "" {
@@ -940,7 +939,7 @@ func TestVimSettingsSectionMalformed(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.yaml")
 			require.NoError(t, os.WriteFile(path, []byte(tt.src), 0o644))
 			var cfg ideConfig
-			require.NoError(t, loadConfig(&cfg, path, browser.NopWallpaper(),
+			require.NoError(t, loadConfig(&cfg, path, nil,
 				DefaultConfig{src: string(runeStar), modal: true},
 				term.RingBell, term.ScheduleNextTick))
 			cfg.vimAttr()

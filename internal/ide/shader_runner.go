@@ -39,7 +39,17 @@ const (
 	defaultShaderDuration        = 1 * time.Second
 	defaultLoadingShaderDuration = 10 * time.Second
 	defaultOpenShaderDuration    = 1 * time.Second
+
+	// introShaderName plays the intro of the wallpaper from :shaderrun,
+	// even when animations.intro keeps it from playing at startup.
+	introShaderName = "intro"
 )
+
+type initShaderConfig struct {
+	shader   func(term.Attributes, component.FrameCharSet) shader.Shader
+	fps      int
+	duration time.Duration
+}
 
 type shutdownShaderConfig struct {
 	shader   func(term.Attributes) shader.Shader
@@ -75,11 +85,16 @@ type shaderRunner struct {
 	defAttr           term.Attributes
 	fc                component.FrameCharSet
 	width, height     int
+	initShaderCfg     initShaderConfig
 	shutdownShaderCfg shutdownShaderConfig
 	loadingShaderCfg  loadingShaderConfig
 	openShaderCfg     openShaderConfig
 	openShaderCells   [][]term.Cell
+	openShaderImages  []term.Image
 	loadingShaderInst shader.Shader
+	// pixelSize is the cell size of the writer last drawn into, which the
+	// screen needs to draw its pictures.
+	pixelSize cell.PixelSize
 }
 
 func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
@@ -87,6 +102,14 @@ func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
 ) {
 	if len(cmd.Args) == 0 {
 		err = errors.New("expected at least one argument with the shader name")
+		return
+	}
+
+	if cmd.Args[0] == introShaderName {
+		if !r.runInitShader() {
+			err = errors.New("the wallpaper has no intro: " +
+				"only the built-in logos of workspace.wallpaper_logo have one")
+		}
 		return
 	}
 
@@ -122,7 +145,11 @@ func (r *shaderRunner) Complete(ctx context.Context, cmd textapi.Command) (
 	iterator.Iterator[string], string, error,
 ) {
 	if len(cmd.Args) <= 1 {
-		return iterator.FromSlice(namedShaderNames()), "", nil
+		names := namedShaderNames()
+		if r.initShaderCfg.shader != nil {
+			names = append([]string{introShaderName}, names...)
+		}
+		return iterator.FromSlice(names), "", nil
 	}
 	return iterator.Empty[string](), "", nil
 }
@@ -356,16 +383,30 @@ func (r *shaderRunner) runShader(s shader.Shader, fps int, duration time.Duratio
 func (r *shaderRunner) captureOpenShaderCells() {
 	if r.width <= 0 || r.height <= 0 || r.Handler == nil {
 		r.openShaderCells = nil
+		r.openShaderImages = nil
 		return
 	}
-	buf := cell.NewBufferWriter(context.Background(), r.width, r.height)
+	// Drawn as on screen, so that it draws its pictures rather than what
+	// it draws for writers without images.
+	ctx := cell.ContextWithPixelSize(context.Background(), r.pixelSize)
+	buf := cell.NewBufferWriter(ctx, r.width, r.height)
 	_ = buf.Clear(term.Attributes{})
 	r.Handler.Draw(buf)
 	r.openShaderCells = term.CloneCells(buf.RawCells())
+	r.openShaderImages = buf.Images()
 }
 
 func (r *shaderRunner) cancel() {
 	r.runShader(shader.Nop(), defaultShaderFPS, 100*time.Millisecond)
+}
+
+// runInitShader runs the init shader, reporting false when there is none.
+func (r *shaderRunner) runInitShader() bool {
+	if r.initShaderCfg.shader == nil {
+		return false
+	}
+	r.runShader(r.initShaderCfg.shader(r.defAttr, r.fc), r.initShaderCfg.fps, r.initShaderCfg.duration)
+	return true
 }
 
 func (r *shaderRunner) runShutdownShader() {
@@ -377,6 +418,7 @@ func (r *shaderRunner) runShutdownShader() {
 
 func (r *shaderRunner) startLoading() {
 	r.openShaderCells = nil
+	r.openShaderImages = nil
 	r.loadingShaderInst = nil
 	if r.loadingShaderCfg.shader == nil {
 		return
@@ -392,7 +434,9 @@ func (r *shaderRunner) startLoading() {
 
 func (r *shaderRunner) stopLoading() {
 	openShaderCells := r.openShaderCells
+	openShaderImages := r.openShaderImages
 	r.openShaderCells = nil
+	r.openShaderImages = nil
 	loadingShaderInst := r.loadingShaderInst
 	r.loadingShaderInst = nil
 	if r.loadingShaderCfg.shader == nil {
@@ -403,15 +447,12 @@ func (r *shaderRunner) stopLoading() {
 		return
 	}
 	openShader := r.openShaderCfg.shader(r.defAttr)
-	if len(openShaderCells) > 0 {
-		if sh, ok := openShader.(interface{ SetInitialCells([][]term.Cell) }); ok {
+	if sh, ok := openShader.(shader.Reveal); ok {
+		if len(openShaderCells) > 0 {
 			sh.SetInitialCells(openShaderCells)
+			sh.SetInitialImages(openShaderImages)
 		}
-	}
-	if gf, ok := loadingShaderInst.(*shader.GrayFadeShader); ok {
-		if sh, ok := openShader.(interface {
-			SetInitialDesaturation(amount float64)
-		}); ok {
+		if gf, ok := loadingShaderInst.(*shader.GrayFadeShader); ok {
 			sh.SetInitialDesaturation(gf.Progress())
 		}
 	}
@@ -423,6 +464,7 @@ func (r *shaderRunner) stopLoading() {
 }
 
 func (r *shaderRunner) Draw(w term.Writer) {
+	r.pixelSize, _ = cell.PixelSizeFromContext(w.Context())
 	r.shader.Draw(w)
 }
 

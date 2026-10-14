@@ -74,7 +74,7 @@
 #workspace:
 #  auto_restore: true
 #  # Override the default ASCII wallpaper.
-#  #wallpaper: myAsciiArt
+#  #wallpaper_ascii: myAsciiArt
 #  #wallpaper_image: /path/to/image.png
 
 #telemetry:

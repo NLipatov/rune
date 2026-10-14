@@ -205,11 +205,36 @@ func WithWorkspaceOpenCompleter(scheme string, c command.Completer) Option {
 	}
 }
 
-// WithDefaultWallpaper sets the default wallpaper if the
-// user doesn't provide one via rc configuration.
-func WithDefaultWallpaper(wallpaper browser.Wallpaper) Option {
+// Logo is a built-in wallpaper of windows without a tab, which the
+// workspace.wallpaper_logo setting selects by its name in [WithLogos],
+// together with the intro that animates it in at startup.
+type Logo struct {
+	Wallpaper browser.Wallpaper
+	// Shader returns the intro, which runs at ShaderFPS for ShaderDuration.
+	// It is nil for a logo without an intro.
+	Shader         func(term.Attributes, component.FrameCharSet) shader.Shader
+	ShaderFPS      int
+	ShaderDuration time.Duration
+}
+
+// WithLogos sets the built-in logos, by the name workspace.wallpaper_logo
+// selects them with. Windows without a tab show the [WithFallbackLogo]
+// when it names none of them, else no wallpaper.
+// A wallpaper the user configures replaces the logo, and has no intro.
+func WithLogos(logos map[string]Logo) Option {
 	return func(opts *options) {
-		opts.defaultWallpaper = wallpaper
+		opts.logos = logos
+	}
+}
+
+// WithFallbackLogo sets the logo shown, with its intro, when
+// workspace.wallpaper_logo names a logo that [WithLogos] did not set, for
+// an IDE that cannot draw every built-in logo. Such a name is then not a
+// configuration error. An empty workspace.wallpaper_logo still shows no
+// logo.
+func WithFallbackLogo(logo Logo) Option {
+	return func(opts *options) {
+		opts.fallbackLogo = &logo
 	}
 }
 
@@ -323,19 +348,6 @@ func WithClipboard(clip clipboard.Register) Option {
 func WithSystemURLOpener(open func(*url.URL) error) Option {
 	return func(opts *options) {
 		opts.systemOpenURL = open
-	}
-}
-
-// WithInitShader configures the IDE to initialize with the
-// given Shader animation.
-func WithInitShader(
-	shaderFn func(term.Attributes, component.FrameCharSet) shader.Shader,
-	fps int, duration time.Duration,
-) Option {
-	return func(opts *options) {
-		opts.initShaderFn = shaderFn
-		opts.initShaderFPS = fps
-		opts.initShaderDuration = duration
 	}
 }
 
@@ -546,7 +558,8 @@ type options struct {
 	shellRCDir           string
 	hostDataDir          string
 	workspaceConfig      string
-	defaultWallpaper     browser.Wallpaper
+	logos                map[string]Logo
+	fallbackLogo         *Logo
 	defaultConfig        string
 	bell                 func()
 	scheduleFn           func(func()) bool
@@ -563,9 +576,6 @@ type options struct {
 	defaultConfigModeModal bool
 	defaultConfigTUI       bool
 
-	initShaderFn           func(term.Attributes, component.FrameCharSet) shader.Shader
-	initShaderDuration     time.Duration
-	initShaderFPS          int
 	shutdownShaderFn       func(term.Attributes) shader.Shader
 	shutdownShaderDuration time.Duration
 	shutdownShaderFPS      int
@@ -605,7 +615,6 @@ func defaultOptions() options {
 		locker:             new(sync.Mutex),
 		extensions:         make(map[string]Extension),
 		workspaceConfig:    ".iderc",
-		defaultWallpaper:   browser.NopWallpaper(),
 		defaultConfig:      "config = {}",
 		bell:               term.RingBell,
 		scheduleFn:         term.ScheduleNextTick,

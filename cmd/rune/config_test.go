@@ -59,6 +59,44 @@ func TestTelemetryEnabledFromUserConfig(t *testing.T) {
 	assert.False(t, ide.TelemetryEnabled(mustLoadConfig(t, path)))
 }
 
+func TestDefaultConfigShowsTheRuneLogoWithItsIntro(t *testing.T) {
+	cfg := mustLoadConfig(t, filepath.Join(t.TempDir(), "config.star"))
+
+	workspace, err := cfg.GetConfig("workspace")
+	require.NoError(t, err)
+	for key, want := range map[string]string{
+		"wallpaper_image":              "",
+		"wallpaper_ascii":              "",
+		"wallpaper_logo":               logoNameRune,
+		"wallpaper_density_characters": " ▓▓▓▓",
+	} {
+		got, err := workspace.GetString(key)
+		require.NoError(t, err, key)
+		assert.Equal(t, want, got, key)
+	}
+	assert.Contains(t, makeLogos(func() string { return "" }, func() (int, int) { return 9, 20 }), logoNameRune)
+
+	animations, err := cfg.GetConfig("animations")
+	require.NoError(t, err)
+	intro, err := animations.GetBool("intro")
+	require.NoError(t, err)
+	assert.True(t, intro)
+}
+
+func TestDeprecatedWallpaperKeyIsKeptOverTheDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("workspace:\n  wallpaper: art\n"), 0o644))
+
+	workspace, err := mustLoadConfig(t, path).GetConfig("workspace")
+	require.NoError(t, err)
+	old, err := workspace.GetString("wallpaper")
+	require.NoError(t, err)
+	assert.Equal(t, "art", old)
+	ascii, err := workspace.GetString("wallpaper_ascii")
+	require.NoError(t, err)
+	assert.Empty(t, ascii, "the empty default defers to the deprecated key")
+}
+
 func mustLoadConfig(t *testing.T, path string) config.Config {
 	t.Helper()
 	cfg, err := ide.Config(path, runeDefaultConfig())

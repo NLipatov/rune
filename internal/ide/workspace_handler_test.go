@@ -6746,8 +6746,8 @@ func defaultCfg() ideConfig {
 			},
 		},
 		"workspace": map[string]any{
-			"wallpaper":    "workspaceWallpaper",
-			"auto_restore": false,
+			"wallpaper_ascii": "workspaceWallpaper",
+			"auto_restore":    false,
 		},
 		"browser": map[string]any{
 			"workspace_bar": "number",
@@ -9886,7 +9886,7 @@ func swapDirIDEConfig(t *testing.T, enabled bool) ideConfig {
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	require.NoError(t, loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	require.NoError(t, loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick))
 	return cfg
@@ -9958,7 +9958,7 @@ func TestSwapDirectory(t *testing.T) {
 
 func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 	var cfg ideConfig
-	initDefaultConfig(&cfg, browser.NopWallpaper(), term.RingBell, term.ScheduleNextTick, "")
+	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
 	require.NoError(t, err)

@@ -17,6 +17,9 @@
 package shader_test
 
 import (
+	"image"
+	"image/color"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -440,5 +443,171 @@ func TestBurn_ClearsRenderOffsetAttrsOnBurnedCells(t *testing.T) {
 		assert.Zerof(t, in[c.y][c.x].Attrs&mask,
 			"burning cell (%d,%d) must have render-offset attrs cleared",
 			c.x, c.y)
+	}
+}
+
+// solidPicture returns a placement over r of a picture of a single color.
+func solidPicture(c color.RGBA, r image.Rectangle) term.Image {
+	src := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for i := 0; i < len(src.Pix); i += 4 {
+		src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = c.R, c.G, c.B, c.A
+	}
+	return term.Image{
+		Src: src, ID: term.NewImageID(), Pos: term.Coordinates{X: r.Min.X, Y: r.Min.Y},
+		Width: r.Dx(), Height: r.Dy(),
+	}
+}
+
+// picturesAt returns the colors of the pictures images place over the
+// cell at x, y.
+func picturesAt(images []term.Image, x, y int) []color.RGBA {
+	var out []color.RGBA
+	for _, img := range images {
+		if image.Pt(x, y).In(img.Visible()) {
+			out = append(out, img.Src.(*image.RGBA).RGBAAt(0, 0))
+		}
+	}
+	return out
+}
+
+func filledCells(cols, rows int, ch rune) [][]term.Cell {
+	cells := makeCharCells(cols, rows)
+	for _, row := range cells {
+		for x := range row {
+			row[x].Ch = ch
+		}
+	}
+	return cells
+}
+
+func TestBurn_BurnsThePicturesAwayAndRevealsTheLiveOnes(t *testing.T) {
+	const cols, rows, total = 12, 6, 30
+	red, blue := color.RGBA{R: 255, A: 255}, color.RGBA{B: 255, A: 255}
+	oldArea := image.Rect(1, 1, 11, 5)
+	old, live := solidPicture(red, oldArea), solidPicture(blue, image.Rect(0, 0, cols, rows))
+	oldCells, liveCells := filledCells(cols, rows, 'O'), filledCells(cols, rows, 'N')
+	params := shader.DefaultBurnParams()
+	params.SmokeChance = 0
+	sh := shader.Burn(params, term.Attributes{})
+	sh.SetInitialCells(cloneCells(oldCells))
+	sh.SetInitialImages([]term.Image{old})
+
+	mixed := false
+	for frame := range total + 2 {
+		cells := cloneCells(liveCells)
+		images := sh.ShadeImages(frame, total, cells, []term.Image{live})
+		shown := map[color.RGBA]bool{}
+		for y := range rows {
+			for x := range cols {
+				var want []color.RGBA
+				switch cells[y][x] {
+				case oldCells[y][x]:
+					if image.Pt(x, y).In(oldArea) {
+						want = []color.RGBA{red}
+					}
+				case liveCells[y][x]:
+					want = []color.RGBA{blue}
+				}
+				got := picturesAt(images, x, y)
+				require.Equal(t, want, got, "frame %d cell %d,%d shows %q", frame, x, y, cells[y][x].Ch)
+				for _, c := range got {
+					shown[c] = true
+				}
+			}
+		}
+		mixed = mixed || shown[red] && shown[blue]
+		for _, img := range images {
+			if img.Src.(*image.RGBA).RGBAAt(0, 0) == red {
+				require.NotEqual(t, old.ID, img.ID, "frame %d: the snapshot's picture is a copy", frame)
+				require.NotSame(t, old.Src, img.Src, "frame %d: the snapshot's picture is a copy", frame)
+			}
+		}
+	}
+	assert.True(t, mixed, "no frame showed both pictures")
+}
+
+func TestBurn_RisingCharactersPassBehindThePictures(t *testing.T) {
+	const cols, rows, total = 12, 6, 30
+	everywhere := image.Rect(0, 0, cols, rows)
+	old := solidPicture(color.RGBA{R: 255, A: 255}, everywhere)
+	live := solidPicture(color.RGBA{B: 255, A: 255}, everywhere)
+	oldCells, liveCells := filledCells(cols, rows, 'O'), filledCells(cols, rows, 'N')
+	params := shader.DefaultBurnParams()
+	params.SmokeChance = 1
+	sh := shader.Burn(params, term.Attributes{})
+	sh.SetInitialCells(cloneCells(oldCells))
+	sh.SetInitialImages([]term.Image{old})
+
+	rising := 0
+	for frame := range total + 1 {
+		cells := cloneCells(liveCells)
+		images := sh.ShadeImages(frame, total, cells, []term.Image{live})
+		for y := range rows {
+			for x := range cols {
+				c := cells[y][x]
+				fire := slices.Contains(params.BurnSymbols, c.Ch)
+				if !fire && c != oldCells[y][x] && c != liveCells[y][x] {
+					rising++
+				}
+				want := 1
+				if fire {
+					want = 0
+				}
+				require.Len(t, picturesAt(images, x, y), want, "frame %d cell %d,%d shows %q", frame, x, y, c.Ch)
+			}
+		}
+	}
+	assert.Positive(t, rising, "no character rose")
+}
+
+func TestBurn_CapturesThePicturesWithTheCells(t *testing.T) {
+	const cols, rows, total = 12, 6, 30
+	red, blue := color.RGBA{R: 255, A: 255}, color.RGBA{B: 255, A: 255}
+	old := solidPicture(red, image.Rect(0, 0, cols, rows))
+	live := solidPicture(blue, image.Rect(0, 0, cols, rows))
+	sh := shader.Burn(shader.DefaultBurnParams(), term.Attributes{})
+
+	first := sh.ShadeImages(0, total, filledCells(cols, rows, 'O'), []term.Image{old})
+	require.Len(t, first, 1)
+	assert.Equal(t, []color.RGBA{red}, picturesAt(first, 0, 0))
+	// The writer the picture was drawn into is done with its pixels.
+	old.Src.(*image.RGBA).Pix[0] = 0
+
+	cells := filledCells(cols, rows, 'N')
+	images := sh.ShadeImages(total/3, total, cells, []term.Image{live})
+	snapshot := 0
+	for y := range rows {
+		for x := range cols {
+			if cells[y][x].Ch == 'O' && cells[y][x].Fg == term.ColorWhite {
+				snapshot++
+				require.Equal(t, []color.RGBA{red}, picturesAt(images, x, y), "cell %d,%d", x, y)
+			}
+		}
+	}
+	assert.Positive(t, snapshot, "the burn has crossed every cell")
+}
+
+func TestBurn_DesaturatesTheSnapshotsPictures(t *testing.T) {
+	red := color.RGBA{R: 200, G: 100, B: 50, A: 255}
+	old := solidPicture(red, image.Rect(0, 0, 4, 2))
+	sh := shader.Burn(shader.DefaultBurnParams(), term.Attributes{})
+	sh.SetInitialCells(filledCells(4, 2, 'O'))
+	sh.SetInitialImages([]term.Image{old, old})
+	sh.SetInitialDesaturation(1)
+
+	images := sh.ShadeImages(0, 30, filledCells(4, 2, 'N'), nil)
+	require.Len(t, images, 2)
+	gray := color.RGBA{R: 124, G: 124, B: 124, A: 255}
+	assert.Equal(t, []color.RGBA{gray, gray}, picturesAt(images, 0, 0), "desaturated once")
+	assert.Equal(t, red, old.Src.(*image.RGBA).RGBAAt(0, 0), "the picture drawn is left as is")
+}
+
+func TestBurn_PaintForegroundLeavesThePicturesAsDrawn(t *testing.T) {
+	params := shader.DefaultBurnParams()
+	params.PaintForeground = true
+	sh := shader.Burn(params, term.Attributes{})
+	live := []term.Image{solidPicture(color.RGBA{B: 255, A: 255}, image.Rect(0, 0, 4, 2))}
+	for frame := range 31 {
+		assert.Equal(t, live, sh.ShadeImages(frame, 30, filledCells(4, 2, 'N'), live), "frame %d", frame)
 	}
 }

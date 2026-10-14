@@ -591,10 +591,10 @@ func runTUI(
 ) int {
 	opts := []ide.Option{
 		ide.WithExtensionsRunner(runner),
-		ide.WithInitShader(
-			initShader,
-			initShaderFPS,
-			initShaderDuration),
+		// The Rune logo is drawn for the font and pictures of the GUI, so a
+		// terminal falls back to the Unstable Build logo, which has no GUI
+		// theme to follow.
+		ide.WithFallbackLogo(makeUnstableBuildLogo(func() string { return logoThemeDefault })),
 		ide.WithShutdownShader(
 			func(defaultAttr term.Attributes) shader.Shader {
 				return shutdownShader(defaultAttr)
@@ -603,7 +603,6 @@ func runTUI(
 		ide.WithOpenShader(openShader, openShaderFPS, openShaderDuration),
 		ide.WithLocker(mu),
 		ide.WithConfigFilename(workspaceConfigFilename),
-		ide.WithDefaultWallpaper(makeWallpaper()),
 		ide.WithDefaultConfigStarlark(defaultStarlarkConfig, true, true),
 		ide.WithScheduleNextTick(func(fn func()) bool {
 			return tui.PublishEvent(term.Event{Type: term.EventInterrupt, UserFunc: fn})

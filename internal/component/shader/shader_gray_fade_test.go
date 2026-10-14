@@ -17,9 +17,12 @@
 package shader_test
 
 import (
+	"image"
+	"image/color"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/component/shader"
 )
@@ -135,6 +138,66 @@ func TestGrayFade_DefaultParamsRampOverTotal(t *testing.T) {
 	assert.InDelta(t, float64(total/2)/float64(total-1), sh.Progress(), 1e-9)
 }
 
+func TestGrayFade_DesaturatesPictures(t *testing.T) {
+	params := shader.DefaultGrayFadeParams()
+	params.FadeFrames = 3
+	sh := shader.GrayFade(params, term.Attributes{})
+	orange := color.RGBA{R: 200, G: 100, B: 50, A: 255}
+	picture := solidPicture(orange, image.Rect(0, 0, 4, 2))
+	left, right := picture, picture
+	left.Clip, right.Clip = image.Rect(0, 0, 2, 2), image.Rect(2, 0, 4, 2)
+	shade := func(frame int, images ...term.Image) []term.Image {
+		return sh.ShadeImages(frame, 100, makeCharCells(4, 2), images)
+	}
+	colorOf := func(img term.Image) color.RGBA { return img.Src.(*image.RGBA).RGBAAt(0, 0) }
+
+	assert.Equal(t, []term.Image{left, right}, shade(0, left, right), "frame 0 leaves pictures as drawn")
+
+	half := shade(1, left, right)
+	require.Len(t, half, 2)
+	for i, want := range []term.Image{left, right} {
+		assert.Equal(t, want.Bounds(), half[i].Bounds())
+		assert.Equal(t, want.Clip, half[i].Clip)
+		assert.NotEqual(t, picture.ID, half[i].ID)
+		assert.Equal(t, color.RGBA{R: 162, G: 112, B: 87, A: 255}, colorOf(half[i]))
+	}
+	assert.Same(t, half[0].Src, half[1].Src, "the parts of a picture share their gray copy")
+	assert.Equal(t, half[0].ID, half[1].ID)
+
+	full := shade(2, left, right)
+	gray := color.RGBA{R: 124, G: 124, B: 124, A: 255}
+	assert.Equal(t, gray, colorOf(full[0]))
+	assert.Equal(t, half[0].ID, full[0].ID, "the copy keeps its ID as the fade goes on")
+	assert.Greater(t, full[0].Version, half[0].Version)
+
+	held := shade(3, left)
+	assert.Equal(t, full[0], held[0], "the copy is reused while nothing changes")
+
+	picture.Src.(*image.RGBA).SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	left.Version++
+	changed := shade(4, left)
+	assert.Equal(t, color.RGBA{R: 76, G: 76, B: 76, A: 255}, colorOf(changed[0]), "follows the picture")
+	assert.Greater(t, changed[0].Version, held[0].Version)
+	assert.Equal(t, color.RGBA{R: 255, A: 255}, colorOf(picture), "the picture drawn is left as is")
+}
+
+func TestGrayFade_DesaturatesEachCropOfAPicture(t *testing.T) {
+	params := shader.DefaultGrayFadeParams()
+	params.FadeFrames = 2
+	sh := shader.GrayFade(params, term.Attributes{})
+	src := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	src.SetRGBA(0, 0, color.RGBA{R: 255, A: 255})
+	src.SetRGBA(1, 0, color.RGBA{G: 255, A: 255})
+	left := term.Image{Src: src, ID: term.NewImageID(), Crop: image.Rect(0, 0, 1, 1), Width: 1, Height: 1}
+	right := left
+	right.Crop, right.Pos = image.Rect(1, 0, 2, 1), term.Coordinates{X: 1}
+
+	got := sh.ShadeImages(1, 100, makeCharCells(2, 1), []term.Image{left, right})
+	require.Len(t, got, 2)
+	assert.Equal(t, color.RGBA{R: 76, G: 76, B: 76, A: 255}, got[0].Src.(*image.RGBA).RGBAAt(0, 0))
+	assert.Equal(t, color.RGBA{R: 150, G: 150, B: 150, A: 255}, got[1].Src.(*image.RGBA).RGBAAt(0, 0))
+}
+
 func TestBurn_FrameZeroPaintsInitialSnapshot(t *testing.T) {
 	// Frame 0 of the open shader must already be the captured snapshot,
 	// otherwise the live workspace flashes for one frame at the handover
@@ -146,16 +209,13 @@ func TestBurn_FrameZeroPaintsInitialSnapshot(t *testing.T) {
 	params.OriginY = 0.5
 	sh := shader.Burn(params, term.Attributes{})
 
-	type cellSetter interface {
-		SetInitialCells([][]term.Cell)
-	}
 	snapshot := makeCharCells(4, 2)
 	for y := range snapshot {
 		for x := range snapshot[y] {
 			snapshot[y][x].Ch = 'O'
 		}
 	}
-	sh.(cellSetter).SetInitialCells(snapshot)
+	sh.SetInitialCells(snapshot)
 
 	live := makeCharCells(4, 2)
 	for y := range live {
@@ -183,15 +243,11 @@ func TestBurn_SetInitialDesaturationAppliesToSnapshot(t *testing.T) {
 	params.OriginY = 0.5
 	sh := shader.Burn(params, term.Attributes{})
 
-	type setter interface {
-		SetInitialCells([][]term.Cell)
-		SetInitialDesaturation(amount float64)
-	}
 	snapshot := makeCharCells(2, 1)
 	snapshot[0][0].Fg = term.NewRGBColor(255, 0, 0)
 	snapshot[0][1].Fg = term.NewRGBColor(0, 255, 0)
-	sh.(setter).SetInitialCells(snapshot)
-	sh.(setter).SetInitialDesaturation(1)
+	sh.SetInitialCells(snapshot)
+	sh.SetInitialDesaturation(1)
 
 	live := makeCharCells(2, 1)
 	sh.Shade(0, 30, live)

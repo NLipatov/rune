@@ -46,6 +46,7 @@ func TestAnimationsDefaultsEnabled(t *testing.T) {
 	c := newAnimConfig(t, `config = {}`)
 	assert.True(t, c.animationsLoadingWorkspace())
 	assert.True(t, c.animationsOpenWorkspace())
+	assert.True(t, c.animationsIntro())
 	assert.Empty(t, c.errors)
 }
 
@@ -62,11 +63,13 @@ config = {
     "animations": {
         "loading_workspace": False,
         "open_workspace":    False,
+        "intro":             False,
     },
 }
 `)
 	assert.False(t, c.animationsLoadingWorkspace())
 	assert.False(t, c.animationsOpenWorkspace())
+	assert.False(t, c.animationsIntro())
 	assert.Empty(t, c.errors)
 }
 

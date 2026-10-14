@@ -164,6 +164,31 @@ AAAAAAAAAA`}})
 		}, got, "cut on the cells it lands on, not the ones it was drawn on")
 	})
 
+	t.Run("draws the placements an image shader returns", func(t *testing.T) {
+		src := image.NewRGBA(image.Rect(0, 0, 1, 1))
+		root := drawFunc(func(w term.Writer) {
+			w.DrawImage(term.Image{Src: src, ID: 1, Pos: term.Coordinates{X: 1, Y: 1}, Width: 2, Height: 1})
+			w.DrawImage(term.Image{Src: src, ID: 2, Pos: term.Coordinates{X: 5, Y: 2}, Width: 2, Height: 1})
+		})
+		s := &Component{
+			root:  root,
+			buf:   cell.NewBufferWriter(context.Background(), 10, 4),
+			total: 10,
+		}
+		s.shader = &imageShader{images: func(images []term.Image) []term.Image {
+			require.Len(t, images, 2)
+			return []term.Image{images[1].Translated(term.Coordinates{X: 1})}
+		}}
+		s.Resize(10, 4)
+
+		w := cell.NewBufferWriter(context.Background(), 10, 4)
+		s.Draw(w)
+
+		require.Len(t, w.Images(), 1)
+		assert.Equal(t, term.ImageID(2), w.Images()[0].ID)
+		assert.Equal(t, term.Coordinates{X: 6, Y: 2}, w.Images()[0].Pos)
+	})
+
 	t.Run("resizes underlying component", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -254,6 +279,20 @@ type testShader struct {
 	called bool
 	frames []int
 	totals []int
+}
+
+// imageShader shades cells like testShader, and replaces the placements
+// it is given with what images returns.
+type imageShader struct {
+	testShader
+	images func([]term.Image) []term.Image
+}
+
+func (s *imageShader) ShadeImages(
+	frame, total int, in [][]term.Cell, images []term.Image,
+) []term.Image {
+	s.Shade(frame, total, in)
+	return s.images(images)
 }
 
 type drawFunc func(term.Writer)

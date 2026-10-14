@@ -376,6 +376,23 @@ func TestTransitionCrossFade(t *testing.T) {
 	}
 }
 
+func TestTransitionCrossFadeShadesImagesWithTheShaderInFront(t *testing.T) {
+	replacing := func(id term.ImageID) *imageShader {
+		return &imageShader{images: func(images []term.Image) []term.Image {
+			return append(images[:0], term.Image{ID: id})
+		}}
+	}
+	transition := TransitionCrossFade(
+		TransitionCrossFadeParams{ChangeAtPerc: 0.5, OverlapPerc: 0.4},
+		term.Attributes{}, replacing(1), replacing(2),
+	).(ImageShader)
+
+	for frame, want := range []term.ImageID{1, 1, 1, 1, 1, 2, 2, 2, 2, 2} {
+		got := transition.ShadeImages(frame, 10, makeCellMatrix(3, 2), []term.Image{{ID: 9}})
+		assert.Equal(t, []term.Image{{ID: want}}, got, "frame %d", frame)
+	}
+}
+
 func TestStackingTransitionCrossFade(t *testing.T) {
 	// establish the convention that this crazy number means no frame has been
 	// set because the int zero-value "0" is not suitable for us.

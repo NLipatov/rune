@@ -268,7 +268,11 @@ type extensionConfig struct {
 }
 
 type ideConfig struct {
-	defaultWallpaper browser.Wallpaper
+	// logos are the built-in logos workspace.wallpaper_logo names.
+	logos map[string]Logo
+	// fallbackLogo is shown when workspace.wallpaper_logo names none of
+	// logos. Nil when the IDE was given none.
+	fallbackLogo *Logo
 
 	configPath       string
 	cfg              map[string]any
@@ -313,7 +317,7 @@ func overrideConfig(ideConfig, cfg map[string]any) {
 }
 
 func initConfig(
-	c *ideConfig, cfg map[string]any, defaultWallpaper browser.Wallpaper,
+	c *ideConfig, cfg map[string]any, logos map[string]Logo,
 	ringBell func(), scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
@@ -321,17 +325,17 @@ func initConfig(
 	c.configPath = configPath
 	c.ringBell = ringBell
 	c.scheduleNextTick = scheduleNextTick
-	c.defaultWallpaper = defaultWallpaper
+	c.logos = logos
 	c.errors = make(map[string]error)
 }
 
 func initDefaultConfig(
-	c *ideConfig, defaultWallpaper browser.Wallpaper,
+	c *ideConfig, logos map[string]Logo,
 	ringBell func(), scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	cfg := make(map[string]any)
-	initConfig(c, cfg, defaultWallpaper, ringBell,
+	initConfig(c, cfg, logos, ringBell,
 		scheduleNextTick, configPath)
 }
 
@@ -1022,6 +1026,12 @@ func (c ideConfig) animationsLoadingWorkspace() bool {
 
 func (c ideConfig) animationsOpenWorkspace() bool {
 	return c.animationsBool("open_workspace")
+}
+
+// animationsIntro reports whether the intro of the wallpaper plays at
+// startup.
+func (c ideConfig) animationsIntro() bool {
+	return c.animationsBool("intro")
 }
 
 func (c ideConfig) animationsCommandPrompt() bool {
@@ -4076,23 +4086,55 @@ func (c ideConfig) editorSwapDir() bool {
 	return enabled
 }
 
-func (c ideConfig) wallpaper() (ret browser.Wallpaper) {
-	backgroundAttr := c.workspaceWallpaperBackgroundAttr()
+// wallpaper returns the wallpaper of windows without a tab.
+func (c ideConfig) wallpaper() browser.Wallpaper {
+	wallpaper, _ := c.resolveWallpaper()
+	return wallpaper
+}
 
-	ret = c.defaultWallpaper
-	// allow user to override the default wallpaper's background
-	ret.BackgroundAttr = backgroundAttr
-	if c.cfg == nil {
-		return
+// intro returns the intro that animates the wallpaper of windows in,
+// which only the built-in logos have.
+func (c ideConfig) intro() initShaderConfig {
+	_, logo := c.resolveWallpaper()
+	return initShaderConfig{
+		shader:   logo.Shader,
+		fps:      logo.ShaderFPS,
+		duration: logo.ShaderDuration,
 	}
+}
 
-	cfg := c.workspace()
+// resolveWallpaper returns the wallpaper of windows without a tab: the image of
+// workspace.wallpaper_image, else the text of workspace.wallpaper_ascii, else
+// the built-in logo workspace.wallpaper_logo names, which it returns too.
+// An empty value turns its wallpaper off, as the defaults do with all but
+// the logo, so the window is blank when all three are empty.
+func (c ideConfig) resolveWallpaper() (browser.Wallpaper, Logo) {
+	wallpaper := browser.NopWallpaper()
+	var logo Logo
+	if c.cfg != nil {
+		cfg := c.workspace()
+		if w, ok := c.wallpaperImage(cfg); ok {
+			wallpaper = w
+		} else if w, ok := c.wallpaperText(cfg); ok {
+			wallpaper = w
+		} else if l, ok := c.wallpaperLogo(cfg); ok {
+			wallpaper, logo = l.Wallpaper, l
+		}
+	}
+	wallpaper.BackgroundAttr = c.workspaceWallpaperBackgroundAttr()
+	return wallpaper, logo
+}
+
+func (c ideConfig) wallpaperImage(cfg config.Config) (browser.Wallpaper, bool) {
 	cfgImage, err := cfg.GetString("wallpaper_image")
 	if err != nil {
 		if err != config.ErrNotFound {
 			c.errors["workspace.wallpaper_image"] = err
 		}
-		return c.wallpaperASCII(cfg, backgroundAttr)
+		return browser.Wallpaper{}, false
+	}
+	if cfgImage == "" {
+		return browser.Wallpaper{}, false
 	}
 	cfgImage = os.ExpandEnv(cfgImage)
 
@@ -4110,12 +4152,9 @@ func (c ideConfig) wallpaper() (ret browser.Wallpaper) {
 	img, err := openImage(cfgImage)
 	if err != nil {
 		c.errors["workspace.wallpaper_image"] = err
-		return c.wallpaperASCII(cfg, backgroundAttr)
+		return browser.Wallpaper{}, false
 	}
-
-	ret = makeWallpaper(img, densityChars)
-	ret.BackgroundAttr = backgroundAttr
-	return ret
+	return makeWallpaper(img, densityChars), true
 }
 
 func openImage(imagePath string) (image.Image, error) {
@@ -4154,30 +4193,65 @@ func makeWallpaper(img image.Image, densityCharacters string) browser.Wallpaper 
 	}
 }
 
-func (c ideConfig) wallpaperASCII(
-	cfg config.Config, backgroundAttr term.Attributes,
-) (ret browser.Wallpaper) {
-	ret = c.defaultWallpaper
-	ret.BackgroundAttr = backgroundAttr
-	if c.cfg == nil {
-		return
-	}
-	cfgText, err := cfg.GetString("wallpaper")
-	if err != nil {
-		if err != config.ErrNotFound {
-			c.errors["workspace.wallpaper"] = err
+// wallpaperText returns the text art of wallpaper_ascii, else of its
+// deprecated name wallpaper, which configs written before the rename still
+// set and the defaults leave out.
+func (c ideConfig) wallpaperText(cfg config.Config) (browser.Wallpaper, bool) {
+	var cfgText string
+	for _, key := range []string{"wallpaper_ascii", "wallpaper"} {
+		text, err := cfg.GetString(key)
+		if err != nil {
+			if err != config.ErrNotFound {
+				c.errors["workspace."+key] = err
+			}
+			continue
 		}
-		return
+		if text != "" {
+			cfgText = text
+			break
+		}
+	}
+	if cfgText == "" {
+		return browser.Wallpaper{}, false
 	}
 	strcfg := component.StringConfig{
 		Attributes:           c.workspaceWallpaperAttr(),
 		BackgroundAttributes: c.workspaceWallpaperBackgroundAttr(),
 		Alignment:            component.AlignmentCentered,
 	}
-	ret.NewComponent = func() tui.Component {
-		return component.NewStringWithConfig(cfgText, strcfg)
+	return browser.Wallpaper{
+		NewComponent: func() tui.Component {
+			return component.NewStringWithConfig(cfgText, strcfg)
+		},
+	}, true
+}
+
+// wallpaperLogo returns the built-in logo workspace.wallpaper_logo names.
+// An IDE without built-in logos shows none, whatever the setting, unless it
+// has a fallback logo.
+func (c ideConfig) wallpaperLogo(cfg config.Config) (Logo, bool) {
+	name, err := cfg.GetString("wallpaper_logo")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors["workspace.wallpaper_logo"] = err
+		}
+		return Logo{}, false
 	}
-	return
+	if name == "" {
+		return Logo{}, false
+	}
+	if logo, ok := c.logos[name]; ok {
+		return logo, true
+	}
+	if c.fallbackLogo != nil {
+		return *c.fallbackLogo, true
+	}
+	if len(c.logos) > 0 {
+		c.errors["workspace.wallpaper_logo"] = fmt.Errorf(
+			"unknown logo %q, expected one of: %s", name,
+			strings.Join(slices.Sorted(maps.Keys(c.logos)), ", "))
+	}
+	return Logo{}, false
 }
 
 func (c ideConfig) autoRestore() (ret bool) {
@@ -5173,12 +5247,12 @@ func decodeOverlayConfigFile(
 }
 
 func reloadConfig(
-	configFilePath string, defaultWallpaper browser.Wallpaper,
+	configFilePath string, logos map[string]Logo,
 	defaultConfig DefaultConfig,
 	ringBell func(), scheduleNextTick func(func()) bool,
 ) (ret ideConfig, err error) {
 	err = loadConfig(&ret, configFilePath,
-		defaultWallpaper, defaultConfig, ringBell,
+		logos, defaultConfig, ringBell,
 		scheduleNextTick)
 	return
 }
@@ -5216,11 +5290,11 @@ func loadWorkspaceConfig(
 // of an error.
 func loadConfig(
 	c *ideConfig, configPath string,
-	defaultWallpaper browser.Wallpaper,
+	logos map[string]Logo,
 	defaultConfig DefaultConfig,
 	ringBell func(), scheduleNextTick func(func()) bool,
 ) (err error) {
-	initDefaultConfig(c, defaultWallpaper, ringBell, scheduleNextTick,
+	initDefaultConfig(c, logos, ringBell, scheduleNextTick,
 		configPath)
 
 	cfg, err := decodeDefaultConfig(defaultConfig)
@@ -5228,7 +5302,7 @@ func loadConfig(
 		panic(err)
 	}
 
-	initConfig(c, cfg, defaultWallpaper, ringBell,
+	initConfig(c, cfg, logos, ringBell,
 		scheduleNextTick, configPath)
 
 	if err := loadFileConfig(c, configPath); err != nil {

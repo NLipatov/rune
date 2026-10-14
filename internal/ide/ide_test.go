@@ -19,6 +19,7 @@ package ide
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/hex"
@@ -219,8 +220,8 @@ func TestIDEInitializationIntegration(t *testing.T) {
 		assert.NoError(t, i.closeResources())
 	})
 
-	t.Run("init shader is run when passed WithInitShader option", func(t *testing.T) {
-		configFile, _ := makeTestFiles(t)
+	t.Run("intro of the built-in logo is run", func(t *testing.T) {
+		configPath := makeConfigFile(t, logoConfig)
 		initShader := new(mockShader)
 
 		dataDir, err := os.MkdirTemp("", "")
@@ -230,21 +231,103 @@ func TestIDEInitializationIntegration(t *testing.T) {
 		})
 
 		i := new(IDE)
-		err = i.init("", configFile.Name(), dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+		err = i.init("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
 			WithPublishEvent(nopPublishEvent),
 			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
 			WithLocker(new(sync.Mutex)),
-			WithInitShader(
-				func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
-					return initShader
-				},
-				30, 1*time.Second,
-			))
+			withTestLogo(func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
+				return initShader
+			}))
 		require.NoError(t, err)
 
 		i.initRunning()
 		i.root.Draw(&term.NoopWriter{})
 
+		assert.True(t, initShader.called)
+		assert.NoError(t, i.closeResources())
+	})
+
+	t.Run("intro is not run over a wallpaper of the user", func(t *testing.T) {
+		configPath := makeConfigFile(t, logoConfig+"  wallpaper_ascii: art\n")
+		initShader := new(mockShader)
+		dataDir := t.TempDir()
+
+		i := new(IDE)
+		err := i.init("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+			WithPublishEvent(nopPublishEvent),
+			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+			WithLocker(new(sync.Mutex)),
+			withTestLogo(func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
+				return initShader
+			}))
+		require.NoError(t, err)
+
+		i.initRunning()
+		i.root.Draw(&term.NoopWriter{})
+		assert.False(t, initShader.called)
+
+		err = i.root.HandleCommand(context.Background(), textapi.Command{
+			Name: "shaderrun", Args: []string{introShaderName},
+		})
+		assert.Error(t, err, "the wallpaper of the user has no intro to preview")
+		assert.NoError(t, i.closeResources())
+	})
+
+	t.Run("intro of the fallback logo is run for a logo the IDE does not have", func(t *testing.T) {
+		configPath := makeConfigFile(t, logoConfig)
+		initShader := new(mockShader)
+		dataDir := t.TempDir()
+
+		i := new(IDE)
+		err := i.init("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+			WithPublishEvent(nopPublishEvent),
+			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+			WithLocker(new(sync.Mutex)),
+			WithFallbackLogo(Logo{
+				Wallpaper: browser.NopWallpaper(),
+				Shader: func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
+					return initShader
+				},
+				ShaderFPS:      30,
+				ShaderDuration: time.Second,
+			}))
+		require.NoError(t, err)
+
+		i.initRunning()
+		i.root.Draw(&term.NoopWriter{})
+		assert.True(t, initShader.called)
+
+		reloaded, err := i.workspaceHandler.reloadConfig()
+		require.NoError(t, err)
+		assert.NotNil(t, reloaded.intro().shader, "a reload keeps the fallback logo")
+		assert.Empty(t, reloaded.errors)
+		assert.NoError(t, i.closeResources())
+	})
+
+	t.Run("intro is not run when animations.intro is off, but can be previewed", func(t *testing.T) {
+		configPath := makeConfigFile(t, logoConfig+"animations:\n  intro: false\n")
+		initShader := new(mockShader)
+		dataDir := t.TempDir()
+
+		i := new(IDE)
+		err := i.init("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+			WithPublishEvent(nopPublishEvent),
+			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+			WithLocker(new(sync.Mutex)),
+			withTestLogo(func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
+				return initShader
+			}))
+		require.NoError(t, err)
+
+		i.initRunning()
+		i.root.Draw(&term.NoopWriter{})
+		assert.False(t, initShader.called)
+
+		err = i.root.HandleCommand(context.Background(), textapi.Command{
+			Name: "shaderrun", Args: []string{introShaderName},
+		})
+		require.NoError(t, err)
+		i.root.Draw(&term.NoopWriter{})
 		assert.True(t, initShader.called)
 		assert.NoError(t, i.closeResources())
 	})
@@ -255,7 +338,7 @@ func TestIDEInitializationIntegration(t *testing.T) {
 		// factory observes the configured GUI theme background.
 		// Calling SetDefaultAttributes after Ready() leaves the
 		// shader runner painting with the stale config defAttr.
-		configFile, _ := makeTestFiles(t)
+		configPath := makeConfigFile(t, logoConfig)
 
 		dataDir, err := os.MkdirTemp("", "")
 		require.NoError(t, err)
@@ -264,17 +347,14 @@ func TestIDEInitializationIntegration(t *testing.T) {
 		})
 
 		var captured term.Attributes
-		i, err := New("", configFile.Name(), dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+		i, err := New("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
 			WithPublishEvent(nopPublishEvent),
 			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
 			WithLocker(new(sync.Mutex)),
-			WithInitShader(
-				func(attr term.Attributes, _ component.FrameCharSet) shader.Shader {
-					captured = attr
-					return new(mockShader)
-				},
-				30, 1*time.Second,
-			))
+			withTestLogo(func(attr term.Attributes, _ component.FrameCharSet) shader.Shader {
+				captured = attr
+				return new(mockShader)
+			}))
 		require.NoError(t, err)
 
 		wantAttr := term.Attributes{
@@ -2801,6 +2881,26 @@ func makeTestFiles(t *testing.T) (*os.File, *os.File) {
 	return configFile, file
 }
 
+// logoConfig selects the built-in logo withTestLogo registers.
+const logoConfig = "workspace:\n  wallpaper_logo: test\n"
+
+// withTestLogo registers the built-in logo logoConfig selects, which
+// intro animates in for a second.
+func withTestLogo(intro func(term.Attributes, component.FrameCharSet) shader.Shader) Option {
+	return WithLogos(map[string]Logo{"test": {
+		Wallpaper:      browser.NopWallpaper(),
+		Shader:         intro,
+		ShaderFPS:      30,
+		ShaderDuration: time.Second,
+	}})
+}
+
+func makeConfigFile(t *testing.T, content string) string {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
 // newTestStorage returns the localstorage flavor every IDE test uses.
 // Tests pass it as the storage argument to ide.New / IDE.init.
 // IDE.Close treats the storage as borrowed and does not close it, so
@@ -2991,11 +3091,12 @@ tutorial(entry=run)
 
 func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 	cases := []struct {
-		name           string
-		starting       string
-		withInitShader bool
-		wantScheduled  bool
-		wantActive     string
+		name          string
+		starting      string
+		config        string
+		withIntro     bool
+		wantScheduled bool
+		wantActive    string
 	}{
 		{
 			name:          "known tutorial runs",
@@ -3004,11 +3105,19 @@ func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 			wantActive:    "basics",
 		},
 		{
-			name:           "known tutorial deferred until init shader finishes",
-			starting:       "basics",
-			withInitShader: true,
-			wantScheduled:  true,
-			wantActive:     "basics",
+			name:          "known tutorial deferred until the intro finishes",
+			starting:      "basics",
+			config:        logoConfig,
+			withIntro:     true,
+			wantScheduled: true,
+			wantActive:    "basics",
+		},
+		{
+			name:          "known tutorial not deferred without an intro to play",
+			starting:      "basics",
+			config:        logoConfig + "animations:\n  intro: false\n",
+			wantScheduled: true,
+			wantActive:    "basics",
 		},
 		{
 			name:          "unknown tutorial is a no-op",
@@ -3024,7 +3133,7 @@ func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			configFile, _ := makeTestFiles(t)
+			configPath := makeConfigFile(t, cmp.Or(tc.config, "{}"))
 			dataDir := t.TempDir()
 
 			mu := new(sync.Mutex)
@@ -3040,20 +3149,15 @@ func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 				WithLocker(mu),
 				WithScheduleNextTick(scheduleNextTick),
 				WithStarlarkTutorial("basics", minimalStarTutorial),
+				withTestLogo(func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
+					return new(mockShader)
+				}),
 			}
 			if tc.starting != "" {
 				opts = append(opts, WithStartingTutorial(tc.starting))
 			}
-			if tc.withInitShader {
-				opts = append(opts, WithInitShader(
-					func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
-						return new(mockShader)
-					},
-					30, 1*time.Second,
-				))
-			}
 
-			i, err := New("", configFile.Name(), dataDir,
+			i, err := New("", configPath, dataDir,
 				pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir), opts...)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = i.Close() })
@@ -3085,14 +3189,16 @@ func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 				return
 			}
 
-			if tc.withInitShader {
+			if tc.withIntro {
 				assert.Empty(t, scheduled,
-					"tutorial dispatch must be deferred until the init shader finishes")
+					"tutorial dispatch must be deferred until the intro finishes")
 				require.NotNil(t, afterCb,
-					"a deferred timer should be registered for the init shader")
+					"a deferred timer should be registered for the intro")
 				assert.Equal(t, 1*time.Second+tutorialInitShaderBuffer, afterDuration,
-					"tutorial delay must be the init shader duration plus the buffer")
+					"tutorial delay must be the intro duration plus the buffer")
 				afterCb()
+			} else {
+				assert.Nil(t, afterCb, "nothing waits for an intro that does not play")
 			}
 
 			require.Len(t, scheduled, 1,

@@ -17,6 +17,7 @@
 package shader
 
 import (
+	"image"
 	"math"
 	"math/rand"
 
@@ -37,12 +38,17 @@ import (
 // original text cells finish burning, the original character rises into
 // higher cells, fading toward grey.
 //
+// Burn is an [ImageShader]: the placements drawn over the snapshot show
+// on the cells still showing it, and the live placements on the cells
+// the burn has crossed. Neither shows under fire, while rising characters
+// pass behind them.
+//
 // The last frame of the animation matches the input exactly.
 //
 // Inspired by terminaltexteffects' "burn" effect, which spreads its
 // scenes through the canvas with a PrimsSimple algorithm and emits
 // smoke particles from each burning character.
-func Burn(params BurnParams, defaultAttr term.Attributes) Shader {
+func Burn(params BurnParams, defaultAttr term.Attributes) Reveal {
 	defaults := DefaultBurnParams()
 	if len(params.BurnSymbols) == 0 {
 		params.BurnSymbols = defaults.BurnSymbols
@@ -96,9 +102,18 @@ func (s *burn) SetInitialCells(cells [][]term.Cell) {
 	s.rootSet = false
 }
 
+// SetInitialImages sets the placements drawn over the snapshot set by
+// [SetInitialCells]. When unset, Burn captures them along with the cells.
+// It copies their pixels, since a writer only keeps those until its next
+// frame.
+func (s *burn) SetInitialImages(images []term.Image) {
+	s.initialImages = copyImages(images)
+}
+
 // SetInitialDesaturation desaturates every cell of the snapshot used as
 // the base layer (see [SetInitialCells]) toward its per-cell luminance
-// gray by the given amount. amount is clamped to [0, 1].
+// gray by the given amount, and so its placements (see
+// [SetInitialImages]). amount is clamped to [0, 1].
 //
 // This is used to chain Burn with a preceding [GrayFade] loading shader:
 // by passing the previous shader's progress, the snapshot starts at the
@@ -117,6 +132,15 @@ func (s *burn) SetInitialDesaturation(amount float64) {
 				cell.Fg, amount, s.defaultAttr.Fg,
 			)
 		}
+	}
+	desaturated := make(map[*image.RGBA]bool, len(s.initialImages))
+	for i, img := range s.initialImages {
+		pixels := img.Src.(*image.RGBA)
+		if !desaturated[pixels] {
+			desaturatePixels(pixels, amount)
+			desaturated[pixels] = true
+		}
+		s.initialImages[i].Version++
 	}
 }
 
@@ -222,6 +246,13 @@ type burn struct {
 	// current shape. Until the burn has crossed a cell, that snapshot is
 	// drawn over the live cells so the burn acts as a reveal transition.
 	initialCells [][]term.Cell
+	// initialImages are the placements drawn over initialCells, with
+	// pixels of their own.
+	initialImages []term.Image
+	// layers is what shows on each cell of the last frame shaded, row by
+	// row, for frames that show the snapshot on some cells only.
+	layers []burnLayer
+	cutter imageCutter
 }
 
 type burnBounds struct {
@@ -229,13 +260,63 @@ type burnBounds struct {
 	maxX, maxY int
 }
 
+// burnLayer is what shows on a cell of a frame.
+type burnLayer uint8
+
+const (
+	burnLive burnLayer = iota
+	burnSnapshot
+	burnFire
+)
+
+// burnFrame is what shows on a frame.
+type burnFrame uint8
+
+const (
+	burnFrameLive burnFrame = iota
+	burnFrameSnapshot
+	// burnFrameLayers shows on each cell what burn.layers tells.
+	burnFrameLayers
+)
+
 func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
+	s.shadeCells(frame, total, cells, nil)
+}
+
+func (s *burn) ShadeImages(
+	frame, total int, cells [][]term.Cell, images []term.Image,
+) []term.Image {
+	switch s.shadeCells(frame, total, cells, images) {
+	case burnFrameSnapshot:
+		return append(images[:0], s.initialImages...)
+	case burnFrameLayers:
+		return s.cutImages(images, len(cells), len(s.layers)/len(cells))
+	default:
+		return images
+	}
+}
+
+// cutImages returns the live placements images and the snapshot's cut to
+// the cells of a cols by rows frame showing them.
+func (s *burn) cutImages(images []term.Image, rows, cols int) []term.Image {
+	showing := func(layer burnLayer) func(x, y int) bool {
+		return func(x, y int) bool { return s.layers[y*cols+x] == layer }
+	}
+	out := s.cutter.cut(images[:0], images, cols, rows, showing(burnLive))
+	return s.cutter.cut(out, s.initialImages, cols, rows, showing(burnSnapshot))
+}
+
+// shadeCells shades cells, over which images are drawn, and returns what
+// the frame shows.
+func (s *burn) shadeCells(
+	frame, total int, cells [][]term.Cell, images []term.Image,
+) burnFrame {
 	if total <= 0 {
-		return
+		return burnFrameLive
 	}
 	rows := len(cells)
 	if rows == 0 {
-		return
+		return burnFrameLive
 	}
 	cols := 0
 	for _, row := range cells {
@@ -244,11 +325,11 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 		}
 	}
 	if cols == 0 {
-		return
+		return burnFrameLive
 	}
-	s.ensureInitialCells(cells)
+	s.ensureInitialCells(cells, images)
 	if frame > total {
-		return
+		return burnFrameLive
 	}
 	if frame < 0 {
 		frame = 0
@@ -265,25 +346,25 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 				cells[y][x] = s.initialCell(y, x, cells[y][x])
 			}
 		}
-		return
+		return burnFrameSnapshot
 	}
 
 	bounds, ok := s.activeBounds(rows, cols)
 	if !ok {
-		return
+		return burnFrameLive
 	}
 	s.ensureCache(s.initialCells, rows, cols, total, bounds)
 
 	burnFrames := s.burnFrameCount(total)
 	if s.PaintForeground {
 		s.recolorText(frame, burnFrames, bounds, cells)
-		return
+		return burnFrameLive
 	}
 	smokeFrames := s.smokeFrameCount(total)
-	activeBurn := make([][]bool, rows)
-	for y := range activeBurn {
-		activeBurn[y] = make([]bool, cols)
+	if len(s.layers) != rows*cols {
+		s.layers = make([]burnLayer, rows*cols)
 	}
+	clear(s.layers)
 
 	// Pass 1: cells progress through three states based on their per-cell
 	// ignition frame:
@@ -300,11 +381,13 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 			start := s.igniteFrame[y][x]
 			if start < 0 {
 				cells[y][x] = s.initialCell(y, x, cells[y][x])
+				s.layers[y*cols+x] = burnSnapshot
 				continue
 			}
 			localFrame := frame - start
 			if localFrame < 0 {
 				cells[y][x] = s.initialCell(y, x, cells[y][x])
+				s.layers[y*cols+x] = burnSnapshot
 				continue
 			}
 			if localFrame >= burnFrames {
@@ -325,7 +408,7 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 			// is its own visual layer and should sit on the cell
 			// grid, not on the chrome's render offset.
 			cells[y][x].Attrs &^= burnGlyphStripAttrs
-			activeBurn[y][x] = true
+			s.layers[y*cols+x] = burnFire
 		}
 	}
 
@@ -335,7 +418,7 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 	// motion reads as pieces of text floating upward rather than as spark
 	// punctuation.
 	if smokeFrames <= 0 {
-		return
+		return burnFrameLayers
 	}
 	for srcY := bounds.minY; srcY <= bounds.maxY && srcY < rows; srcY++ {
 		maxX := bounds.maxX
@@ -366,7 +449,7 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 			if targetY < 0 || targetY >= rows || targetX < 0 || targetX >= cols {
 				continue
 			}
-			if targetX >= len(cells[targetY]) || activeBurn[targetY][targetX] {
+			if targetX >= len(cells[targetY]) || s.layers[targetY*cols+targetX] == burnFire {
 				continue
 			}
 
@@ -396,6 +479,7 @@ func (s *burn) Shade(frame, total int, cells [][]term.Cell) {
 			cells[targetY][targetX].Attrs &^= burnGlyphStripAttrs
 		}
 	}
+	return burnFrameLayers
 }
 
 // burnGlyphStripAttrs is the set of cell attrs cleared on cells the
@@ -426,11 +510,12 @@ func (s *burn) recolorText(
 	}
 }
 
-func (s *burn) ensureInitialCells(cells [][]term.Cell) {
+func (s *burn) ensureInitialCells(cells [][]term.Cell, images []term.Image) {
 	if sameCellShape(s.initialCells, cells) {
 		return
 	}
 	s.initialCells = cloneCellMatrix(cells)
+	s.initialImages = copyImages(images)
 	// A shape change invalidates the cached traversal and root. Content
 	// changes with the same shape intentionally do not update the snapshot.
 	s.igniteFrame = nil

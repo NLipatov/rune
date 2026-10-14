@@ -450,3 +450,16 @@ func TestStackingTransitionCut(t *testing.T) {
 
 	}
 }
+
+func TestTransitionCutShadesImagesWithTheShaderRunning(t *testing.T) {
+	hide := &imageShader{images: func([]term.Image) []term.Image { return nil }}
+	plain := new(mockShader)
+	transition := TransitionCut(DefaultTransitionCutParams(), hide, plain).(ImageShader)
+	images := []term.Image{{ID: 1, Width: 1, Height: 1}}
+
+	assert.Empty(t, transition.ShadeImages(4, 10, makeCellMatrix(2, 2), images))
+	assert.Equal(t, []int{4}, hide.frames)
+	assert.Equal(t, images, transition.ShadeImages(5, 10, makeCellMatrix(2, 2), images))
+	assert.Equal(t, 0, plain.frame)
+	assert.True(t, plain.shadeCalled)
+}

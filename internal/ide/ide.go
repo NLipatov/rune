@@ -69,6 +69,8 @@ type IDE struct {
 	nag              *idenag.Scheduler
 	publishEventFn   EventPublisher
 	storage          storageapi.Service
+	// playIntro is whether Ready plays the intro of the wallpaper.
+	playIntro bool
 }
 
 // EventPublisher is a function that publishes the given event back
@@ -277,8 +279,8 @@ func (i *IDE) maybeStartTutorial() {
 	}
 	// Defer the tutorial until the init shader finishes so the shader
 	// does not animate on top of the freshly-mounted tutorial prompt.
-	if i.options.initShaderFn != nil && i.options.initShaderDuration > 0 {
-		i.options.afterFunc(i.options.initShaderDuration+tutorialInitShaderBuffer, func() {
+	if intro, ok := i.startupIntro(); ok && intro.duration > 0 {
+		i.options.afterFunc(intro.duration+tutorialInitShaderBuffer, func() {
 			debug.CapturePanicReport(dispatch)
 		})
 		return
@@ -304,8 +306,8 @@ func (i *IDE) maybeReopenLastSession() {
 	}
 	// Defer behind the init shader the same way maybeStartTutorial does
 	// so the shader does not animate on top of the reopen prompt.
-	if i.options.initShaderFn != nil && i.options.initShaderDuration > 0 {
-		i.options.afterFunc(i.options.initShaderDuration+reopenPromptInitShaderBuffer, func() {
+	if intro, ok := i.startupIntro(); ok && intro.duration > 0 {
+		i.options.afterFunc(intro.duration+reopenPromptInitShaderBuffer, func() {
 			debug.CapturePanicReport(dispatch)
 		})
 		return
@@ -665,8 +667,9 @@ func (i *IDE) init(
 		i.publishEvent,
 		op.extensionRunner, trust, i.locker, op.extensions, func() (ideConfig, error) {
 			cfg, err := reloadConfig(cfgfilename,
-				op.defaultWallpaper, defaultCfg, op.bell, op.scheduleFn)
+				op.logos, defaultCfg, op.bell, op.scheduleFn)
 			cfg.storage = i.ideConfig.storage
+			cfg.fallbackLogo = op.fallbackLogo
 			cfg.cellPixelSize = op.cellPixelSize
 			cfg.clip = op.clip
 			cfg.systemOpenURL = op.systemOpenURL
@@ -685,6 +688,8 @@ func (i *IDE) init(
 	// parse errors recorded into ideConfig.errors are surfaced
 	// alongside other config decode errors.
 	tutorials := buildTutorials(i)
+	intro := i.ideConfig.intro()
+	i.playIntro = i.ideConfig.animationsIntro()
 	i.workspaceHandler.logNonFatalErrs(i.workspaceHandler.focusBrowser(),
 		configErr, i.ideConfig.errors)
 
@@ -749,6 +754,9 @@ func (i *IDE) init(
 	i.locker.Lock()
 	i.root.init(&i.tutorial, i, i.ideConfig.defaultAttr(), shutdownShaderCfg,
 		loadingShaderCfg, openShaderCfg, i.ideConfig.windowFrameCharset())
+	// The screen Rune starts on is the home workspace's, whose wallpaper
+	// comes from this config.
+	i.root.initShaderCfg = intro
 	i.locker.Unlock()
 	if op.nagPrompt.State != nil {
 		i.nag = idenag.New(idenag.Config{
@@ -786,8 +794,9 @@ func newDefaultConfig(op options) DefaultConfig {
 func loadIDEConfig(cfgfilename string, op options) (ideConfig, error) {
 	var cfg ideConfig
 	err := loadConfig(&cfg, cfgfilename,
-		op.defaultWallpaper, newDefaultConfig(op), op.bell,
+		op.logos, newDefaultConfig(op), op.bell,
 		op.scheduleFn)
+	cfg.fallbackLogo = op.fallbackLogo
 	cfg.cellPixelSize = op.cellPixelSize
 	cfg.clip = op.clip
 	cfg.systemOpenURL = op.systemOpenURL
@@ -795,11 +804,18 @@ func loadIDEConfig(cfgfilename string, op options) (ideConfig, error) {
 }
 
 func (i *IDE) initRunning() {
-	if i.options.initShaderFn != nil {
-		// protect access to root, simulating a std loop iteration
-		i.locker.Lock()
-		defer i.locker.Unlock()
-		i.root.runShader(i.options.initShaderFn(i.root.defAttr, i.ideConfig.windowFrameCharset()),
-			i.options.initShaderFPS, i.options.initShaderDuration)
+	if _, ok := i.startupIntro(); !ok {
+		return
 	}
+	// protect access to root, simulating a std loop iteration
+	i.locker.Lock()
+	defer i.locker.Unlock()
+	i.root.runInitShader()
+}
+
+// startupIntro returns the intro Ready plays, reporting false when it
+// plays none.
+func (i *IDE) startupIntro() (initShaderConfig, bool) {
+	intro := i.root.initShaderCfg
+	return intro, intro.shader != nil && i.playIntro
 }

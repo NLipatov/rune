@@ -41,6 +41,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
@@ -320,7 +321,7 @@ browser:
 
 workspace:
     auto_restore: false
-    wallpaper: abc
+    wallpaper_ascii: abc
     wallpaper_attr:
         fg: yellow
         bg: white
@@ -519,7 +520,7 @@ func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
 
 func TestConfigDefault(t *testing.T) {
 	ret := new(ideConfig)
-	initDefaultConfig(ret, browser.NopWallpaper(),
+	initDefaultConfig(ret, nil,
 		term.RingBell, term.ScheduleNextTick, "")
 	assertDefaultConfig(t, ret)
 }
@@ -572,7 +573,7 @@ terminal:
 `))
 	require.NoError(t, err)
 	var cfg ideConfig
-	initConfig(&cfg, m, browser.NopWallpaper(), term.RingBell, term.ScheduleNextTick, "")
+	initConfig(&cfg, m, nil, term.RingBell, term.ScheduleNextTick, "")
 	def := browser.DefaultTabStatusConfig()
 	got := cfg.tabStatusConfig()
 	assert.Equal(t, def.DoneIcon, got.DoneIcon)
@@ -1313,7 +1314,7 @@ func TestConfigDecodeError(t *testing.T) {
 	// for assertDefaultConfig
 	ret.cfg = map[string]any{
 		"workspace": map[string]any{
-			"wallpaper": "notEmpty",
+			"wallpaper_ascii": "notEmpty",
 		},
 	}
 	ret.ringBell = term.RingBell
@@ -1328,7 +1329,7 @@ func TestConfigSetting(t *testing.T) {
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	initConfig(&cfg, m, browser.NopWallpaper(),
+	initConfig(&cfg, m, nil,
 		term.RingBell, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 
@@ -1796,12 +1797,10 @@ func TestConfigSetting(t *testing.T) {
 	assert.Len(t, cfg.extensions(), 1)
 	extensionCfgStruct := cfg.extensions()["fuzzy_search"]
 	assert.Equal(t, "fuzzy_search", extensionCfgStruct.id)
-	cfg.cfg["workspace"].(map[string]any)["wallpaper"] = ""
-	extensionCfgStruct.parent.cfg["workspace"].(map[string]any)["wallpaper"] = ""
-	cfg.defaultWallpaper.NewComponent = nil
+	cfg.cfg["workspace"].(map[string]any)["wallpaper_ascii"] = ""
+	extensionCfgStruct.parent.cfg["workspace"].(map[string]any)["wallpaper_ascii"] = ""
 	cfg.ringBell = nil
 	cfg.scheduleNextTick = nil
-	extensionCfgStruct.parent.defaultWallpaper.NewComponent = nil
 	extensionCfgStruct.parent.ringBell = nil
 	extensionCfgStruct.parent.scheduleNextTick = nil
 	assert.Equal(t, &cfg, extensionCfgStruct.parent)
@@ -1854,6 +1853,174 @@ func TestConfigWallpaperImageWithAnEmptyRampUsesTheDefaultRamp(t *testing.T) {
 	assert.Equal(t, strings.Repeat("▓", len(drawn)), string(drawn))
 }
 
+func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "white.png")
+	white := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	white.Set(0, 0, color.White)
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(f, white))
+	require.NoError(t, f.Close())
+
+	logo := func(text string, fps int) Logo {
+		return Logo{
+			Wallpaper: browser.Wallpaper{NewComponent: func() tui.Component {
+				return component.NewString(text)
+			}},
+			ShaderFPS: fps,
+		}
+	}
+	logos := map[string]Logo{"a": logo("logo a", 1), "b": logo("logo b", 2)}
+	fallback := logo("logo f", 3)
+
+	cases := []struct {
+		name         string
+		workspace    map[string]any
+		logos        map[string]Logo
+		fallbackLogo *Logo
+		wantDrawn    string
+		wantFPS      int
+		wantErr      string
+	}{
+		{
+			name:      "no wallpaper",
+			workspace: map[string]any{},
+			logos:     logos,
+		},
+		{
+			name:      "the logo it names",
+			workspace: map[string]any{"wallpaper_logo": "b"},
+			logos:     logos,
+			wantDrawn: "logob",
+			wantFPS:   2,
+		},
+		{
+			name:      "the text over the logo",
+			workspace: map[string]any{"wallpaper_ascii": "art", "wallpaper_logo": "a"},
+			logos:     logos,
+			wantDrawn: "art",
+		},
+		{
+			name:      "the text of the deprecated key",
+			workspace: map[string]any{"wallpaper": "art", "wallpaper_logo": "a"},
+			logos:     logos,
+			wantDrawn: "art",
+		},
+		{
+			name: "the text over the text of the deprecated key",
+			workspace: map[string]any{
+				"wallpaper_ascii": "new", "wallpaper": "old", "wallpaper_logo": "a",
+			},
+			logos:     logos,
+			wantDrawn: "new",
+		},
+		{
+			name: "the deprecated key under an empty text",
+			workspace: map[string]any{
+				"wallpaper_ascii": "", "wallpaper": "old", "wallpaper_logo": "a",
+			},
+			logos:     logos,
+			wantDrawn: "old",
+		},
+		{
+			name: "the image over the text",
+			workspace: map[string]any{
+				"wallpaper_image": path, "wallpaper_ascii": "art", "wallpaper_logo": "a",
+			},
+			logos:     logos,
+			wantDrawn: "▓",
+		},
+		{
+			name:      "an unknown logo",
+			workspace: map[string]any{"wallpaper_logo": "c"},
+			logos:     logos,
+			wantErr:   `unknown logo "c", expected one of: a, b`,
+		},
+		{
+			name:      "no logo without built-in logos",
+			workspace: map[string]any{"wallpaper_logo": "a"},
+		},
+		{
+			name:         "the fallback for a logo it does not have",
+			workspace:    map[string]any{"wallpaper_logo": "c"},
+			logos:        logos,
+			fallbackLogo: &fallback,
+			wantDrawn:    "logof",
+			wantFPS:      3,
+		},
+		{
+			name:         "the logo it names over the fallback",
+			workspace:    map[string]any{"wallpaper_logo": "a"},
+			logos:        logos,
+			fallbackLogo: &fallback,
+			wantDrawn:    "logoa",
+			wantFPS:      1,
+		},
+		{
+			name:         "the fallback without built-in logos",
+			workspace:    map[string]any{"wallpaper_logo": "a"},
+			fallbackLogo: &fallback,
+			wantDrawn:    "logof",
+			wantFPS:      3,
+		},
+		{
+			name:         "an empty logo turns the fallback off",
+			workspace:    map[string]any{"wallpaper_logo": ""},
+			fallbackLogo: &fallback,
+		},
+		{
+			name: "empty values are off",
+			workspace: map[string]any{
+				"wallpaper_image": "", "wallpaper_ascii": "", "wallpaper_logo": "b",
+			},
+			logos:     logos,
+			wantDrawn: "logob",
+			wantFPS:   2,
+		},
+		{
+			name: "an empty logo leaves the window blank",
+			workspace: map[string]any{
+				"wallpaper_image": "", "wallpaper_ascii": "", "wallpaper": "",
+				"wallpaper_logo": "",
+			},
+			logos: logos,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ideConfig{
+				cfg:          map[string]any{"workspace": tc.workspace},
+				errors:       map[string]error{},
+				logos:        tc.logos,
+				fallbackLogo: tc.fallbackLogo,
+			}
+
+			const width, height = 20, 4
+			wallpaper := cfg.wallpaper()
+			comp := wallpaper.NewComponent()
+			comp.Resize(width, height)
+			w := cell.NewBufferWriter(context.Background(), width, height)
+			comp.Draw(w)
+			// Collapses repeats so the cells of the image read as one.
+			var drawn []rune
+			for _, row := range w.RawCells() {
+				for _, c := range row {
+					if c.Ch != 0 && c.Ch != ' ' && (len(drawn) == 0 || drawn[len(drawn)-1] != c.Ch) {
+						drawn = append(drawn, c.Ch)
+					}
+				}
+			}
+			assert.Equal(t, tc.wantDrawn, string(drawn))
+			assert.Equal(t, tc.wantFPS, cfg.intro().fps)
+			if tc.wantErr == "" {
+				assert.Empty(t, cfg.errors)
+			} else {
+				assert.EqualError(t, cfg.errors["workspace.wallpaper_logo"], tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestConfigDim(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1898,7 +2065,7 @@ func TestConfigDim(t *testing.T) {
 
 func TestLoadEmbededConfig(t *testing.T) {
 	var cfg ideConfig
-	err := loadConfig(&cfg, "nonExistent", browser.NopWallpaper(),
+	err := loadConfig(&cfg, "nonExistent", nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -1989,7 +2156,7 @@ func TestShellMaxHistoryFromConfig(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2010,7 +2177,7 @@ func TestShellModalStartInsertFromConfig(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2031,7 +2198,7 @@ func TestShellModalStartInsertDefaultsTrue(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2052,7 +2219,7 @@ func TestConsolePromptFromConfig(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2074,7 +2241,7 @@ func TestConsolePromptDefaultsEmpty(t *testing.T) {
 	require.NoError(t, f.Close())
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2132,7 +2299,7 @@ command:
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.Error(t, err)
@@ -2153,7 +2320,7 @@ editor:
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2172,7 +2339,7 @@ editor:
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)
@@ -2206,7 +2373,7 @@ func TestEditorSwapDir(t *testing.T) {
 			require.NoError(t, err)
 
 			var cfg ideConfig
-			err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+			err = loadConfig(&cfg, f.Name(), nil,
 				DefaultConfig{src: "config = {}"},
 				term.RingBell, term.ScheduleNextTick)
 			require.NoError(t, err)
@@ -2235,7 +2402,7 @@ editor:
 	require.NoError(t, err)
 
 	var cfg ideConfig
-	err = loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
+	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
 		term.RingBell, term.ScheduleNextTick)
 	require.NoError(t, err)

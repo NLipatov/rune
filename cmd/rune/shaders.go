@@ -123,9 +123,11 @@ func openShader(defaultAttr term.Attributes) shader.Shader {
 	// Expose the burn's snapshot/desaturation hooks through the
 	// cross-fade wrapper so the loading→open chain continues to
 	// work: shaderRunner.stopLoading() type-asserts the returned
-	// shader for these interfaces.
+	// shader for [shader.Reveal].
 	return &openShaderShader{Shader: wrapped, burn: burn}
 }
+
+var _ shader.Reveal = (*openShaderShader)(nil)
 
 // openShaderShader pairs a cross-fade wrapper with the underlying
 // burn so the runner's pre-shader hooks (initial cells, initial
@@ -134,27 +136,33 @@ func openShader(defaultAttr term.Attributes) shader.Shader {
 // initial snapshot.
 type openShaderShader struct {
 	shader.Shader
-	burn shader.Shader
+	burn shader.Reveal
+}
+
+// ShadeImages satisfies [shader.ImageShader], so the burn reveals the
+// pictures of the new screen too.
+func (s *openShaderShader) ShadeImages(
+	frame, total int, in [][]term.Cell, images []term.Image,
+) []term.Image {
+	return shader.ShadeImages(s.Shader, frame, total, in, images)
 }
 
 // SetInitialCells forwards to the wrapped burn so the open shader
 // keeps the pre-switch screen as its base layer.
 func (s *openShaderShader) SetInitialCells(cells [][]term.Cell) {
-	if sh, ok := s.burn.(interface {
-		SetInitialCells([][]term.Cell)
-	}); ok {
-		sh.SetInitialCells(cells)
-	}
+	s.burn.SetInitialCells(cells)
+}
+
+// SetInitialImages forwards to the wrapped burn so the pictures of the
+// pre-switch screen burn away with it.
+func (s *openShaderShader) SetInitialImages(images []term.Image) {
+	s.burn.SetInitialImages(images)
 }
 
 // SetInitialDesaturation forwards to the wrapped burn so the open
 // shader starts from the loading shader's terminal desaturation.
 func (s *openShaderShader) SetInitialDesaturation(amount float64) {
-	if sh, ok := s.burn.(interface {
-		SetInitialDesaturation(amount float64)
-	}); ok {
-		sh.SetInitialDesaturation(amount)
-	}
+	s.burn.SetInitialDesaturation(amount)
 }
 
 func shutdownShader(defaultAttr term.Attributes) shader.Shader {
