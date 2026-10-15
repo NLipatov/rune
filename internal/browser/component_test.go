@@ -17,7 +17,9 @@
 package browser
 
 import (
+	"context"
 	"fmt"
+	"image"
 	"slices"
 	"strings"
 	"testing"
@@ -29,6 +31,8 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/handler"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"github.com/unstablebuild/rune-go-sdk/tui"
+	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
 	thandler "unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/term/programstatus"
@@ -3302,4 +3306,80 @@ func TestTabStatusRecords(t *testing.T) {
 		assert.Equal(t, programstatus.Idle, status.State)
 		assert.Empty(t, status.Records)
 	})
+}
+
+// pictureWallpaper writes two marks on its first row, coloring the second
+// one by attributes, and draws its picture under them, or hashes where
+// the writer cannot draw the picture, as the logo falls back to blocks.
+type pictureWallpaper struct {
+	pic           image.Image
+	id            term.ImageID
+	width, height int
+}
+
+func (p *pictureWallpaper) Resize(width, height int) {
+	p.width, p.height = width, height
+}
+
+func (p *pictureWallpaper) Draw(w term.Writer) {
+	green := term.Attributes{Bg: term.ColorGreen}
+	w.SetCell(term.Coordinates{}, term.NewCell('W', 1,
+		term.Attributes{Fg: term.ColorRed, Bg: term.ColorGreen}))
+	w.SetCell(term.Coordinates{X: 1}, term.NewCell('U', 1, green))
+	w.UnionAttributes(term.Coordinates{X: 1},
+		term.Attributes{Fg: term.ColorYellow, Bg: term.ColorGreen})
+	_, sized := cell.PixelSizeFromContext(w.Context())
+	if sized && w.DrawImage(term.Image{
+		Src: p.pic, ID: p.id, Pos: term.Coordinates{Y: 1},
+		Width: p.width, Height: p.height - 1, Fit: term.ImageFitFill,
+	}) {
+		return
+	}
+	for y := 1; y < p.height; y++ {
+		for x := range p.width {
+			w.SetCell(term.Coordinates{X: x, Y: y}, term.NewCell('#', 1, term.Attributes{}))
+		}
+	}
+}
+
+func TestComponentWallpaperOnABackgroundKeepsItsPictures(t *testing.T) {
+	const width, height = 30, 10
+	background := term.Attributes{Bg: term.ColorBlue}
+	art := &pictureWallpaper{pic: image.NewRGBA(image.Rect(0, 0, 2, 2)), id: term.NewImageID()}
+	cfg := DefaultConfig()
+	cfg.Wallpaper = Wallpaper{
+		NewComponent:   func() tui.Component { return art },
+		BackgroundAttr: background,
+	}
+	b := NewComponent(cfg)
+	b.Resize(width, height)
+
+	ctx := cell.ContextWithPixelSize(context.Background(), cell.PixelSize{Width: 8, Height: 16})
+	w := cell.NewBufferWriter(ctx, width, height)
+	b.Draw(w)
+
+	images := w.Images()
+	require.Len(t, images, 1, "the wallpaper must draw its picture")
+	assert.Equal(t, art.id, images[0].ID)
+
+	var mark term.Coordinates
+	found := false
+	for y, row := range w.RawCells() {
+		for x, c := range row {
+			assert.NotEqual(t, '#', c.Ch, "the wallpaper must not fall back at %d,%d", x, y)
+			if c.Ch == 'W' {
+				mark, found = term.Coordinates{X: x, Y: y}, true
+			}
+		}
+	}
+	require.True(t, found, "the wallpaper must be drawn")
+	cells := w.RawCells()
+	set, united := cells[mark.Y][mark.X], cells[mark.Y][mark.X+1]
+	assert.Equal(t, 'U', united.Ch)
+	assert.Equal(t, term.ColorRed, set.Fg, "the wallpaper keeps the foreground it sets")
+	assert.Equal(t, term.ColorYellow, united.Fg, "the wallpaper keeps the foreground it unites")
+	assert.Equal(t, background.Bg, set.Bg, "the wallpaper is set on the background")
+	assert.Equal(t, background.Bg, united.Bg, "the wallpaper is united on the background")
+	assert.Equal(t, background.Bg, cells[mark.Y][mark.X+2].Bg,
+		"the background fills what the wallpaper does not draw")
 }
