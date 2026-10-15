@@ -4097,6 +4097,9 @@ func (c ideConfig) wallpaper() (ret browser.Wallpaper) {
 	cfgImage = os.ExpandEnv(cfgImage)
 
 	densityChars, err := cfg.GetString("wallpaper_density_characters")
+	if err == nil && densityChars == "" {
+		err = errors.New("must not be empty")
+	}
 	if err != nil {
 		if err != config.ErrNotFound {
 			c.errors["workspace.wallpaper_density_characters"] = err

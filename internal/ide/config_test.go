@@ -19,9 +19,13 @@ package ide
 import (
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +42,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser"
+	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
 	"unstable.build/rune/internal/component/notifications"
 	"unstable.build/rune/internal/handler"
@@ -1811,6 +1816,42 @@ func TestConfigSetting(t *testing.T) {
 	assert.Equal(t, "ag -g \"\"", cmd)
 
 	assert.NotZero(t, cfg.defaultAttr())
+}
+
+func TestConfigWallpaperImageWithAnEmptyRampUsesTheDefaultRamp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "white.png")
+	white := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	white.Set(0, 0, color.White)
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(f, white))
+	require.NoError(t, f.Close())
+
+	cfg := &ideConfig{cfg: map[string]any{
+		"workspace": map[string]any{
+			"wallpaper_image":              path,
+			"wallpaper_density_characters": "",
+		},
+	}, errors: map[string]error{}}
+
+	wallpaper := cfg.wallpaper()
+	assert.Contains(t, cfg.errors, "workspace.wallpaper_density_characters")
+
+	const width, height = 20, 4
+	art := wallpaper.NewComponent()
+	art.Resize(width, height)
+	w := cell.NewBufferWriter(context.Background(), width, height)
+	require.NotPanics(t, func() { art.Draw(w) })
+	var drawn []rune
+	for _, row := range w.RawCells() {
+		for _, c := range row {
+			if c.Ch != 0 && c.Ch != ' ' {
+				drawn = append(drawn, c.Ch)
+			}
+		}
+	}
+	require.NotEmpty(t, drawn)
+	assert.Equal(t, strings.Repeat("▓", len(drawn)), string(drawn))
 }
 
 func TestConfigDim(t *testing.T) {
