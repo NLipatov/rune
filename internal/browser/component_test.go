@@ -2344,9 +2344,21 @@ func TestDropZoneAt(t *testing.T) {
 		{"center", term.Coordinates{X: 20, Y: 10}, 40, 20, winDropCenter},
 		{"dead zone", term.Coordinates{X: 12, Y: 10}, 40, 20, winDropNone},
 		{"top-left corner favors the closer edge",
-			term.Coordinates{X: 0, Y: 3}, 40, 20, winDropLeft},
+			term.Coordinates{X: 0, Y: 1}, 40, 20, winDropLeft},
 		{"bottom-right corner favors the closer edge",
-			term.Coordinates{X: 33, Y: 19}, 40, 20, winDropBottom},
+			term.Coordinates{X: 38, Y: 19}, 40, 20, winDropBottom},
+		{"large tile top band is two cells",
+			term.Coordinates{X: 80, Y: 1}, 160, 55, winDropTop},
+		{"large tile below the top band is a dead zone",
+			term.Coordinates{X: 80, Y: 2}, 160, 55, winDropNone},
+		{"large tile left band is two cells",
+			term.Coordinates{X: 1, Y: 27}, 160, 55, winDropLeft},
+		{"large tile past the left band is a dead zone",
+			term.Coordinates{X: 2, Y: 27}, 160, 55, winDropNone},
+		{"large tile above the bottom band is a dead zone",
+			term.Coordinates{X: 80, Y: 52}, 160, 55, winDropNone},
+		{"large tile past the right band is a dead zone",
+			term.Coordinates{X: 157, Y: 27}, 160, 55, winDropNone},
 		{"out of bounds", term.Coordinates{X: 40, Y: 10}, 40, 20, winDropNone},
 		{"negative", term.Coordinates{X: -1, Y: 0}, 40, 20, winDropNone},
 		{"empty tile", term.Coordinates{}, 0, 0, winDropNone},
@@ -2396,7 +2408,7 @@ func winDragBrowser(t *testing.T, width, height int) (
 			return term.Coordinates{X: pos.X + w/2, Y: pos.Y + h/2}
 		default:
 			// dead zone: just outside the left band and left of center
-			return term.Coordinates{X: pos.X + w/winDropBandDiv + 1, Y: pos.Y + h/2}
+			return term.Coordinates{X: pos.X + winDropBand + 1, Y: pos.Y + h/2}
 		}
 	}
 	require.Equal(t, winDropNone, dropZoneAt(
@@ -2445,7 +2457,7 @@ func framedDragBrowser(t *testing.T, width, height int) (
 		case winDropCenter:
 			return term.Coordinates{X: pos.X + w/2, Y: pos.Y + h/2}
 		default:
-			return term.Coordinates{X: pos.X + w/winDropBandDiv + 1, Y: pos.Y + h/2}
+			return term.Coordinates{X: pos.X + winDropBand + 1, Y: pos.Y + h/2}
 		}
 	}
 	return b, tile, float, zoneAt
