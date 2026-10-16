@@ -112,8 +112,8 @@ func (b *Tab) working() bool {
 	return b.status.State == programstatus.Working
 }
 
-// AckStatus drops the done and error statuses of this tab, as the user
-// has seen it.
+// AckStatus drops the done, error and idle statuses of this tab, as the
+// user has seen it.
 func (b *Tab) AckStatus() {
 	if b.records.Ack() {
 		b.parent.refreshTabStatus(b)

@@ -162,9 +162,9 @@ type TabManager interface {
 	OnTabExit(uri workspaceapi.URI) bool
 
 	// SetTabStatus applies report, made by the program behind the tab
-	// identified by uri, to the tab's status. Done and error records
-	// clear once the user sees the tab; every record is dropped when
-	// the tab closes. It fails when uri is no tab.
+	// identified by uri, to the tab's status. Done, error and idle
+	// records clear once the user sees the tab; every record is dropped
+	// when the tab closes. It fails when uri is no tab.
 	SetTabStatus(uri workspaceapi.URI, report programstatus.Report) error
 
 	// EndTabStatus tells that the program behind the tab identified by

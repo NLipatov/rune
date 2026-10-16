@@ -101,8 +101,9 @@ shipped configuration:
 | `idle` | The tab's own icon, in yellow | Unchanged |
 
 A program that reported `idle` is at rest and waiting on you, which is why its
-icon is colored; a tab whose program never reported anything is left alone. A
-blocked report without a `kind` takes the `permission` icon.
+icon is colored until you see the tab; a tab whose program never reported
+anything is left alone. A blocked report without a `kind` takes the
+`permission` icon.
 
 `progress` is kept with the status and shown in the [inbox](#the-status-inbox).
 Set `terminal.status.content_tab.progress` to `true` to also split working tab
@@ -209,7 +210,8 @@ alive.
 
 | State | Rune drops it when |
 | --- | --- |
-| `working`, `blocked`, `idle` | The terminal's process exits, or the shell starts a new prompt and marks it with OSC 133 `A`. |
+| `working`, `blocked` | The terminal's process exits, or the shell starts a new prompt and marks it with OSC 133 `A`. |
+| `idle` | Either of the above, or you see it, as for `done` and `error`. |
 | `done`, `error` | You see it: you focus its tab, press a key in it, or it is reported on the tab you are already looking at. A terminal that is not a tab, such as a floating `!` command or a minimized task, keeps it until the terminal closes. |
 
 In every state a record also goes away when the program reports another one
@@ -339,8 +341,8 @@ err := wm.SetTabStatus(uri, browserapi.TabStatus{
 - Rune fills in `app` with the extension's id.
 - `Title` and `Message` follow the protocol's limits, and a report that breaks
   one, or carries a control character, fails with an `InvalidArgument` error.
-- `TabDone` and `TabError` clear once you see the tab, and every record goes
-  away when the tab closes.
+- `TabDone`, `TabError` and `TabIdle` clear once you see the tab, and every
+  record goes away when the tab closes.
 
 Rune Agent reports its chats this way.
 

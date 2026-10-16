@@ -193,7 +193,7 @@ func TestStoreLifetimes(t *testing.T) {
 		t.Parallel()
 		s := seed()
 		s.Ack()
-		assert.Equal(t, []string{"blocked", "idle", "working"}, ids(s.Summary()))
+		assert.Equal(t, []string{"blocked", "working"}, ids(s.Summary()))
 		assert.Equal(t, Blocked, s.Summary().State)
 	})
 	t.Run("DropTransient then Ack empties", func(t *testing.T) {

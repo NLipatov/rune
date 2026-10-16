@@ -3208,6 +3208,18 @@ func TestTabStatusRecords(t *testing.T) {
 		require.Len(t, status.Records, 1)
 	})
 
+	t.Run("AckStatus drops idle", func(t *testing.T) {
+		require.True(t, b.SetTabStatus(uri, programstatus.Report{State: programstatus.Clear}))
+		require.True(t, b.SetTabStatus(uri, programstatus.Report{State: programstatus.Idle, Progress: -1, Msg: "make test"}))
+		require.True(t, b.SetTabStatus(uri, programstatus.Report{ID: "x", State: programstatus.Blocked, Progress: -1}))
+		tab.AckStatus()
+		status, _ := b.TabStatus(uri)
+		assert.Equal(t, programstatus.Blocked, status.State)
+		require.Len(t, status.Records, 1)
+		assert.Equal(t, "x", status.Records[0].ID)
+		require.True(t, b.SetTabStatus(uri, programstatus.Report{State: programstatus.Clear}))
+	})
+
 	t.Run("EndTabStatus keeps done and error", func(t *testing.T) {
 		require.True(t, b.SetTabStatus(uri, programstatus.Report{State: programstatus.Clear}))
 		require.True(t, b.SetTabStatus(uri, programstatus.Report{ID: "a", State: programstatus.Working, Progress: -1}))
@@ -3236,11 +3248,12 @@ func TestTabStatusRecords(t *testing.T) {
 	})
 
 	t.Run("showing the tab acknowledges", func(t *testing.T) {
+		require.True(t, b.SetTabStatus(uri, programstatus.Report{ID: "interrupted", State: programstatus.Idle, Progress: -1}))
 		win := b.Focus()
 		require.True(t, b.SetContentToTab(win, 0))
 		status, _ := b.TabStatus(uri)
 		assert.Equal(t, programstatus.Idle, status.State)
-		assert.Empty(t, status.Records)
+		assert.Empty(t, status.Records, "done, error and idle are all acknowledged")
 	})
 
 	t.Run("focusing the window showing the tab acknowledges", func(t *testing.T) {

@@ -393,8 +393,8 @@ func (c *Component) SetTabAttrs(
 // The tab is decorated after the status until it goes back to idle,
 // and every change is reported through Config.OnTabStatus. Done and
 // error records reported on the tab in sight are acknowledged right
-// after they are reported, as the user already sees them. It returns
-// false if there's no tab with the given uri.
+// after they are reported, as the user already sees them, and so are
+// idle ones. It returns false if there's no tab with the given uri.
 func (c *Component) SetTabStatus(uri workspaceapi.URI, report programstatus.Report) bool {
 	t, ok := c.Tab(uri)
 	if !ok {
@@ -411,9 +411,9 @@ func (c *Component) SetTabStatus(uri workspaceapi.URI, report programstatus.Repo
 // OnFocusChange tells whether the user's focus is on this Component,
 // which it cannot tell on its own when the host terminal or the
 // workspace it belongs to loses or regains it. A Component starts in
-// focus. Out of focus no tab is in sight, so done and error records
-// stay until focus comes back and acknowledges those of the tab in the
-// focus window.
+// focus. Out of focus no tab is in sight, so done, error and idle
+// records stay until focus comes back and acknowledges those of the tab
+// in the focus window.
 func (c *Component) OnFocusChange(inFocus bool) {
 	c.inFocus = inFocus
 	if t, ok := c.tabInSight(); ok {

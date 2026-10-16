@@ -122,13 +122,14 @@ func (s *Store) DropTransient() bool {
 	})
 }
 
-// Ack removes the done and error records. It reports whether any
-// record was removed.
+// Ack removes the records the user is done with once they have seen
+// them: done, error, and idle. It reports whether any record was
+// removed.
 func (s *Store) Ack() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.dropIf(func(rec *Record) bool {
-		return rec.State == Done || rec.State == Error
+		return rec.State == Done || rec.State == Error || rec.State == Idle
 	})
 }
 
