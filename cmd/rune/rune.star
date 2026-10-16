@@ -949,17 +949,21 @@ config = {
         "auto_restore": True,
         # Index workspace symbols for faster lookups.
         "symboldb":     True,
-        # Windows without a tab show the first of these wallpapers that is
-        # not empty: a PNG encoded as ASCII art, else ASCII art drawn as
-        # written, else a built-in logo, "rune" or "unstable_build", which
-        # plays its intro at startup (animations.intro). Your own
-        # wallpapers have no intro. Set all three empty for blank windows.
-        "wallpaper_image":              "",
-        "wallpaper_ascii":              "",
-        # Display Rune's logo as the wallpaper by default. A terminal
-        # (rune --tui) shows "unstable_build" whichever logo this names.
+        # Precedence: wallpaper_image, then wallpaper_image_ascii, then
+        # wallpaper_ascii, then wallpaper_logo. The first non-empty one is
+        # shown; set all four to "" for blank windows.
+        # "rune" or "unstable_build". rune --tui always shows
+        # "unstable_build".
         "wallpaper_logo":               "rune",
-        # Characters an image wallpaper is drawn with, from the darkest
+        "wallpaper_image": { # this takes a file path string, or the following object
+            "path":   "",
+            "width":  "60%", # or number of cells
+            "height": "60%", # or number of cells
+            "fit":    "contain", # or "cover" or "fill".
+        },
+        "wallpaper_image_ascii":        "",
+        "wallpaper_ascii":              "",
+        # Characters an image is encoded as ASCII with, from the darkest
         # pixels to the brightest.
         "wallpaper_density_characters": " ▓▓▓▓",
         # wallpaper_attr styles the characters of wallpaper_ascii; image

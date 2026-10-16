@@ -76,6 +76,7 @@
 #  # Override the default ASCII wallpaper.
 #  #wallpaper_ascii: myAsciiArt
 #  #wallpaper_image: /path/to/image.png
+#  #wallpaper_image_ascii: /path/to/image.png
 
 #telemetry:
 #  # Report anonymous usage and system information. Set to false to opt out.

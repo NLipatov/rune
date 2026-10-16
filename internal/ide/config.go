@@ -33,6 +33,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -51,6 +52,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	tcomponent "unstable.build/rune/internal/component"
 	"unstable.build/rune/internal/component/asciiart"
+	"unstable.build/rune/internal/component/imagecomp"
 	"unstable.build/rune/internal/component/notifications"
 	"unstable.build/rune/internal/component/shader/glslshader"
 	"unstable.build/rune/internal/component/shader/shaderloop"
@@ -4103,17 +4105,20 @@ func (c ideConfig) intro() initShaderConfig {
 	}
 }
 
-// resolveWallpaper returns the wallpaper of windows without a tab: the image of
-// workspace.wallpaper_image, else the text of workspace.wallpaper_ascii, else
-// the built-in logo workspace.wallpaper_logo names, which it returns too.
+// resolveWallpaper returns the wallpaper of windows without a tab: the picture
+// of workspace.wallpaper_image, else the ASCII art of
+// workspace.wallpaper_image_ascii, else the text of workspace.wallpaper_ascii,
+// else the built-in logo workspace.wallpaper_logo names, which it returns too.
 // An empty value turns its wallpaper off, as the defaults do with all but
-// the logo, so the window is blank when all three are empty.
+// the logo, so the window is blank when all four are empty.
 func (c ideConfig) resolveWallpaper() (browser.Wallpaper, Logo) {
 	wallpaper := browser.NopWallpaper()
 	var logo Logo
 	if c.cfg != nil {
 		cfg := c.workspace()
 		if w, ok := c.wallpaperImage(cfg); ok {
+			wallpaper = w
+		} else if w, ok := c.wallpaperImageASCII(cfg); ok {
 			wallpaper = w
 		} else if w, ok := c.wallpaperText(cfg); ok {
 			wallpaper = w
@@ -4125,19 +4130,154 @@ func (c ideConfig) resolveWallpaper() (browser.Wallpaper, Logo) {
 	return wallpaper, logo
 }
 
+// defaultWallpaperImage sizes the picture of a workspace.wallpaper_image that
+// is only a path.
+var defaultWallpaperImage = imagecomp.Config{
+	Width:  imagecomp.Length{N: 60, Percent: true},
+	Height: imagecomp.Length{N: 60, Percent: true},
+	Fit:    imagecomp.Contain,
+}
+
+var wallpaperImageFits = map[string]imagecomp.Fit{
+	"contain": imagecomp.Contain,
+	"cover":   imagecomp.Cover,
+	"fill":    imagecomp.Fill,
+}
+
+// maxWallpaperImageSize bounds each side of the image of
+// workspace.wallpaper_image, as the GUI cannot draw larger pictures.
+const maxWallpaperImageSize = 8192
+
+// wallpaperImage returns the picture of workspace.wallpaper_image: the path
+// of an image, or a section with the path and how the picture is sized,
+// which a path alone leaves at [defaultWallpaperImage].
 func (c ideConfig) wallpaperImage(cfg config.Config) (browser.Wallpaper, bool) {
-	cfgImage, err := cfg.GetString("wallpaper_image")
-	if err != nil {
+	pcfg := defaultWallpaperImage
+	path, err := cfg.GetString("wallpaper_image")
+	if err == config.ErrInvalidType {
+		var section config.Config
+		if section, err = cfg.GetConfig("wallpaper_image"); err != nil {
+			c.errors["workspace.wallpaper_image"] = errors.New(
+				"must be the path of an image or a section with its path")
+			return browser.Wallpaper{}, false
+		}
+		pcfg = c.wallpaperImageConfig(section)
+		if path, err = section.GetString("path"); err != nil {
+			if err != config.ErrNotFound {
+				c.errors["workspace.wallpaper_image.path"] = err
+			}
+			return browser.Wallpaper{}, false
+		}
+	} else if err != nil {
 		if err != config.ErrNotFound {
 			c.errors["workspace.wallpaper_image"] = err
 		}
 		return browser.Wallpaper{}, false
 	}
-	if cfgImage == "" {
+	if path == "" {
 		return browser.Wallpaper{}, false
 	}
-	cfgImage = os.ExpandEnv(cfgImage)
+	img, err := openImage(os.ExpandEnv(path))
+	if err != nil {
+		c.errors["workspace.wallpaper_image"] = err
+		return browser.Wallpaper{}, false
+	}
+	if size := img.Bounds().Size(); size.X > maxWallpaperImageSize || size.Y > maxWallpaperImageSize {
+		c.errors["workspace.wallpaper_image"] = fmt.Errorf("image is %dx%d, larger than %dx%d",
+			size.X, size.Y, maxWallpaperImageSize, maxWallpaperImageSize)
+		return browser.Wallpaper{}, false
+	}
+	pcfg.ASCII = c.wallpaperImageASCIIConfig(cfg)
+	// Shared by every window, so the screen keeps one copy of the pixels.
+	id := term.NewImageID()
+	return browser.Wallpaper{
+		NewComponent: func() tui.Component { return imagecomp.New(img, id, pcfg) },
+	}, true
+}
 
+func (c ideConfig) wallpaperImageConfig(section config.Config) imagecomp.Config {
+	pcfg := defaultWallpaperImage
+	pcfg.Width = c.wallpaperImageLength(section, "width", pcfg.Width)
+	pcfg.Height = c.wallpaperImageLength(section, "height", pcfg.Height)
+	name, err := section.GetString("fit")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors["workspace.wallpaper_image.fit"] = err
+		}
+		return pcfg
+	}
+	fit, ok := wallpaperImageFits[name]
+	if !ok {
+		c.errors["workspace.wallpaper_image.fit"] = fmt.Errorf(
+			"unknown fit %q, expected one of: %s", name,
+			strings.Join(slices.Sorted(maps.Keys(wallpaperImageFits)), ", "))
+		return pcfg
+	}
+	pcfg.Fit = fit
+	return pcfg
+}
+
+// wallpaperImageLength returns the length key sets in section: a number of
+// cells, or a percentage of the window such as "100%".
+func (c ideConfig) wallpaperImageLength(
+	section config.Config, key string, def imagecomp.Length,
+) imagecomp.Length {
+	errKey := "workspace.wallpaper_image." + key
+	n, err := section.GetInt(key)
+	if err == config.ErrNotFound {
+		return def
+	}
+	length := imagecomp.Length{N: n}
+	if err != nil {
+		var s string
+		if s, err = section.GetString(key); err == nil {
+			digits, isPercent := strings.CutSuffix(strings.TrimSpace(s), "%")
+			length.Percent = isPercent
+			length.N, err = strconv.Atoi(digits)
+		}
+	}
+	if err != nil || length.N < 1 || (length.Percent && length.N > 100) {
+		c.errors[errKey] = errors.New(
+			`must be a number of cells, such as 40, or a percentage of the window ` +
+				`from 1% to 100%, such as "60%"`)
+		return def
+	}
+	return length
+}
+
+// wallpaperImageASCII returns the ASCII art of the image of
+// workspace.wallpaper_image_ascii.
+func (c ideConfig) wallpaperImageASCII(cfg config.Config) (browser.Wallpaper, bool) {
+	path, err := cfg.GetString("wallpaper_image_ascii")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors["workspace.wallpaper_image_ascii"] = err
+		}
+		return browser.Wallpaper{}, false
+	}
+	if path == "" {
+		return browser.Wallpaper{}, false
+	}
+	img, err := openImage(os.ExpandEnv(path))
+	if err != nil {
+		c.errors["workspace.wallpaper_image_ascii"] = err
+		return browser.Wallpaper{}, false
+	}
+	ascii := c.wallpaperImageASCIIConfig(cfg)
+	return browser.Wallpaper{
+		NewComponent: func() tui.Component {
+			return component.NewSpan(asciiart.NewComponent(img, ascii), component.SpanConfig{
+				PadHorizontalPerc: 0.4,
+				PadVerticalPerc:   0.2,
+				ContentAlignment:  component.AlignmentCentered,
+			})
+		},
+	}, true
+}
+
+// wallpaperImageASCIIConfig returns how the image wallpapers are encoded as
+// ASCII art, with the characters of workspace.wallpaper_density_characters.
+func (c ideConfig) wallpaperImageASCIIConfig(cfg config.Config) asciiart.Config {
 	densityChars, err := cfg.GetString("wallpaper_density_characters")
 	if err == nil && densityChars == "" {
 		err = errors.New("must not be empty")
@@ -4148,13 +4288,11 @@ func (c ideConfig) wallpaperImage(cfg config.Config) (browser.Wallpaper, bool) {
 		}
 		densityChars = " ▓▓▓▓"
 	}
-
-	img, err := openImage(cfgImage)
-	if err != nil {
-		c.errors["workspace.wallpaper_image"] = err
-		return browser.Wallpaper{}, false
-	}
-	return makeWallpaper(img, densityChars), true
+	ascii := asciiart.DefaultConfig()
+	ascii.Color = true
+	ascii.MaintainAspectRatio = true
+	ascii.DensityCharacters = densityChars
+	return ascii
 }
 
 func openImage(imagePath string) (image.Image, error) {
@@ -4174,23 +4312,6 @@ func openImage(imagePath string) (image.Image, error) {
 		return nil, fmt.Errorf("png decode: %v", err)
 	}
 	return img, nil
-}
-
-func makeWallpaper(img image.Image, densityCharacters string) browser.Wallpaper {
-	return browser.Wallpaper{
-		NewComponent: func() tui.Component {
-			cfg := asciiart.DefaultConfig()
-			cfg.Color = true
-			cfg.MaintainAspectRatio = true
-			cfg.DensityCharacters = densityCharacters
-			comp := asciiart.NewComponent(img, cfg)
-			return component.NewSpan(comp, component.SpanConfig{
-				PadHorizontalPerc: 0.4,
-				PadVerticalPerc:   0.2,
-				ContentAlignment:  component.AlignmentCentered,
-			})
-		},
-	}
 }
 
 // wallpaperText returns the text art of wallpaper_ascii, else of its

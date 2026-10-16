@@ -65,7 +65,7 @@ func TestDefaultConfigShowsTheRuneLogoWithItsIntro(t *testing.T) {
 	workspace, err := cfg.GetConfig("workspace")
 	require.NoError(t, err)
 	for key, want := range map[string]string{
-		"wallpaper_image":              "",
+		"wallpaper_image_ascii":        "",
 		"wallpaper_ascii":              "",
 		"wallpaper_logo":               logoNameRune,
 		"wallpaper_density_characters": " ▓▓▓▓",
@@ -74,6 +74,11 @@ func TestDefaultConfigShowsTheRuneLogoWithItsIntro(t *testing.T) {
 		require.NoError(t, err, key)
 		assert.Equal(t, want, got, key)
 	}
+	image, err := workspace.GetMap("wallpaper_image")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"path": "", "width": "60%", "height": "60%", "fit": "contain",
+	}, image)
 	assert.Contains(t, makeLogos(func() string { return "" }, func() (int, int) { return 9, 20 }), logoNameRune)
 
 	animations, err := cfg.GetConfig("animations")
@@ -81,6 +86,58 @@ func TestDefaultConfigShowsTheRuneLogoWithItsIntro(t *testing.T) {
 	intro, err := animations.GetBool("intro")
 	require.NoError(t, err)
 	assert.True(t, intro)
+}
+
+func TestWallpaperImageOverridesTheDefaultSection(t *testing.T) {
+	section := func(path string) map[string]any {
+		return map[string]any{"path": path, "width": "60%", "height": "60%", "fit": "contain"}
+	}
+	tests := []struct {
+		name   string
+		file   string
+		config string
+		want   any
+	}{
+		{
+			name:   "a path in YAML",
+			file:   "config.yaml",
+			config: "workspace:\n  wallpaper_image: ~/a.png\n",
+			want:   "~/a.png",
+		},
+		{
+			name:   "a section in YAML",
+			file:   "config.yaml",
+			config: "workspace:\n  wallpaper_image:\n    path: ~/a.png\n    fit: cover\n",
+			want:   map[string]any{"path": "~/a.png", "width": "60%", "height": "60%", "fit": "cover"},
+		},
+		{
+			name:   "a path in Starlark",
+			file:   "config.star",
+			config: "config[\"workspace\"][\"wallpaper_image\"] = \"~/a.png\"\n",
+			want:   "~/a.png",
+		},
+		{
+			name:   "the path of the section in Starlark",
+			file:   "config.star",
+			config: "config[\"workspace\"][\"wallpaper_image\"][\"path\"] = \"~/a.png\"\n",
+			want:   section("~/a.png"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), tt.file)
+			require.NoError(t, os.WriteFile(path, []byte(tt.config), 0o644))
+			workspace, err := mustLoadConfig(t, path).GetConfig("workspace")
+			require.NoError(t, err)
+			var got any
+			workspace.Iterate(func(k string, v any) {
+				if k == "wallpaper_image" {
+					got = v
+				}
+			})
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestDeprecatedWallpaperKeyIsKeptOverTheDefaults(t *testing.T) {

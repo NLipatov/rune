@@ -45,6 +45,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
+	"unstable.build/rune/internal/component/imagecomp"
 	"unstable.build/rune/internal/component/notifications"
 	"unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/handler/command"
@@ -1817,7 +1818,7 @@ func TestConfigSetting(t *testing.T) {
 	assert.NotZero(t, cfg.defaultAttr())
 }
 
-func TestConfigWallpaperImageWithAnEmptyRampUsesTheDefaultRamp(t *testing.T) {
+func TestConfigImageWallpapersWithAnEmptyRampUseTheDefaultRamp(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "white.png")
 	white := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	white.Set(0, 0, color.White)
@@ -1826,40 +1827,49 @@ func TestConfigWallpaperImageWithAnEmptyRampUsesTheDefaultRamp(t *testing.T) {
 	require.NoError(t, png.Encode(f, white))
 	require.NoError(t, f.Close())
 
-	cfg := &ideConfig{cfg: map[string]any{
-		"workspace": map[string]any{
-			"wallpaper_image":              path,
-			"wallpaper_density_characters": "",
-		},
-	}, errors: map[string]error{}}
+	for _, key := range []string{"wallpaper_image", "wallpaper_image_ascii"} {
+		t.Run(key, func(t *testing.T) {
+			cfg := &ideConfig{cfg: map[string]any{
+				"workspace": map[string]any{
+					key:                            path,
+					"wallpaper_density_characters": "",
+				},
+			}, errors: map[string]error{}}
 
-	wallpaper := cfg.wallpaper()
-	assert.Contains(t, cfg.errors, "workspace.wallpaper_density_characters")
+			wallpaper := cfg.wallpaper()
+			assert.Contains(t, cfg.errors, "workspace.wallpaper_density_characters")
 
-	const width, height = 20, 4
-	art := wallpaper.NewComponent()
-	art.Resize(width, height)
-	w := cell.NewBufferWriter(context.Background(), width, height)
-	require.NotPanics(t, func() { art.Draw(w) })
-	var drawn []rune
-	for _, row := range w.RawCells() {
-		for _, c := range row {
-			if c.Ch != 0 && c.Ch != ' ' {
-				drawn = append(drawn, c.Ch)
+			const width, height = 20, 4
+			art := wallpaper.NewComponent()
+			art.Resize(width, height)
+			w := cell.NewBufferWriter(context.Background(), width, height)
+			require.NotPanics(t, func() { art.Draw(w) })
+			var drawn []rune
+			for _, row := range w.RawCells() {
+				for _, c := range row {
+					if c.Ch != 0 && c.Ch != ' ' {
+						drawn = append(drawn, c.Ch)
+					}
+				}
 			}
-		}
+			require.NotEmpty(t, drawn)
+			assert.Equal(t, strings.Repeat("▓", len(drawn)), string(drawn))
+		})
 	}
-	require.NotEmpty(t, drawn)
-	assert.Equal(t, strings.Repeat("▓", len(drawn)), string(drawn))
 }
 
-func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
+func TestConfigWallpaperResolvesTheImagesThenTheTextThenTheLogo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "white.png")
 	white := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	white.Set(0, 0, color.White)
 	f, err := os.Create(path)
 	require.NoError(t, err)
 	require.NoError(t, png.Encode(f, white))
+	require.NoError(t, f.Close())
+	largePath := filepath.Join(t.TempDir(), "large.png")
+	f, err = os.Create(largePath)
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(f, image.NewGray(image.Rect(0, 0, maxWallpaperImageSize+1, 1))))
 	require.NoError(t, f.Close())
 
 	logo := func(text string, fps int) Logo {
@@ -1879,8 +1889,11 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 		logos        map[string]Logo
 		fallbackLogo *Logo
 		wantDrawn    string
-		wantFPS      int
-		wantErr      string
+		// wantPicture are the cells of the pictures drawn, on cells of
+		// 10x20 pixels.
+		wantPicture []image.Rectangle
+		wantFPS     int
+		wantErrs    map[string]string
 	}{
 		{
 			name:      "no wallpaper",
@@ -1923,18 +1936,79 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 			wantDrawn: "old",
 		},
 		{
-			name: "the image over the text",
+			name: "the picture of an image over the text",
 			workspace: map[string]any{
 				"wallpaper_image": path, "wallpaper_ascii": "art", "wallpaper_logo": "a",
 			},
-			logos:     logos,
+			logos:       logos,
+			wantPicture: []image.Rectangle{image.Rect(8, 1, 12, 3)},
+		},
+		{
+			name: "the picture of a section",
+			workspace: map[string]any{
+				"wallpaper_image": map[string]any{
+					"path": path, "width": "100%", "height": 2, "fit": "fill",
+				},
+			},
+			wantPicture: []image.Rectangle{image.Rect(0, 1, 20, 3)},
+		},
+		{
+			name: "the picture over the ASCII art of an image",
+			workspace: map[string]any{
+				"wallpaper_image": path, "wallpaper_image_ascii": path,
+			},
+			wantPicture: []image.Rectangle{image.Rect(8, 1, 12, 3)},
+		},
+		{
+			name: "the ASCII art of an image over the text",
+			workspace: map[string]any{
+				"wallpaper_image":       map[string]any{"path": ""},
+				"wallpaper_image_ascii": path,
+				"wallpaper_ascii":       "art",
+			},
 			wantDrawn: "▓",
+		},
+		{
+			name:      "an image that is neither a path nor a section",
+			workspace: map[string]any{"wallpaper_image": 42, "wallpaper_ascii": "art"},
+			wantDrawn: "art",
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image": "must be the path of an image or a section with its path",
+			},
+		},
+		{
+			name:      "an image that cannot be opened",
+			workspace: map[string]any{"wallpaper_image_ascii": "/nonexistent.png", "wallpaper_ascii": "art"},
+			wantDrawn: "art",
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image_ascii": `open image "/nonexistent.png": ` +
+					"open /nonexistent.png: no such file or directory",
+			},
+		},
+		{
+			name:      "a picture that cannot be opened",
+			workspace: map[string]any{"wallpaper_image": "/nonexistent.png", "wallpaper_ascii": "art"},
+			wantDrawn: "art",
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image": `open image "/nonexistent.png": ` +
+					"open /nonexistent.png: no such file or directory",
+			},
+		},
+		{
+			name:      "a picture too large to draw",
+			workspace: map[string]any{"wallpaper_image": largePath, "wallpaper_ascii": "art"},
+			wantDrawn: "art",
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image": "image is 8193x1, larger than 8192x8192",
+			},
 		},
 		{
 			name:      "an unknown logo",
 			workspace: map[string]any{"wallpaper_logo": "c"},
 			logos:     logos,
-			wantErr:   `unknown logo "c", expected one of: a, b`,
+			wantErrs: map[string]string{
+				"workspace.wallpaper_logo": `unknown logo "c", expected one of: a, b`,
+			},
 		},
 		{
 			name:      "no logo without built-in logos",
@@ -1971,7 +2045,8 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 		{
 			name: "empty values are off",
 			workspace: map[string]any{
-				"wallpaper_image": "", "wallpaper_ascii": "", "wallpaper_logo": "b",
+				"wallpaper_image": "", "wallpaper_image_ascii": "", "wallpaper_ascii": "",
+				"wallpaper_logo": "b",
 			},
 			logos:     logos,
 			wantDrawn: "logob",
@@ -1980,8 +2055,8 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 		{
 			name: "an empty logo leaves the window blank",
 			workspace: map[string]any{
-				"wallpaper_image": "", "wallpaper_ascii": "", "wallpaper": "",
-				"wallpaper_logo": "",
+				"wallpaper_image": "", "wallpaper_image_ascii": "", "wallpaper_ascii": "",
+				"wallpaper": "", "wallpaper_logo": "",
 			},
 			logos: logos,
 		},
@@ -1999,7 +2074,8 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 			wallpaper := cfg.wallpaper()
 			comp := wallpaper.NewComponent()
 			comp.Resize(width, height)
-			w := cell.NewBufferWriter(context.Background(), width, height)
+			ctx := cell.ContextWithPixelSize(context.Background(), cell.PixelSize{Width: 10, Height: 20})
+			w := cell.NewBufferWriter(ctx, width, height)
 			comp.Draw(w)
 			// Collapses repeats so the cells of the image read as one.
 			var drawn []rune
@@ -2011,12 +2087,89 @@ func TestConfigWallpaperResolvesTheImageThenTheTextThenTheLogo(t *testing.T) {
 				}
 			}
 			assert.Equal(t, tc.wantDrawn, string(drawn))
-			assert.Equal(t, tc.wantFPS, cfg.intro().fps)
-			if tc.wantErr == "" {
-				assert.Empty(t, cfg.errors)
-			} else {
-				assert.EqualError(t, cfg.errors["workspace.wallpaper_logo"], tc.wantErr)
+			var pictures []image.Rectangle
+			for _, img := range w.Images() {
+				pictures = append(pictures, img.Visible())
 			}
+			assert.Equal(t, tc.wantPicture, pictures)
+			assert.Equal(t, tc.wantFPS, cfg.intro().fps)
+			errs := map[string]string{}
+			for key, err := range cfg.errors {
+				errs[key] = err.Error()
+			}
+			if tc.wantErrs == nil {
+				tc.wantErrs = map[string]string{}
+			}
+			assert.Equal(t, tc.wantErrs, errs)
+		})
+	}
+}
+
+func TestConfigWallpaperImageSection(t *testing.T) {
+	const lengthErr = `must be a number of cells, such as 40, or a percentage of the ` +
+		`window from 1% to 100%, such as "60%"`
+	cases := []struct {
+		name     string
+		section  map[string]any
+		want     imagecomp.Config
+		wantErrs map[string]string
+	}{
+		{
+			name:    "the defaults",
+			section: map[string]any{},
+			want:    defaultWallpaperImage,
+		},
+		{
+			name:    "cells and percentages",
+			section: map[string]any{"width": 40, "height": "100%", "fit": "cover"},
+			want: imagecomp.Config{
+				Width:  imagecomp.Length{N: 40},
+				Height: imagecomp.Length{N: 100, Percent: true},
+				Fit:    imagecomp.Cover,
+			},
+		},
+		{
+			name:    "cells written as a string",
+			section: map[string]any{"width": "40", "height": int64(10), "fit": "fill"},
+			want: imagecomp.Config{
+				Width:  imagecomp.Length{N: 40},
+				Height: imagecomp.Length{N: 10},
+				Fit:    imagecomp.Fill,
+			},
+		},
+		{
+			name:    "invalid values keep the defaults",
+			section: map[string]any{"width": "150%", "height": 0, "fit": "stretch"},
+			want:    defaultWallpaperImage,
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image.width":  lengthErr,
+				"workspace.wallpaper_image.height": lengthErr,
+				"workspace.wallpaper_image.fit": `unknown fit "stretch", ` +
+					"expected one of: contain, cover, fill",
+			},
+		},
+		{
+			name:    "values of the wrong type keep the defaults",
+			section: map[string]any{"width": true, "fit": 1},
+			want:    defaultWallpaperImage,
+			wantErrs: map[string]string{
+				"workspace.wallpaper_image.width": lengthErr,
+				"workspace.wallpaper_image.fit":   "type is invalid",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &ideConfig{errors: map[string]error{}}
+			assert.Equal(t, tc.want, cfg.wallpaperImageConfig(config.MapConfig(tc.section)))
+			errs := map[string]string{}
+			for key, err := range cfg.errors {
+				errs[key] = err.Error()
+			}
+			if tc.wantErrs == nil {
+				tc.wantErrs = map[string]string{}
+			}
+			assert.Equal(t, tc.wantErrs, errs)
 		})
 	}
 }
