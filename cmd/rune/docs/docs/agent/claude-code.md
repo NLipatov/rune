@@ -12,9 +12,10 @@ instead.
 [Claude Code](https://www.anthropic.com/claude-code) is Anthropic's
 third-party coding agent. It is **not** part of Rune Agent, but it runs
 inside a Rune terminal like any other CLI. Recent versions report their
-status to Rune automatically. With optional configuration, Claude Code
-can also raise Rune notifications and use Rune's language-server and
-syntax-tree tooling.
+status to Rune automatically. With the **claude-code** package and its
+Claude Code plugin, Claude Code also treats Rune as its IDE: it sees
+what you select, reviews its edits with you in Rune, checks Rune's
+diagnostics, and uses Rune's language servers.
 
 This guide is about pointing the harness you already use at Rune's
 capabilities. None of it is required to run Claude Code in Rune; it just
@@ -39,11 +40,134 @@ See Anthropic's [terminal status
 guide](https://code.claude.com/docs/en/terminal-config#see-session-status-in-your-terminal)
 for these requirements.
 
-## How Claude Code reaches Rune
+## Connect Claude Code to Rune
 
-The optional integrations below use [`runectl`](../develop/runectl.md),
-Rune's command-line companion. Install it from Rune's
-[console](../learn/console.md):
+Connecting takes a Rune package, which runs alongside each workspace,
+and a Claude Code plugin, which teaches Claude Code to use it. It
+requires Claude Code **v2.1.300 or later**.
+
+### 1. Install the package
+
+Install the package from Rune's [console](../learn/console.md):
+
+```
+pkg install claude-code
+```
+
+Each open workspace starts it, and Claude Code then finds the workspace
+as an IDE named **Rune**. Until the plugin is connected, Rune shows a
+dialog with the remaining steps; choose **Already installed** to dismiss
+it for good. It also closes by itself the first time the plugin
+connects.
+
+### 2. Install the plugin
+
+Start `claude` in a Rune terminal and run:
+
+```
+/plugin marketplace add unstablebuild/rune-claude-code
+/plugin install rune@unstablebuild
+```
+
+The plugin is installed once for your user and works in every Rune
+workspace.
+
+### 3. Start Claude Code in a Rune terminal
+
+The package turns on Claude Code's IDE auto-connect in Rune's terminals,
+so a session you start in one connects to Rune by itself. This applies
+to terminals opened after the package is installed.
+
+To connect only when you ask, set the variable to `false` under
+[`gui.env`](../config.md#gui) in your config, and start sessions with
+`claude --ide` or run `/ide` and pick Rune:
+
+```yaml
+gui:
+  env:
+    CLAUDE_CODE_AUTO_CONNECT_IDE: 'false'
+```
+
+### Check the connection
+
+In a Claude Code session started from a Rune terminal:
+
+- `/ide` lists **Rune** as connected.
+- `/mcp` lists the `plugin:rune:rune` server as connected.
+
+### What you get
+
+- **Your selection as context.** Select code in Rune and Claude Code
+  shows it beside the prompt and includes it with your next message.
+  Run `claude send` from Rune's [command
+  prompt](../learn/command-prompt.md) to insert an `@`-mention of the
+  current file, with the selected lines, into Claude Code's prompt.
+- **Edits reviewed in Rune.** When Claude Code proposes an edit, Rune
+  opens the change as a diff in a split beside your editor. Press `a`
+  (or `y`) to accept it, `r` (or `n`) to reject it, or `e` to edit the
+  proposal and save it to accept your version. `q` or `<esc>` closes the
+  diff and leaves the answer to Claude Code's prompt in the terminal.
+  Nothing is written to the file until you answer.
+- **Diagnostics after edits.** Claude Code checks the diagnostics Rune's
+  language servers report for each file it edits, and is told about any
+  new problems its edit introduced.
+- **Rune's language-server and syntax tools.** Claude Code can find
+  definitions, references, implementations, symbols and diagnostics, and
+  preview renames, through the same language servers Rune uses (the
+  `lsp_*` and `syntax_*` tools). It can also open a file in Rune
+  (`rune_open`), mark lines for you to look at (`rune_highlight`), and
+  post a Rune notification (`rune_notify`). The plugin includes a skill
+  that tells Claude Code when to prefer these over text search.
+- **Symbols in the prompt.** Type a qualified name such as `config.Lo`,
+  or `@` and the start of a package name, and Claude Code's prompt
+  offers matching symbols from the workspace. An `@`-mention of a
+  symbol, such as `@config.Load`, attaches the file that defines it.
+- **References beside text search.** When Claude Code's Grep tool
+  searches for an identifier, Rune adds the language server's references
+  to that symbol to the result, so Claude Code can tell real uses from
+  comments and other text.
+- **A diagnostics pane.** Run `/rune-diagnostics` in Claude Code to open
+  a pane listing the workspace's diagnostics; it refreshes after each
+  turn, and `r` refreshes it on demand. It needs a language server that
+  reports diagnostics for the whole workspace; otherwise the pane says
+  so.
+
+### Several workspaces
+
+Each Rune workspace serves its own connection, and Claude Code connects
+to the workspace that contains its working directory. When one
+workspace's root is inside another's, a session connects to the
+workspace whose terminal started it.
+
+### Troubleshooting
+
+- **The `rune` server failed in `/mcp`.** The session was not started in
+  a Rune terminal of a workspace with the package installed. The error
+  says to run `pkg install claude-code`. The rest of Claude Code works
+  as usual.
+- **Rune does not appear in `/ide`.** Check `claude --version`, start
+  Claude Code from the workspace's own Rune terminal, and make sure the
+  package is installed with `pkg current claude-code`.
+- **Claude Code does not connect by itself.** The terminal was opened
+  before the package was installed. Open a new terminal, or run `/ide`
+  and pick Rune.
+- **A status line asks you to update.** The package and the plugin are
+  released together. Update the package with `pkg install claude-code`
+  in Rune, or the plugin with `claude plugin update rune@unstablebuild`
+  in a terminal, as the line says.
+
+## Without the package and plugin
+
+You can also connect Claude Code to Rune by hand with
+[`runectl`](../develop/runectl.md), Rune's command-line companion. This
+gives Claude Code Rune's language-server and syntax tools, notifications,
+and skills, but not the IDE integration above: no shared selection, diff
+review in Rune, diagnostics after edits, or symbols in the prompt. The
+notification hooks below also work alongside the package and plugin.
+
+### Install runectl
+
+Install it from Rune's [console](../learn/console.md):
 
 ```
 pkg install runectl
@@ -55,7 +179,7 @@ environment and target that workspace automatically. Rune may ask you to
 authorize access when a capability is first used. A Claude Code session
 started outside Rune does not inherit this connection.
 
-## Notify Rune when Claude is done
+### Notify Rune when Claude is done
 
 Claude Code supports [hooks](https://code.claude.com/docs/en/hooks):
 shell commands it runs at lifecycle points such as finishing a turn or
@@ -117,7 +241,7 @@ The permission hook uses `jq` to read the tool name from the hook's JSON
 payload on stdin, so install `jq` if you use that example. Adjust the
 levels and wording to taste.
 
-## Use Rune as a Claude Code MCP server
+### Use Rune as a Claude Code MCP server
 
 `runectl` can also act as an [MCP](https://modelcontextprotocol.io)
 server, exposing Rune's syntax-tree and language-server tooling to any
@@ -170,7 +294,7 @@ offer `--dry-run` for previewing changes.
 
 :::
 
-## Install Rune's skills into Claude Code
+### Install Rune's skills into Claude Code
 
 Rune Agent ships a set of [Agent
 Skills](https://code.claude.com/docs/en/skills) that teach a
@@ -198,7 +322,7 @@ Every skill calls `runectl`, so it depends on
 runectl`). Together they give Claude Code the same grep-free, semantic
 workflow Rune Agent uses.
 
-### Make them discoverable
+#### Make them discoverable
 
 Claude Code discovers skills from `.claude/skills/` in your project and
 `~/.claude/skills/` in your home directory. The installed package exposes
@@ -227,7 +351,7 @@ Once the files are in place, Claude Code picks the skills up
 automatically and invokes them when a task calls for code navigation,
 diagnostics, or structural search.
 
-## Steer the harness with `CLAUDE.md`
+### Steer the harness with `CLAUDE.md`
 
 Claude Code reads a `CLAUDE.md` from your project the way Rune Agent
 reads [`AGENTS.md`](./intro.md#project-instructions). Use it to tell Claude
@@ -237,7 +361,7 @@ Pick the snippet that matches your setup. If you installed the Rune skills,
 prefer the skills-first version. If you only connected the Rune MCP server, use
 the direct MCP tools version instead.
 
-### Skills-first example
+#### Skills-first example
 
 Use this when you installed the `code-*` skills into Claude Code:
 
@@ -265,7 +389,7 @@ search when they apply.
   Prefer this over manual find-and-replace or ad hoc formatting commands.
 ```
 
-### Direct MCP tools example
+#### Direct MCP tools example
 
 Use this when you configured `runectl mcp` but did not install the skills:
 

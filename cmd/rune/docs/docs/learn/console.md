@@ -115,11 +115,14 @@ third-party extensions straight from a **public git repository** by its ID:
 | `pkg update-all` | Upgrade all installed packages to the latest version. Packages they require are installed or upgraded too, and listed under the package that required them. |
 | `pkg update-check` | Check for available updates across installed packages. |
 
-For example, to install Rune's agent and its command-line companion:
+For example, to install Rune's agent, its command-line companion, and
+the [Claude Code](../agent/claude-code.md#connect-claude-code-to-rune)
+integration:
 
 ```
 pkg install rune-agent
 pkg install runectl
+pkg install claude-code
 ```
 
 To install a third-party extension published in a git repository, use its
