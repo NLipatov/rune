@@ -305,6 +305,20 @@ func defaultAgentsConfig(systemPrompt string) *agent.Cfg {
 	})
 }
 
+// resolveMaxTokens reads max_tokens, the global max-output-token budget
+// the console's `max_tokens` command persists. Zero means the
+// provider/config default; non-positive or malformed values map to it.
+func resolveMaxTokens(pconfig config.Config) int {
+	v, err := pconfig.GetInt("max_tokens")
+	if err != nil {
+		if !errors.Is(err, config.ErrNotFound) {
+			slog.Warn("get 'max_tokens' from config", "error", err)
+		}
+		return 0
+	}
+	return max(0, v)
+}
+
 func newCommandEventHandler(
 	ctx context.Context, ed textapi.Editor, w *extensionapi.Workspace,
 	pconfig config.Config,
@@ -431,6 +445,7 @@ func newCommandEventHandler(
 	} else if err != nil && !errors.Is(err, config.ErrNotFound) {
 		slog.Warn("get 'auto_compact_ratio' from config", "error", err)
 	}
+	ret.defaultMaxTokens = resolveMaxTokens(pconfig)
 	ret.reviewContextLines = resolveReviewContextLines(pconfig)
 	ret.git = vctrl.NewGitCommand(cwd, executor, fs)
 	// The host-provided llmapi.Service (w.LLM(ctx)) owns provider auth,
@@ -700,6 +715,7 @@ func newCommandEventHandler(
 			Hooks:               ret.hookRunner,
 		},
 	)
+	ret.queryAgent.SetMaxOutputTokens(ret.defaultMaxTokens)
 
 	ret.agentsConfig = defaultAgentsConfig(ret.systemPrompt)
 
@@ -985,9 +1001,16 @@ func (h *aiEditorHandler) setDefaultMaxTokens(n int) {
 	h.defaultMaxTokens = n
 	h.defaultsMu.Unlock()
 	h.queryAgent.SetMaxOutputTokens(n)
-	h.openChatAgents.Range(func(_, v any) bool {
+	h.openChatAgents.Range(func(id, v any) bool {
 		if ag, ok := v.(*agent.Agent); ok {
 			ag.SetMaxOutputTokens(n)
+		}
+		if sc, ok := h.openChats.Load(id); ok {
+			if sc, ok := sc.(syncComponent); ok {
+				sc.setStatusBarState(func(s *dialoguetui.StatusBarState) {
+					s.MaxTokens = n
+				})
+			}
 		}
 		return true
 	})

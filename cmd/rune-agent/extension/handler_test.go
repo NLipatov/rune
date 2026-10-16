@@ -35,11 +35,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
+	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/api/llmapi"
 	"github.com/unstablebuild/rune-go-sdk/api/semanticapi"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
+	"github.com/unstablebuild/rune-go-sdk/handler/repl"
 	"github.com/unstablebuild/rune-go-sdk/term"
 
 	"unstable.build/rune/cmd/rune-agent/agent"
@@ -351,6 +353,92 @@ func TestChatCompactUsesChatMaxOutputTokens(t *testing.T) {
 	require.Eventually(t, func() bool { return len(svc.Requests()) > 0 },
 		5*time.Second, 10*time.Millisecond, "/compact never reached the LLM")
 	assert.Equal(t, 50_000, svc.Requests()[0].Request.MaxOutputTokens)
+}
+
+func TestConsoleMaxTokensUpdatesOpenChats(t *testing.T) {
+	const dialogueID = "rolling-fox"
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	layout, err := dialoguetui.ParseStatusBarLayout(`{{ .Model }}  max {{ .MaxTokens }}`)
+	require.NoError(t, err)
+	entry := llmapi.ModelEntry{Provider: "test", Name: "test-model", ContextWindow: 128_000}
+	svc := llmtest.New([]llmapi.ModelEntry{entry})
+	fs := nopFileSystem{}
+	store := newMemDialogueStore()
+	skillReg := skills.NewRegistry(fs, dirURI(""), nil, nil)
+	h := &aiEditorHandler{
+		ctx:          ctx,
+		llmSvc:       svc,
+		defaultModel: "test-model",
+		cfg: dialoguetui.ComponentConfig{
+			StatusBar: dialoguetui.StatusBarConfig{Enabled: true, Layout: layout},
+		},
+		dialogueStore:  store,
+		wm:             &recordingWindowManager{},
+		n:              stubNotifications{},
+		p:              term.NopInterrupter(),
+		config:         configedit.NopConfig(),
+		skillRegistry:  skillReg,
+		toolRegistry:   agent.NewRegistry(),
+		agentsConfig:   agent.NewConfig([]agent.Definition{{ID: "default", AllowAny: true}}),
+		cwd:            dirURI(""),
+		fs:             fs,
+		memoryDataPath: t.TempDir(),
+		queryAgent: agent.NewAgent(svc, agent.NewRegistry(), skillReg, store,
+			agent.NoMemory(), agent.Config{Model: entry}),
+	}
+	c, err := h.newChat(textapi.Command{Args: []string{dialogueID}}, workspaceapi.URI{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, c.content.Close()) })
+
+	handlertest.RunHandlerSequence(t, c.content, frameWidth, frameHeight, []handlertest.SequenceTestCase{{
+		Expected: frame(
+			blanks(), blanks(), blanks(), blanks(), blanks(), blanks(),
+			"   ┌───────────────────────────────┐    ",
+			"   │▐                              │    ",
+			"   └───────────────────────────────┘    ",
+			"test-model",
+		),
+	}})
+
+	it, err := h.newAgentShell().HandleCommand(ctx,
+		repl.Command{Name: "max_tokens", Args: []string{"64000"}}, repl.NopProgressWriter())
+	require.NoError(t, err)
+	require.NoError(t, it.Close())
+
+	handlertest.RunHandlerSequence(t, c.content, frameWidth, frameHeight, []handlertest.SequenceTestCase{{
+		Expected: frame(
+			blanks(), blanks(), blanks(), blanks(), blanks(), blanks(),
+			"   ┌───────────────────────────────┐    ",
+			"   │▐                              │    ",
+			"   └───────────────────────────────┘    ",
+			"test-model  max 64k",
+		),
+	}})
+
+	assert.Equal(t, 64000, h.queryAgent.MaxOutputTokens())
+	ag, ok := h.openChatAgents.Load(dialogueID)
+	require.True(t, ok)
+	assert.Equal(t, 64000, ag.(*agent.Agent).MaxOutputTokens())
+}
+
+func TestResolveMaxTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want int
+	}{
+		{name: "unset uses the provider default", cfg: map[string]any{}, want: 0},
+		{name: "persisted value", cfg: map[string]any{"max_tokens": 200_000}, want: 200_000},
+		{name: "non-positive uses the provider default", cfg: map[string]any{"max_tokens": -1}, want: 0},
+		{name: "wrong type uses the provider default", cfg: map[string]any{"max_tokens": "lots"}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolveMaxTokens(config.MapConfig(tt.cfg)))
+		})
+	}
 }
 
 func TestE2ECtrlCDismissesSelectionPrompt(t *testing.T) {
