@@ -236,6 +236,25 @@ command:
 
 
 # ---------------------------------------------------------------------------
+# Wallpaper
+# ---------------------------------------------------------------------------
+workspace:
+  wallpaper_logo: rune                    # rune | unstable_build | ""
+#   wallpaper_image:
+#     path:   ~/Pictures/wallpaper.png
+#     width:  100%                        # cells, or a percentage of the window
+#     height: 100%
+#     fit:    cover                       # contain | cover | fill
+#   wallpaper_image_ascii: ~/Pictures/my-logo.png
+#   wallpaper_density_characters: " ░▒▓█"
+#   wallpaper_ascii: |
+#     ┌─────────────┐
+#     │   R U N E   │
+#     └─────────────┘
+#   wallpaper_attr:            {fg: "#D34728", bg: default}
+#   wallpaper_background_attr: {bg: default}
+
+# ---------------------------------------------------------------------------
 # Animations
 #
 # `active_content_tab` plays over tabs with work in progress, such as an agent
@@ -243,6 +262,7 @@ command:
 # shaders: blaze, burn, inferno, noise, pulse, shine, trippy.
 # ---------------------------------------------------------------------------
 # animations:
+#   intro: true
 #   loading_workspace: true
 #   open_workspace:
 #     enabled:  true

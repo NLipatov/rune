@@ -7,7 +7,8 @@ sidebar_position: 46
 Rune shows a wallpaper in every [window](./layout-management.md#windows) that
 has no tab to show. By default it is one of Rune's built-in logos, which plays
 an intro when Rune starts. You can replace it with ASCII or Unicode text that
-Rune renders directly, or give Rune a PNG image to ASCII encode it.
+Rune renders directly, or give Rune a PNG image to show as a picture, up to the
+whole window, or to ASCII encode.
 
 Wallpaper settings live under `workspace`, so you can set one globally in
 `~/.rune/config.yaml` or `~/.rune/config.star`. A project can also provide its
@@ -23,6 +24,21 @@ into the workspace:
   alt="Rune displaying a Python logo converted from a PNG into colored ASCII art, with the wallpaper configuration open beside it"
 />
 
+## Which wallpaper Rune shows
+
+Rune shows the first of these settings that is not empty:
+
+1. [`wallpaper_image`](#show-an-image): a PNG drawn as a picture.
+2. [`wallpaper_image_ascii`](#encode-an-image-to-ascii): a PNG encoded as
+   ASCII art.
+3. [`wallpaper_ascii`](#use-ascii-art-directly): ASCII art drawn as written.
+4. [`wallpaper_logo`](#choose-the-built-in-logo): a built-in logo.
+
+Setting one takes over from those below it, so you never need to clear the
+others. Set all four to `""` to leave windows blank. A setting Rune cannot use,
+such as an image it cannot open, is reported as a configuration error and
+skipped in favor of the next one.
+
 ## Choose the built-in logo
 
 Without a wallpaper of your own, Rune draws the built-in logo that
@@ -30,16 +46,20 @@ Without a wallpaper of your own, Rune draws the built-in logo that
 
 | Logo | Wallpaper | Intro |
 | --- | --- | --- |
-| `rune` (default) | The Rune logo, drawn as a full-resolution picture. | Braille dots fly in and assemble the logo, then bloom into its picture. |
-| `unstable_build` | The Unstable Build logo, drawn as colored ASCII art. | Flames sweep across the window and burn the logo in. |
+| `rune` | The Rune logo, drawn as a full-resolution picture. | Braille dots fly in and assemble the logo, then bloom into its picture. |
+| `unstable_build` (default) | The Unstable Build logo, drawn as colored ASCII art. | Flames sweep across the window and burn the logo in. |
+
+The config file Rune writes when you first set it up picks `rune`. A config
+file from an earlier version of Rune does not set `wallpaper_logo`, so it keeps
+the Unstable Build logo until you pick the Rune logo:
 
 ```yaml tab
 workspace:
-  wallpaper_logo: unstable_build
+  wallpaper_logo: rune
 ```
 
 ```python tab
-config["workspace"]["wallpaper_logo"] = "unstable_build"
+config["workspace"]["wallpaper_logo"] = "rune"
 ```
 
 To leave empty windows blank, set `wallpaper_logo` to an empty string, with no
@@ -129,22 +149,80 @@ one background. To put the art on a background of its own, leave
 Without a `wallpaper_attr`, ASCII art is drawn in your theme's blue in the
 GUI. In a terminal it is drawn in `#D34728` on a `#1e1e1e` background.
 
-## Encode an image to ASCII
+## Show an image
 
-Choose `workspace.wallpaper_image` to have Rune turn an image into colored
-characters as it renders:
+Choose `workspace.wallpaper_image` to show an image as a picture:
 
 ```yaml tab
 workspace:
-  wallpaper_image: ~/Pictures/my-logo.png
+  wallpaper_image: ~/Pictures/wallpaper.png
+```
+
+```python tab
+config["workspace"]["wallpaper_image"] = "~/Pictures/wallpaper.png"
+```
+
+A path alone draws the image as large as it fits in the central 60% of the
+window's width and height, keeping its proportions. To size it yourself, set
+`wallpaper_image` to a section:
+
+| Property | What it does |
+| --- | --- |
+| `path` | Path to the PNG. `""` turns the picture off. |
+| `width` | The most columns the picture takes up: a number of cells, such as `40`, or a percentage of the window's width, such as `"60%"`. Defaults to `"60%"`. |
+| `height` | The most rows the picture takes up, in cells or as a percentage of the window's height. Defaults to `"60%"`. |
+| `fit` | How the image is scaled into `width` and `height`: `contain` keeps all of it, `cover` fills them and cuts off evenly what overflows, and `fill` stretches it over them. `contain` and `cover` keep the image's proportions. Defaults to `contain`. |
+
+The picture is centered in the window. To make it fullscreen, have it cover
+the whole window:
+
+```yaml tab
+workspace:
+  wallpaper_image:
+    path: ~/Pictures/wallpaper.png
+    width: 100%
+    height: 100%
+    fit: cover
+```
+
+```python tab
+config["workspace"]["wallpaper_image"] = {
+    "path": "~/Pictures/wallpaper.png",
+    "width": "100%",
+    "height": "100%",
+    "fit": "cover",
+}
+```
+
+The image must currently be a **PNG** of at most 8192 pixels on each side, and
+its path follows the same rules as
+[`wallpaper_image_ascii`](#encode-an-image-to-ascii). The transparent parts of
+the image show the window's background, which `wallpaper_background_attr`
+sets.
+
+A terminal cannot draw pictures, so with `rune --tui` Rune encodes the image as
+ASCII art in the same place, with the characters of
+[`wallpaper_density_characters`](#choose-the-conversion-characters).
+
+## Encode an image to ASCII
+
+Choose `workspace.wallpaper_image_ascii` to have Rune turn an image into
+colored characters as it renders:
+
+```yaml tab
+workspace:
+  wallpaper_image_ascii: ~/Pictures/my-logo.png
   wallpaper_background_attr:
     bg: default
 ```
 
 ```python tab
-config["workspace"]["wallpaper_image"] = "~/Pictures/my-logo.png"
+config["workspace"]["wallpaper_image_ascii"] = "~/Pictures/my-logo.png"
 config["workspace"]["wallpaper_background_attr"] = attr(bg = "default")
 ```
+
+Before Rune drew pictures, `wallpaper_image` encoded the image as ASCII. To
+keep that look, rename it to `wallpaper_image_ascii` in your config.
 
 The image must currently be a **PNG**. `~` in the path expands to your home
 directory, and `$VARIABLES` expand to their values. A relative path is
@@ -186,18 +264,19 @@ background is probably transparent.
 
 ## Choose the conversion characters
 
-For image wallpapers, `wallpaper_density_characters` controls the characters
-Rune uses for different brightness levels. Write them from the least visible
-to the most dense:
+For images encoded as ASCII, by `wallpaper_image_ascii` or by `wallpaper_image`
+in a terminal, `wallpaper_density_characters` controls the characters Rune uses
+for different brightness levels. Write them from the least visible to the most
+dense:
 
 ```yaml tab
 workspace:
-  wallpaper_image: ~/Pictures/my-logo.png
+  wallpaper_image_ascii: ~/Pictures/my-logo.png
   wallpaper_density_characters: " ░▒▓█"
 ```
 
 ```python tab
-config["workspace"]["wallpaper_image"] = "~/Pictures/my-logo.png"
+config["workspace"]["wallpaper_image_ascii"] = "~/Pictures/my-logo.png"
 config["workspace"]["wallpaper_density_characters"] = " ░▒▓█"
 ```
 
@@ -225,23 +304,25 @@ which it reports as a configuration error.
 
 | Setting | What it does |
 | --- | --- |
-| `workspace.wallpaper_image` | Path to a PNG that Rune encodes as colored ASCII art. Relative paths start from the directory Rune was started in. Defaults to `""`, no image. |
+| `workspace.wallpaper_image` | Path to a PNG that Rune shows as a picture, or a section with its `path`, `width`, `height` and `fit` (see [Show an image](#show-an-image)). Defaults to a section whose `path` is `""`, no picture. |
+| `workspace.wallpaper_image_ascii` | Path to a PNG that Rune encodes as colored ASCII art. Relative paths start from the directory Rune was started in. Defaults to `""`, no image. |
 | `workspace.wallpaper_ascii` | ASCII art drawn as written and centered as a block. Defaults to `""`, no art. |
-| `workspace.wallpaper_logo` | Built-in logo shown when no other wallpaper is set: `rune` or `unstable_build`. Defaults to `rune`; `""` shows no logo. |
-| `workspace.wallpaper_density_characters` | Brightness ramp used for image conversion, ordered from least to most dense. Defaults to `" ▓▓▓▓"`. |
+| `workspace.wallpaper_logo` | Built-in logo shown when no other wallpaper is set: `rune` or `unstable_build`. Defaults to `unstable_build`, and the config file Rune writes when you first set it up sets `rune`; `""` shows no logo. |
+| `workspace.wallpaper_density_characters` | Brightness ramp used to encode images as ASCII, ordered from least to most dense. Defaults to `" ▓▓▓▓"`. |
 | `workspace.wallpaper_attr` | Foreground, background, and flags of the characters of `wallpaper_ascii`. Ignored by image wallpapers, whose colors come from the image. |
 | `workspace.wallpaper_background_attr` | Background and flags of the window behind any wallpaper, including the built-in logo. Once set, its `bg` also replaces the `bg` of `wallpaper_attr`. |
 | `animations.intro` | Plays the intro of the built-in logo when Rune starts. Defaults to `true`. |
 
-Rune shows the first of these wallpapers that is not empty, in this order:
-`wallpaper_image`, then `wallpaper_ascii`, then the built-in logo of
-`wallpaper_logo`. When all three are empty, the window stays blank. If Rune
-cannot open or decode the image, it reports a configuration error and moves on
-to `wallpaper_ascii`. A `wallpaper_ascii` that is not a string is reported as
-a configuration error too, and Rune moves on to the built-in logo. A
-`wallpaper_logo` that names no built-in logo is reported as a configuration
-error, and the window stays blank. In a terminal, it shows the Unstable Build
-logo instead.
+Rune shows the first of `wallpaper_image`, `wallpaper_image_ascii`,
+`wallpaper_ascii` and `wallpaper_logo` that is not empty (see
+[Which wallpaper Rune shows](#which-wallpaper-rune-shows)). If Rune cannot open
+or decode an image, it reports a configuration error and moves on to the next
+wallpaper. A `width`, `height` or `fit` of `wallpaper_image` that Rune cannot
+read is reported as a configuration error, and Rune uses its default. A
+`wallpaper_ascii` that is not a string is reported as a configuration error
+too, and Rune moves on to the built-in logo. A `wallpaper_logo` that names no
+built-in logo is reported as a configuration error, and the window stays blank.
+In a terminal, it shows the Unstable Build logo instead.
 
 ## What happens under the hood
 
@@ -251,8 +332,10 @@ window whose tab you close while every other tab is already shown in a
 window. Showing a tab in the window replaces it. This is why every empty
 window in a split layout can show one independently.
 
-The art of `wallpaper_ascii` is centered and drawn without conversion. For a
-PNG, Rune:
+The art of `wallpaper_ascii` is centered and drawn without conversion. The
+picture of `wallpaper_image` is laid out on whole cells, for the size of the
+GUI's font, so it is redrawn to fit when the window or the font size changes.
+For the PNG of `wallpaper_image_ascii`, Rune:
 
 1. resizes the image, preserving its proportions, to fit the central 60% of
    the window's width and 80% of its height;

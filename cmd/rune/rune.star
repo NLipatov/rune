@@ -954,7 +954,7 @@ config = {
         # shown; set all four to "" for blank windows.
         # "rune" or "unstable_build". rune --tui always shows
         # "unstable_build".
-        "wallpaper_logo":               "rune",
+        "wallpaper_logo":               "unstable_build",
         "wallpaper_image": { # this takes a file path string, or the following object
             "path":   "",
             "width":  "60%", # or number of cells
