@@ -2248,20 +2248,244 @@ func TestWindowBarMoveDrag(t *testing.T) {
 	assert.True(t, handled)
 	assert.Equal(t, term.Coordinates{X: 6, Y: 3}, floatWin.Position())
 	// drag across the root tile: the pin must survive crossing windows
-	// and the position is clamped to keep the window fully visible
+	// and the window may hang past the bottom edge
 	_, handled = wm.Handle(mouseEv(term.MouseLeft, 20, 8))
 	assert.True(t, handled)
-	assert.Equal(t, term.Coordinates{X: 16, Y: 7}, floatWin.Position())
+	assert.Equal(t, term.Coordinates{X: 16, Y: 8}, floatWin.Position())
 	_, handled = wm.Handle(mouseEv(term.MouseRelease, 20, 8))
 	assert.True(t, handled)
-	assert.Equal(t, term.Coordinates{X: 16, Y: 7}, floatWin.Position())
+	assert.Equal(t, term.Coordinates{X: 16, Y: 8}, floatWin.Position())
 
 	assert.Zero(t, contentEvents, "drag events must not leak into float content")
 	assert.Zero(t, rootEvents, "drag events must not leak into tile content")
 
 	// after release, a fresh press inside content dispatches normally
-	wm.Handle(mouseEv(term.MouseLeft, 17, 8))
+	wm.Handle(mouseEv(term.MouseLeft, 17, 9))
 	assert.Equal(t, 1, contentEvents)
+}
+
+func xy(x, y int) term.Coordinates {
+	return term.Coordinates{X: x, Y: y}
+}
+
+// The window bar tests below drive the 8x5 float of prepareWindowBarTest
+// in its 30x12 manager, where the float may hang past any edge as long
+// as three cells of its bar stay on screen: its x is kept within -5 and
+// 27, and its y within 0 and 11.
+
+func TestWindowBarMoveDragPastEdges(t *testing.T) {
+	// The float is grabbed by its bar at (4, 0).
+	suite := []struct {
+		name  string
+		drags []term.Coordinates
+		want  term.Coordinates
+	}{
+		{"past the left edge", []term.Coordinates{xy(1, 3)}, xy(-3, 3)},
+		{"past the right edge", []term.Coordinates{xy(29, 3)}, xy(25, 3)},
+		{"past the bottom edge", []term.Coordinates{xy(10, 11)}, xy(6, 11)},
+		{"past the bottom-left corner", []term.Coordinates{xy(0, 11)}, xy(-4, 11)},
+		{"past the bottom-right corner", []term.Coordinates{xy(29, 11)}, xy(25, 11)},
+		{"far past the left edge keeps three bar cells on screen",
+			[]term.Coordinates{xy(-20, 3)}, xy(-5, 3)},
+		{"far past the right edge keeps three bar cells on screen",
+			[]term.Coordinates{xy(60, 3)}, xy(27, 3)},
+		{"above the top edge keeps the bar row on screen",
+			[]term.Coordinates{xy(10, -2)}, xy(6, 0)},
+		{"below the bottom edge keeps the bar row on screen",
+			[]term.Coordinates{xy(10, 20)}, xy(6, 11)},
+		{"back on screen from past the bottom edge",
+			[]term.Coordinates{xy(10, 11), xy(10, 4)}, xy(6, 4)},
+		{"back on screen from far past the left edge keeps the grab offset",
+			[]term.Coordinates{xy(-20, 3), xy(10, 3)}, xy(6, 3)},
+		{"back on screen from far past the right edge keeps the grab offset",
+			[]term.Coordinates{xy(60, 3), xy(10, 3)}, xy(6, 3)},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, _, _, floatWin := prepareWindowBarTest(t)
+			wm.Handle(mouseEv(term.MouseLeft, 4, 0))
+			for _, at := range test.drags {
+				_, handled := wm.Handle(mouseEv(term.MouseLeft, at.X, at.Y))
+				require.True(t, handled)
+			}
+			last := test.drags[len(test.drags)-1]
+			wm.Handle(mouseEv(term.MouseRelease, last.X, last.Y))
+
+			assert.Equal(t, test.want, floatWin.Position())
+			assert.Equal(t, 8, floatWin.Width(), "the window keeps its size")
+			assert.Equal(t, 5, floatWin.Height(), "the window keeps its size")
+		})
+	}
+}
+
+func TestWindowBarStaysGrabbablePastEdges(t *testing.T) {
+	suite := []struct {
+		name   string
+		place  term.Coordinates
+		placed term.Coordinates
+		// press is on a visible cell of the bar that moves the window.
+		press, to term.Coordinates
+		want      term.Coordinates
+	}{
+		{"past the bottom edge", xy(10, 20), xy(10, 11), xy(14, 11), xy(14, 5), xy(10, 5)},
+		{"past the left edge", xy(-20, 3), xy(-5, 3), xy(1, 3), xy(10, 3), xy(4, 3)},
+		{"past the right edge", xy(40, 3), xy(27, 3), xy(29, 3), xy(20, 3), xy(18, 3)},
+		{"past the bottom-left corner",
+			xy(-20, 20), xy(-5, 11), xy(1, 11), xy(10, 4), xy(4, 4)},
+		{"past the bottom-right corner",
+			xy(40, 20), xy(27, 11), xy(29, 11), xy(20, 4), xy(18, 4)},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, _, _, floatWin := prepareWindowBarTest(t)
+			require.True(t, wm.comp.MoveWindow(floatWin.Window, test.place))
+			require.Equal(t, test.placed, floatWin.Position())
+
+			_, handled := wm.Handle(mouseEv(term.MouseLeft, test.press.X, test.press.Y))
+			require.True(t, handled)
+			require.Equal(t, winDragMove, wm.winDrag)
+			wm.Handle(mouseEv(term.MouseLeft, test.to.X, test.to.Y))
+			wm.Handle(mouseEv(term.MouseRelease, test.to.X, test.to.Y))
+			assert.Equal(t, test.want, floatWin.Position())
+		})
+	}
+}
+
+func TestWindowBarPressPastEdges(t *testing.T) {
+	// At its rightmost, the float shows its top-left corner, close icon
+	// and one bar cell; at its leftmost, two bar cells and its top-right
+	// corner.
+	suite := []struct {
+		name       string
+		place      term.Coordinates
+		press      term.Coordinates
+		wantDrag   winDragMode
+		wantClosed bool
+	}{
+		{"the corner past the right edge resizes",
+			xy(27, 3), xy(27, 3), winDragTop | winDragLeft, false},
+		{"the close icon past the right edge closes", xy(27, 3), xy(28, 3), 0, true},
+		{"the last bar cell past the right edge moves", xy(27, 3), xy(29, 3), winDragMove, false},
+		{"the first bar cell past the left edge moves", xy(-5, 3), xy(0, 3), winDragMove, false},
+		{"the second bar cell past the left edge moves", xy(-5, 3), xy(1, 3), winDragMove, false},
+		{"the corner past the left edge resizes",
+			xy(-5, 3), xy(2, 3), winDragTop | winDragRight, false},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, _, _, floatWin := prepareWindowBarTest(t)
+			require.True(t, wm.comp.MoveWindow(floatWin.Window, test.place))
+			require.Equal(t, test.place, floatWin.Position())
+
+			_, handled := wm.Handle(mouseEv(term.MouseLeft, test.press.X, test.press.Y))
+			assert.True(t, handled)
+			assert.Equal(t, test.wantDrag, wm.winDrag)
+			assert.Equal(t, test.wantClosed, floatWin.Closed())
+		})
+	}
+}
+
+func TestWindowResizeDragPastEdges(t *testing.T) {
+	suite := []struct {
+		name      string
+		place     term.Coordinates
+		press, to term.Coordinates
+		wantDrag  winDragMode
+		want      term.Coordinates
+		w, h      int
+	}{
+		{"the top-left corner of a window past the bottom edge pins its bottom edge",
+			xy(10, 9), xy(10, 9), xy(8, 7), winDragTop | winDragLeft, xy(8, 7), 10, 7},
+		{"the left edge of a window past the bottom edge pins its right edge",
+			xy(10, 9), xy(10, 10), xy(6, 10), winDragLeft, xy(6, 9), 12, 5},
+		{"the top-left corner of a window past the right edge pins its right edge",
+			xy(25, 4), xy(25, 4), xy(23, 2), winDragTop | winDragLeft, xy(23, 2), 10, 7},
+		{"the left edge of a window past the right edge pins its right edge",
+			xy(25, 4), xy(25, 6), xy(20, 6), winDragLeft, xy(20, 4), 13, 5},
+		{"the right edge of a window past the left edge pins its left edge",
+			xy(-3, 4), xy(4, 6), xy(9, 6), winDragRight, xy(-3, 4), 13, 5},
+		{"the bottom edge of a window past the left edge pins its top edge",
+			xy(-3, 4), xy(2, 8), xy(2, 10), winDragBottom, xy(-3, 4), 8, 7},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, _, _, floatWin := prepareWindowBarTest(t)
+			require.True(t, wm.comp.MoveWindow(floatWin.Window, test.place))
+			require.Equal(t, test.place, floatWin.Position())
+
+			_, handled := wm.Handle(mouseEv(term.MouseLeft, test.press.X, test.press.Y))
+			require.True(t, handled)
+			require.Equal(t, test.wantDrag, wm.winDrag)
+			wm.Handle(mouseEv(term.MouseLeft, test.to.X, test.to.Y))
+			wm.Handle(mouseEv(term.MouseRelease, test.to.X, test.to.Y))
+
+			assert.Equal(t, test.want, floatWin.Position())
+			assert.Equal(t, test.w, floatWin.Width())
+			assert.Equal(t, test.h, floatWin.Height())
+		})
+	}
+}
+
+func TestWindowManagerCursorHiddenPastEdges(t *testing.T) {
+	minimizeAnother := func(
+		minimize func(component.Window, int) bool,
+	) func(*testing.T, *WindowManager) {
+		return func(t *testing.T, wm *WindowManager) {
+			win := wm.FloatingWindow(
+				handler.StaticFloating(handler.NewTestHandler(), 2, 2),
+				component.FloatingConfig{})
+			require.True(t, minimize(win.Window, 0))
+		}
+	}
+	// The framed content starts one cell into the float, so its cursor
+	// at content (x, y) sits at the float's position plus (x+1, y+1).
+	suite := []struct {
+		name   string
+		setup  func(t *testing.T, wm *WindowManager)
+		place  term.Coordinates
+		cursor term.Coordinates
+		want   term.Coordinates
+		show   bool
+	}{
+		{name: "on screen", place: xy(4, 3), cursor: xy(1, 1), want: xy(6, 5), show: true},
+		{name: "outside the content", place: xy(4, 3), cursor: xy(6, 1), want: xy(11, 5)},
+		{name: "on the last column before the right edge",
+			place: xy(23, 3), cursor: xy(5, 1), want: xy(29, 5), show: true},
+		{name: "past the right edge", place: xy(24, 3), cursor: xy(5, 1), want: xy(30, 5)},
+		{name: "on the first column after the left edge",
+			place: xy(-3, 3), cursor: xy(2, 1), want: xy(0, 5), show: true},
+		{name: "past the left edge", place: xy(-3, 3), cursor: xy(1, 1), want: xy(-1, 5)},
+		{name: "on the last row before the bottom edge",
+			place: xy(4, 9), cursor: xy(1, 1), want: xy(6, 11), show: true},
+		{name: "past the bottom edge", place: xy(4, 9), cursor: xy(1, 2), want: xy(6, 12)},
+		{name: "behind a window minimized below",
+			setup: minimizeAnother(component.Window.MinimizeDown),
+			place: xy(4, 8), cursor: xy(1, 2), want: xy(6, 11)},
+		{name: "above a window minimized below",
+			setup: minimizeAnother(component.Window.MinimizeDown),
+			place: xy(4, 8), cursor: xy(1, 1), want: xy(6, 10), show: true},
+		{name: "behind a window minimized to the left",
+			setup: minimizeAnother(component.Window.MinimizeLeft),
+			place: xy(-2, 3), cursor: xy(1, 1), want: xy(0, 5)},
+		{name: "beside a window minimized to the left",
+			setup: minimizeAnother(component.Window.MinimizeLeft),
+			place: xy(-2, 3), cursor: xy(2, 1), want: xy(1, 5), show: true},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float, _, floatWin := prepareWindowBarTest(t)
+			if test.setup != nil {
+				test.setup(t, wm)
+			}
+			float.CursorPos = test.cursor
+			require.True(t, wm.comp.MoveWindow(floatWin.Window, test.place))
+			require.Equal(t, test.place, floatWin.Position())
+
+			pos, _, show := wm.Cursor()
+			assert.Equal(t, test.want, pos)
+			assert.Equal(t, test.show, show)
+		})
+	}
 }
 
 // prepareFloatingBarTest builds a 30x12 manager with one tile and a
@@ -2308,6 +2532,15 @@ func TestFloatingBarDragLifecycle(t *testing.T) {
 				mouseEv(term.MouseRelease, 12, 5),
 			},
 			want: []barEvent{barDrag(10, 3), barDrag(12, 5), barDrop(12, 5)},
+		},
+		{
+			name: "a drag past the bottom edge drops where the mouse is",
+			seq: []term.Event{
+				mouseEv(term.MouseLeft, 4, 0),
+				mouseEv(term.MouseLeft, 10, 11),
+				mouseEv(term.MouseRelease, 10, 11),
+			},
+			want: []barEvent{barDrag(10, 11), barDrop(10, 11)},
 		},
 		{
 			name: "a release without a move cancels instead of dropping",

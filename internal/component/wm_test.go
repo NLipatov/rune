@@ -17,6 +17,7 @@
 package component
 
 import (
+	"cmp"
 	"fmt"
 	"testing"
 
@@ -1194,7 +1195,7 @@ func TestWindowManagerMinimize(t *testing.T) {
                     
                     
                     
-    X               
+                    
                     
                     
                     
@@ -2599,56 +2600,665 @@ func TestWindowManagerToggleMaximize(t *testing.T) {
 	assert.False(t, wm.ToggleMaximize(win))
 }
 
-func TestWindowManagerMoveWindow(t *testing.T) {
-	cfg := DefaultWindowManagerConfig()
-	cfg.NoMaxSize = true
-	wm, tile := NewWindowManager(&component.TestComponent{Ch: 'C'}, cfg)
+// floatGeometry is where a window sits and how large it is.
+type floatGeometry struct {
+	pos  term.Coordinates
+	w, h int
+}
+
+func geometry(x, y, w, h int) floatGeometry {
+	return floatGeometry{pos: term.Coordinates{X: x, Y: y}, w: w, h: h}
+}
+
+func geometryOf(win Window) floatGeometry {
+	return floatGeometry{pos: win.Position(), w: win.Width(), h: win.Height()}
+}
+
+func xy(x, y int) term.Coordinates {
+	return term.Coordinates{X: x, Y: y}
+}
+
+// newFloatTestManager returns a 20x8 manager holding a tile of 'C' and
+// a float of w by h cells of 'B', which the default config frames into
+// a window two cells wider and taller.
+func newFloatTestManager(
+	t *testing.T, config func(*WindowManagerConfig), w, h int, cfg FloatingConfig,
+) (wm *WindowManager, tile, float Window) {
+	t.Helper()
+	wmCfg := DefaultWindowManagerConfig()
+	if config != nil {
+		config(&wmCfg)
+	}
+	wm, tile = NewWindowManager(&component.TestComponent{Ch: 'C'}, wmCfg)
 	wm.Resize(20, 8)
-	// 2x2 content + frame = 4x4 window
+	float = wm.FloatingWindow(
+		component.StaticFloating(&component.TestComponent{Ch: 'B'}, w, h), cfg)
+	return wm, tile, float
+}
+
+// newMinimizedFloat opens a 2x2 float of 'm' and minimizes it.
+func newMinimizedFloat(
+	t *testing.T, wm *WindowManager, minimize func(Window, int) bool,
+) Window {
+	t.Helper()
 	win := wm.FloatingWindow(
-		component.StaticFloating(&component.TestComponent{Ch: 'B'}, 2, 2),
-		FloatingConfig{Alignment: component.AlignmentCentered},
-	)
+		component.StaticFloating(&component.TestComponent{Ch: 'm'}, 2, 2),
+		FloatingConfig{})
+	require.True(t, minimize(win, 0))
+	return win
+}
 
-	assert.False(t, wm.MoveWindow(tile, term.Coordinates{X: 1, Y: 1}),
-		"tiles cannot be moved")
+func TestWindowManagerMoveWindow(t *testing.T) {
+	unframed := func(cfg *WindowManagerConfig) { cfg.Frame = false }
+	fullSize := func(cfg *WindowManagerConfig) { cfg.NoMaxSize = false }
+	// Unless a case says otherwise, 2x2 content is framed into a 4x4
+	// window in a 20x8 manager, which caps windows two cells short of
+	// its own size.
+	suite := []struct {
+		name   string
+		config func(*WindowManagerConfig)
+		w, h   int
+		to     term.Coordinates
+		want   floatGeometry
+	}{
+		{name: "inside the manager", to: xy(3, 2), want: geometry(3, 2, 4, 4)},
+		{name: "at the top-left corner", to: xy(0, 0), want: geometry(0, 0, 4, 4)},
+		{name: "flush with the bottom-right corner",
+			to: xy(16, 4), want: geometry(16, 4, 4, 4)},
+		{name: "partly past the left edge", to: xy(-1, 3), want: geometry(-1, 3, 4, 4)},
+		{name: "far past the left edge keeps three bar cells on screen",
+			to: xy(-40, 3), want: geometry(-1, 3, 4, 4)},
+		{name: "partly past the right edge", to: xy(17, 3), want: geometry(17, 3, 4, 4)},
+		{name: "far past the right edge keeps three bar cells on screen",
+			to: xy(40, 3), want: geometry(17, 3, 4, 4)},
+		{name: "partly past the bottom edge", to: xy(5, 6), want: geometry(5, 6, 4, 4)},
+		{name: "with only the bar row above the bottom edge",
+			to: xy(5, 7), want: geometry(5, 7, 4, 4)},
+		{name: "far past the bottom edge keeps the bar row on screen",
+			to: xy(5, 40), want: geometry(5, 7, 4, 4)},
+		{name: "past the top edge keeps the bar row on screen",
+			to: xy(5, -40), want: geometry(5, 0, 4, 4)},
+		{name: "past the top-left corner", to: xy(-40, -40), want: geometry(-1, 0, 4, 4)},
+		{name: "past the top-right corner", to: xy(40, -40), want: geometry(17, 0, 4, 4)},
+		{name: "past the bottom-left corner", to: xy(-40, 40), want: geometry(-1, 7, 4, 4)},
+		{name: "past the bottom-right corner", to: xy(40, 40), want: geometry(17, 7, 4, 4)},
+		{name: "a wide window past the left edge",
+			w: 10, to: xy(-40, 1), want: geometry(-9, 1, 12, 4)},
+		{name: "a wide window past the right edge",
+			w: 10, to: xy(40, 1), want: geometry(17, 1, 12, 4)},
+		{name: "a tall window past the bottom edge",
+			h: 4, to: xy(3, 6), want: geometry(3, 6, 4, 6)},
+		{name: "a window capped two cells short of the manager",
+			w: 30, to: xy(-40, 0), want: geometry(-15, 0, 18, 4)},
+		{name: "a window wider than the manager is trimmed to it",
+			config: fullSize, w: 30, to: xy(-40, 0), want: geometry(-17, 0, 20, 4)},
+		{name: "a window taller than the manager is trimmed to it",
+			config: fullSize, h: 30, to: xy(3, 40), want: geometry(3, 7, 4, 8)},
+		{name: "a window three cells wide stays fully on screen",
+			config: unframed, w: 3, to: xy(-40, 1), want: geometry(0, 1, 3, 2)},
+		{name: "a window narrower than three cells stays on screen at the left edge",
+			config: unframed, to: xy(-40, 1), want: geometry(0, 1, 2, 2)},
+		{name: "a window narrower than three cells stays on screen at the right edge",
+			config: unframed, to: xy(40, 1), want: geometry(18, 1, 2, 2)},
+		{name: "a one-cell window past the bottom-right corner",
+			config: unframed, w: 1, h: 1, to: xy(40, 40), want: geometry(19, 7, 1, 1)},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float := newFloatTestManager(t, test.config,
+				cmp.Or(test.w, 2), cmp.Or(test.h, 2),
+				FloatingConfig{Alignment: component.AlignmentCentered})
+			require.True(t, wm.MoveWindow(float, test.to))
+			assert.Equal(t, test.want, geometryOf(float))
+		})
+	}
+}
 
-	require.True(t, wm.MoveWindow(win, term.Coordinates{X: 3, Y: 2}))
-	assert.Equal(t, term.Coordinates{X: 3, Y: 2}, win.Position())
+func TestWindowManagerMoveWindowRefuses(t *testing.T) {
+	suite := []struct {
+		name   string
+		target func(t *testing.T, tile, float Window) Window
+	}{
+		{"a tile", func(_ *testing.T, tile, _ Window) Window { return tile }},
+		{"a minimized float", func(t *testing.T, _, float Window) Window {
+			require.True(t, float.MinimizeDown(0))
+			return float
+		}},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, tile, float := newFloatTestManager(t, nil, 2, 2,
+				FloatingConfig{Alignment: component.AlignmentCentered})
+			win := test.target(t, tile, float)
+			before := geometryOf(win)
 
-	at, ok := wm.WindowAt(term.Coordinates{X: 4, Y: 3})
-	require.True(t, ok)
-	assert.Equal(t, win.ID(), at.ID())
-	at, ok = wm.WindowAt(term.Coordinates{X: 1, Y: 1})
-	require.True(t, ok)
-	assert.Equal(t, tile.ID(), at.ID())
+			assert.False(t, wm.MoveWindow(win, xy(-1, 6)))
+			assert.Equal(t, before, geometryOf(win))
+			float.Unminimize()
+			assert.Equal(t, geometry(8, 2, 4, 4), geometryOf(float),
+				"a refused move must leave the float laid out as never moved")
+		})
+	}
+}
 
-	// clamp to full visibility: window is 4x4 in a 20x8 manager
-	require.True(t, wm.MoveWindow(win, term.Coordinates{X: 100, Y: 100}))
-	assert.Equal(t, term.Coordinates{X: 16, Y: 4}, win.Position())
-	require.True(t, wm.MoveWindow(win, term.Coordinates{X: -3, Y: -3}))
-	assert.Equal(t, term.Coordinates{X: 0, Y: 0}, win.Position())
+func TestFloatingWindowTrimsUntilMoved(t *testing.T) {
+	// 2x2 content is framed into a 4x4 window in a 20x8 manager. Moving
+	// the window to where it was placed restores its size.
+	suite := []struct {
+		name   string
+		cfg    FloatingConfig
+		placed floatGeometry
+		moved  floatGeometry
+	}{
+		{name: "inside the manager", cfg: FloatingConfig{Offset: xy(3, 2)},
+			placed: geometry(3, 2, 4, 4), moved: geometry(3, 2, 4, 4)},
+		{name: "centered", cfg: FloatingConfig{Alignment: component.AlignmentCentered},
+			placed: geometry(8, 2, 4, 4), moved: geometry(8, 2, 4, 4)},
+		{name: "partly past the right edge", cfg: FloatingConfig{Offset: xy(17, 2)},
+			placed: geometry(17, 2, 3, 4), moved: geometry(17, 2, 4, 4)},
+		{name: "on the last column", cfg: FloatingConfig{Offset: xy(19, 2)},
+			placed: geometry(19, 2, 1, 4), moved: geometry(17, 2, 4, 4)},
+		{name: "partly past the bottom edge", cfg: FloatingConfig{Offset: xy(5, 6)},
+			placed: geometry(5, 6, 4, 2), moved: geometry(5, 6, 4, 4)},
+		{name: "on the last row", cfg: FloatingConfig{Offset: xy(5, 7)},
+			placed: geometry(5, 7, 4, 1), moved: geometry(5, 7, 4, 4)},
+		{name: "past the bottom-right corner", cfg: FloatingConfig{Offset: xy(40, 40)},
+			placed: geometry(40, 40, 0, 0), moved: geometry(17, 7, 4, 4)},
+		{name: "before the left edge", cfg: FloatingConfig{Offset: xy(-3, 2)},
+			placed: geometry(0, 2, 4, 4), moved: geometry(0, 2, 4, 4)},
+		{name: "above the top edge", cfg: FloatingConfig{Offset: xy(3, -3)},
+			placed: geometry(3, 0, 4, 4), moved: geometry(3, 0, 4, 4)},
+		{name: "right-aligned past the right edge",
+			cfg:    FloatingConfig{Alignment: component.AlignmentRight, Offset: xy(-3, 2)},
+			placed: geometry(19, 2, 1, 4), moved: geometry(17, 2, 4, 4)},
+		{name: "bottom-aligned past the bottom edge",
+			cfg:    FloatingConfig{Alignment: component.AlignmentBottom, Offset: xy(3, -3)},
+			placed: geometry(3, 7, 4, 1), moved: geometry(3, 7, 4, 4)},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float := newFloatTestManager(t, nil, 2, 2, test.cfg)
+			assert.Equal(t, test.placed, geometryOf(float))
 
-	// a minimized floating window cannot be moved
-	require.True(t, win.MinimizeDown(0))
-	assert.False(t, wm.MoveWindow(win, term.Coordinates{X: 1, Y: 1}))
-	require.True(t, win.Unminimize())
+			require.True(t, wm.MoveWindow(float, float.Position()))
+			assert.Equal(t, test.moved, geometryOf(float))
+		})
+	}
+}
 
-	// moved position round-trips through TileLayout/RestoreTileLayout
-	require.True(t, wm.MoveWindow(win, term.Coordinates{X: 5, Y: 3}))
-	layout := wm.TileLayout()
-	require.Len(t, layout.Floating, 1)
-	assert.Equal(t, term.Coordinates{X: 5, Y: 3}, layout.Floating[0].Offset)
-
-	restored := wm.RestoreTileLayout(layout, func(windowID uint64) tui.Component {
-		if windowID == layout.Floating[0].WindowID {
-			return component.StaticFloating(&component.TestComponent{Ch: 'B'}, 2, 2)
+func TestMovedFloatingWindowFollowsManager(t *testing.T) {
+	type step struct {
+		name string
+		do   func(t *testing.T, wm *WindowManager, float Window)
+		want floatGeometry
+	}
+	resize := func(w, h int) func(*testing.T, *WindowManager, Window) {
+		return func(_ *testing.T, wm *WindowManager, _ Window) { wm.Resize(w, h) }
+	}
+	minimizeAnother := func(
+		minimize func(Window, int) bool,
+	) func(*testing.T, *WindowManager, Window) {
+		return func(t *testing.T, wm *WindowManager, _ Window) {
+			newMinimizedFloat(t, wm, minimize)
 		}
-		return &component.TestComponent{Ch: 'C'}
-	})
-	restoredWin, ok := restored[layout.Floating[0].WindowID]
-	require.True(t, ok)
-	assert.Equal(t, term.Coordinates{X: 5, Y: 3}, restoredWin.Position())
+	}
+	setSize := func(w, h int) func(*testing.T, *WindowManager, Window) {
+		return func(t *testing.T, wm *WindowManager, float Window) {
+			require.True(t, wm.SetWidth(float, w))
+			require.True(t, wm.SetHeight(float, h))
+			wm.Resize(20, 8)
+		}
+	}
+	toggleMaximize := func(t *testing.T, wm *WindowManager, float Window) {
+		require.True(t, wm.ToggleMaximize(float))
+	}
+	// 2x2 content is framed into a 4x4 window in a 20x8 manager, which
+	// caps windows two cells short of its own size.
+	suite := []struct {
+		name  string
+		to    term.Coordinates
+		steps []step
+	}{
+		{name: "the manager grows", to: xy(5, 3), steps: []step{
+			{"grown", resize(30, 10), geometry(5, 3, 4, 4)},
+		}},
+		{name: "the manager shrinks under a window past the bottom-right corner",
+			to: xy(17, 7), steps: []step{
+				{"shrunk", resize(10, 4), geometry(7, 3, 4, 2)},
+				{"grown back", resize(20, 8), geometry(17, 7, 4, 4)},
+			}},
+		{name: "the manager shrinks under a window past the left edge",
+			to: xy(-1, 3), steps: []step{
+				{"shrunk", resize(10, 6), geometry(-1, 3, 4, 4)},
+			}},
+		{name: "the manager shrinks below the window size", to: xy(2, 1), steps: []step{
+			{"shrunk", resize(3, 3), geometry(2, 1, 1, 1)},
+			{"grown back", resize(20, 8), geometry(2, 1, 4, 4)},
+		}},
+		{name: "the manager is emptied", to: xy(5, 3), steps: []step{
+			{"emptied", resize(0, 0), geometry(0, 0, 0, 0)},
+			{"grown back", resize(20, 8), geometry(5, 3, 4, 4)},
+		}},
+		{name: "the window is maximized", to: xy(-1, 6), steps: []step{
+			{"maximized", toggleMaximize, geometry(0, 0, 20, 8)},
+			{"restored", toggleMaximize, geometry(-1, 6, 4, 4)},
+		}},
+		{name: "the window is minimized", to: xy(-1, 6), steps: []step{
+			{"minimized and restored", func(t *testing.T, _ *WindowManager, float Window) {
+				require.True(t, float.MinimizeDown(0))
+				require.True(t, float.Unminimize())
+			}, geometry(-1, 6, 4, 4)},
+		}},
+		{name: "another window is minimized to the left", to: xy(-1, 6), steps: []step{
+			{"minimized", minimizeAnother(Window.MinimizeLeft), geometry(0, 6, 4, 4)},
+		}},
+		{name: "another window is minimized below", to: xy(5, 7), steps: []step{
+			{"minimized", minimizeAnother(Window.MinimizeDown), geometry(5, 6, 4, 4)},
+		}},
+		{name: "the user widens the window past the right edge", to: xy(15, 2), steps: []step{
+			{"widened", setSize(10, 4), geometry(15, 2, 10, 4)},
+		}},
+		{name: "the user widens the window beyond the manager", to: xy(15, 2), steps: []step{
+			{"widened", setSize(30, 4), geometry(15, 2, 18, 4)},
+		}},
+		{name: "the user shrinks a window past the bottom-right corner",
+			to: xy(17, 7), steps: []step{
+				{"shrunk", setSize(3, 3), geometry(17, 7, 3, 3)},
+			}},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float := newFloatTestManager(t, nil, 2, 2, FloatingConfig{})
+			require.True(t, wm.MoveWindow(float, test.to))
+			for _, step := range test.steps {
+				step.do(t, wm, float)
+				assert.Equal(t, step.want, geometryOf(float), step.name)
+			}
+		})
+	}
+}
+
+func TestFloatingLayoutMovedRoundTrip(t *testing.T) {
+	moveTo := func(x, y int) func(*testing.T, *WindowManager, Window) {
+		return func(t *testing.T, wm *WindowManager, float Window) {
+			require.True(t, wm.MoveWindow(float, xy(x, y)))
+		}
+	}
+	// 2x2 content is framed into a 4x4 window in a 20x8 manager.
+	suite := []struct {
+		name  string
+		cfg   FloatingConfig
+		place func(t *testing.T, wm *WindowManager, float Window)
+		// restoreIn is the manager size to restore the layout in, or
+		// zero to keep 20x8.
+		restoreIn  term.Coordinates
+		unminimize bool
+		wantLayout FloatingLayout
+		want       floatGeometry
+	}{
+		{
+			name:       "a window never moved stays trimmed",
+			cfg:        FloatingConfig{Offset: xy(17, 6)},
+			wantLayout: FloatingLayout{Offset: xy(17, 6)},
+			want:       geometry(17, 6, 3, 2),
+		},
+		{
+			name:       "an aligned window moved inside the manager",
+			cfg:        FloatingConfig{Alignment: component.AlignmentCentered},
+			place:      moveTo(5, 3),
+			wantLayout: FloatingLayout{Offset: xy(5, 3), Moved: true},
+			want:       geometry(5, 3, 4, 4),
+		},
+		{
+			name:       "a window moved past the left edge",
+			place:      moveTo(-1, 6),
+			wantLayout: FloatingLayout{Offset: xy(-1, 6), Moved: true},
+			want:       geometry(-1, 6, 4, 4),
+		},
+		{
+			name:       "a window moved past the bottom-right corner",
+			place:      moveTo(40, 40),
+			wantLayout: FloatingLayout{Offset: xy(17, 7), Moved: true},
+			want:       geometry(17, 7, 4, 4),
+		},
+		{
+			name:       "a moved window restored in a smaller manager",
+			place:      moveTo(17, 7),
+			restoreIn:  xy(10, 4),
+			wantLayout: FloatingLayout{Offset: xy(17, 7), Moved: true},
+			want:       geometry(7, 3, 4, 2),
+		},
+		{
+			name: "a moved window that is minimized",
+			place: func(t *testing.T, wm *WindowManager, float Window) {
+				moveTo(-1, 6)(t, wm, float)
+				require.True(t, float.MinimizeDown(0))
+			},
+			unminimize: true,
+			wantLayout: FloatingLayout{
+				Offset: xy(-1, 6), Moved: true,
+				MinimizedAlignment: component.AlignmentBottom,
+			},
+			want: geometry(-1, 6, 4, 4),
+		},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float := newFloatTestManager(t, nil, 2, 2, test.cfg)
+			if test.place != nil {
+				test.place(t, wm, float)
+			}
+			layout := wm.TileLayout()
+			require.Len(t, layout.Floating, 1)
+			got := layout.Floating[0]
+			id := got.WindowID
+			got.WindowID = 0
+			assert.Equal(t, test.wantLayout, got)
+
+			if test.restoreIn != (term.Coordinates{}) {
+				wm.Resize(test.restoreIn.X, test.restoreIn.Y)
+			}
+			restored := wm.RestoreTileLayout(layout, func(windowID uint64) tui.Component {
+				if windowID == id {
+					return component.StaticFloating(&component.TestComponent{Ch: 'B'}, 2, 2)
+				}
+				return &component.TestComponent{Ch: 'C'}
+			})
+			win, ok := restored[id]
+			require.True(t, ok)
+			if test.unminimize {
+				require.True(t, win.Unminimize())
+			}
+			assert.Equal(t, test.want, geometryOf(win))
+		})
+	}
+}
+
+func TestMovedFloatingWindowDraw(t *testing.T) {
+	moveTo := func(x, y int) func(*testing.T, *WindowManager, Window) {
+		return func(t *testing.T, wm *WindowManager, float Window) {
+			require.True(t, wm.MoveWindow(float, xy(x, y)))
+		}
+	}
+	minimizeThenMoveTo := func(
+		minimize func(Window, int) bool, x, y int,
+	) func(*testing.T, *WindowManager, Window) {
+		return func(t *testing.T, wm *WindowManager, float Window) {
+			newMinimizedFloat(t, wm, minimize)
+			wm.ForegroundFloating(float)
+			moveTo(x, y)(t, wm, float)
+		}
+	}
+	// Unless a case says otherwise, 4x2 content is framed into a 6x4
+	// window in a 20x8 manager.
+	suite := []struct {
+		name     string
+		w        int
+		cfg      FloatingConfig
+		place    func(t *testing.T, wm *WindowManager, float Window)
+		expected string
+	}{
+		{
+			name:  "past the left edge",
+			place: moveTo(-2, 2),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+████CCCCCCCCCCCCCCC│
+BBB│CCCCCCCCCCCCCCC│
+BBB│CCCCCCCCCCCCCCC│
+───┘CCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+└──────────────────┘`,
+		},
+		{
+			name:  "past the right edge",
+			place: moveTo(16, 2),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCC█●██
+│CCCCCCCCCCCCCCC│BBB
+│CCCCCCCCCCCCCCC│BBB
+│CCCCCCCCCCCCCCC└───
+│CCCCCCCCCCCCCCCCCC│
+└──────────────────┘`,
+		},
+		{
+			name:  "past the bottom edge",
+			place: moveTo(5, 6),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCC█●████CCCCCCCC│
+└────│BBBB│────────┘`,
+		},
+		{
+			name:  "with only the bar row above the bottom edge",
+			place: moveTo(5, 7),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+└────█●████────────┘`,
+		},
+		{
+			name:  "past the bottom-right corner",
+			place: moveTo(17, 6),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCC█●█
+└────────────────│BB`,
+		},
+		{
+			name:  "with its title clipped past the left edge",
+			w:     10,
+			cfg:   FloatingConfig{Title: "abc"},
+			place: moveTo(-6, 2),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+bc ███CCCCCCCCCCCCC│
+BBBBB│CCCCCCCCCCCCC│
+BBBBB│CCCCCCCCCCCCC│
+─────┘CCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+└──────────────────┘`,
+		},
+		{
+			name: "never moved at the same spot is trimmed instead",
+			cfg:  FloatingConfig{Offset: xy(16, 5)},
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCC█●██
+│CCCCCCCCCCCCCCC│BB│
+└───────────────└──┘`,
+		},
+		{
+			name:  "beside a window minimized to the left",
+			place: minimizeThenMoveTo(Window.MinimizeLeft, 0, 2),
+			expected: `
+┌┌─────────────────┐
+││CCCCCCCCCCCCCCCCC│
+│●████CCCCCCCCCCCCC│
+│BBBB│CCCCCCCCCCCCC│
+│BBBB│CCCCCCCCCCCCC│
+│────┘CCCCCCCCCCCCC│
+││CCCCCCCCCCCCCCCCC│
+└└─────────────────┘`,
+		},
+		{
+			name:  "beside a window minimized to the right",
+			place: minimizeThenMoveTo(Window.MinimizeRight, 15, 2),
+			expected: `
+┌─────────────────┐┐
+│CCCCCCCCCCCCCCCCC││
+│CCCCCCCCCCCCCC█●██│
+│CCCCCCCCCCCCCC│BBB│
+│CCCCCCCCCCCCCC│BBB│
+│CCCCCCCCCCCCCC└───│
+│CCCCCCCCCCCCCCCCC││
+└─────────────────┘┘`,
+		},
+		{
+			name:  "above a window minimized below",
+			place: minimizeThenMoveTo(Window.MinimizeDown, 8, 6),
+			expected: `
+┌──────────────────┐
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+│CCCCCCCCCCCCCCCCCC│
+└───────█●████─────┘
+└──────────────────┘`,
+		},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _, float := newFloatTestManager(t, nil, cmp.Or(test.w, 4), 2, test.cfg)
+			comptest.TestComponent(t, wm, term.NewStringWriter(20, 8), []comptest.TestCase{
+				{Action: func() {
+					if test.place != nil {
+						test.place(t, wm, float)
+					}
+				}, Expected: test.expected},
+			})
+		})
+	}
+}
+
+func TestWindowAtMovedFloatingWindow(t *testing.T) {
+	wm, tile, float := newFloatTestManager(t, nil, 4, 2, FloatingConfig{})
+	left := newMinimizedFloat(t, wm, Window.MinimizeLeft)
+	bottom := newMinimizedFloat(t, wm, Window.MinimizeDown)
+	wm.ForegroundFloating(float)
+	// The 6x4 window spans columns 0 to 5 and rows 5 to 8, but the
+	// floating area only spans columns 1 to 19 and rows 0 to 6.
+	require.True(t, wm.MoveWindow(float, xy(0, 5)))
+	require.Equal(t, geometry(0, 5, 6, 4), geometryOf(float))
+	windows := map[string]Window{
+		"float": float, "tile": tile, "left": left, "bottom": bottom,
+	}
+
+	suite := []struct {
+		name string
+		at   term.Coordinates
+		// want names the window at the position, or is empty when no
+		// window is there.
+		want string
+	}{
+		{"the bar row", xy(3, 5), "float"},
+		{"the first visible column", xy(1, 6), "float"},
+		{"the last visible cell", xy(5, 6), "float"},
+		{"right of the window", xy(6, 6), "tile"},
+		{"above the window", xy(3, 4), "tile"},
+		{"under the left minimized bar", xy(0, 5), "left"},
+		{"under the left minimized bar, a row down", xy(0, 6), "left"},
+		{"under the bottom minimized bar", xy(3, 7), "bottom"},
+		{"under the bottom minimized bar, at the window's edge", xy(5, 7), "bottom"},
+		{"left of the manager", xy(-1, 5), ""},
+		{"below the manager", xy(3, 8), ""},
+		{"right of the manager", xy(20, 5), ""},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			at, ok := wm.WindowAt(test.at)
+			if test.want == "" {
+				assert.False(t, ok)
+				return
+			}
+			require.True(t, ok)
+			assert.Equal(t, windows[test.want].ID(), at.ID())
+		})
+	}
+}
+
+func TestWindowManagerInFloatingArea(t *testing.T) {
+	type point struct {
+		at   term.Coordinates
+		want bool
+	}
+	suite := []struct {
+		name     string
+		size     term.Coordinates
+		minimize func(t *testing.T, wm *WindowManager)
+		points   []point
+	}{
+		{
+			name: "no minimized windows",
+			size: xy(20, 8),
+			points: []point{
+				{xy(0, 0), true}, {xy(19, 7), true}, {xy(10, 4), true},
+				{xy(-1, 0), false}, {xy(0, -1), false},
+				{xy(20, 0), false}, {xy(0, 8), false},
+			},
+		},
+		{
+			name: "a window minimized on every side",
+			size: xy(20, 8),
+			minimize: func(t *testing.T, wm *WindowManager) {
+				for _, minimize := range []func(Window, int) bool{
+					Window.MinimizeUp, Window.MinimizeDown,
+					Window.MinimizeLeft, Window.MinimizeRight,
+				} {
+					newMinimizedFloat(t, wm, minimize)
+				}
+			},
+			points: []point{
+				{xy(1, 1), true}, {xy(18, 6), true}, {xy(10, 4), true},
+				{xy(0, 3), false}, {xy(19, 3), false},
+				{xy(5, 0), false}, {xy(5, 7), false}, {xy(0, 0), false},
+			},
+		},
+		{
+			name: "a padded window minimized below",
+			size: xy(20, 8),
+			minimize: func(t *testing.T, wm *WindowManager) {
+				win := wm.FloatingWindow(
+					component.StaticFloating(&component.TestComponent{Ch: 'm'}, 2, 2),
+					FloatingConfig{})
+				require.True(t, win.MinimizeDown(2))
+			},
+			points: []point{
+				{xy(5, 4), true}, {xy(5, 5), false}, {xy(5, 7), false},
+			},
+		},
+		{
+			name:   "an empty manager",
+			points: []point{{xy(0, 0), false}},
+		},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm, _ := NewWindowManager(&component.TestComponent{Ch: 'C'},
+				DefaultWindowManagerConfig())
+			wm.Resize(test.size.X, test.size.Y)
+			if test.minimize != nil {
+				test.minimize(t, wm)
+			}
+			for _, p := range test.points {
+				assert.Equal(t, p.want, wm.InFloatingArea(p.at), "at %+v", p.at)
+			}
+		})
+	}
 }
 
 func TestFloatingLayoutBarRoundTrip(t *testing.T) {

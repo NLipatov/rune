@@ -169,6 +169,7 @@ func (wm *WindowManager) RestoreTileLayout(
 			NoBar:     floatingLayout.NoBar,
 			Title:     floatingLayout.Title,
 		}, wm.minimizedWidth, wm.minimizedHeight)
+		win.moved = floatingLayout.Moved
 		wm.applyWindowBar(win)
 		wm.float = append(wm.float, win)
 		ret[floatingLayout.WindowID] = wm.nodeToWindow(win)
@@ -213,8 +214,8 @@ func (wm *WindowManager) DrawWindow(win Window, w term.Writer) {
 	nonMinimizedW := component.VirtualWriter{
 		Writer: w,
 		Offset: wm.minimizedOffset,
-		Height: wm.height,
-		Width:  wm.width,
+		Height: wm.minimizedHeight,
+		Width:  wm.minimizedWidth,
 	}
 
 	f, ok := win.node.(*floatingNode)
@@ -428,8 +429,9 @@ func (wm *WindowManager) WindowAt(pos term.Coordinates) (Window, bool) {
 
 	// first return any floating window that might be rendered over everything else
 	floating := -1
+	inFloatingArea := wm.inFloatingArea(pos)
 	for i, fw := range wm.float {
-		if fw.minimized != 0 {
+		if fw.minimized != 0 || !inFloatingArea {
 			continue
 		}
 		fwpos := wm.nodeToWindow(fw).Position()
@@ -453,6 +455,24 @@ func (wm *WindowManager) WindowAt(pos term.Coordinates) (Window, bool) {
 	pos.Y -= wm.minimizedOffset.Y
 	pos.X -= wm.minimizedOffset.X
 	return wm.nodeToWindow(wm.tree.TileAt(pos)), true
+}
+
+// InFloatingArea reports whether pos, in the coordinate space of
+// Window.Position, lies where floating windows are drawn: inside the
+// manager and off the bars of minimized windows. Floating windows
+// moved past an edge are clipped to this area.
+func (wm *WindowManager) InFloatingArea(pos term.Coordinates) bool {
+	if wm.minimizedDirty {
+		wm.Resize(wm.width, wm.height)
+	}
+	return wm.inFloatingArea(pos)
+}
+
+func (wm *WindowManager) inFloatingArea(pos term.Coordinates) bool {
+	pos.X -= wm.minimizedOffset.X
+	pos.Y -= wm.minimizedOffset.Y
+	return pos.X >= 0 && pos.Y >= 0 &&
+		pos.X < wm.minimizedWidth && pos.Y < wm.minimizedHeight
 }
 
 // TileAt returns the tiled window at pos, ignoring floating and minimized
@@ -507,8 +527,10 @@ func (wm *WindowManager) SetFrameAttr(attr term.Attributes) {
 type FloatingConfig struct {
 	// Sets the alignment of the window.
 	component.Alignment
-	// Offset is to be applied to the position of the window
-	// after alignment has been determined.
+	// Offset is to be applied to the position of the window after
+	// alignment has been determined. A position before the manager's
+	// top-left corner is clamped to it, and the window is trimmed to
+	// the space left after its position.
 	Offset term.Coordinates
 	// NoBar keeps the plain window frame instead of the window bar
 	// when the WindowManager is configured with WindowBar.
@@ -619,9 +641,12 @@ func (wm *WindowManager) drawWindowTitle(
 }
 
 // MoveWindow moves a floating window so its top-left corner sits at
-// pos, given in the same coordinate space as Window.Position. The
-// position is clamped so the window remains fully visible. It returns
-// false if win is not a floating window or is minimized.
+// pos, given in the same coordinate space as Window.Position. From then
+// on the window keeps its size, trimmed only to the manager's, and may
+// extend past the manager's edges, where it is clipped; pos is clamped
+// so that its top row stays on screen with at least three cells of it
+// showing. It returns false if win is not a floating window or is
+// minimized.
 func (wm *WindowManager) MoveWindow(win Window, pos term.Coordinates) bool {
 	fn, ok := win.node.(*floatingNode)
 	if !ok || fn.minimized != 0 {
@@ -634,10 +659,12 @@ func (wm *WindowManager) MoveWindow(win Window, pos term.Coordinates) bool {
 	pos.Y -= wm.minimizedOffset.Y
 	fn.maximized = false
 	fn.alignment = 0
+	fn.moved = true
 	fn.updateDesiredDimensions()
-	pos.X = max(0, min(pos.X, fn.maxWidth-fn.desiredWidth))
-	pos.Y = max(0, min(pos.Y, fn.maxHeight-fn.desiredHeight))
-	fn.desiredOffset = pos
+	// Store the clamped position, so that a window dragged against an
+	// edge stays there when the manager grows instead of jumping to
+	// wherever the drag overshot.
+	fn.desiredOffset = fn.reachableOffset(pos)
 	fn.resize()
 	return true
 }

@@ -544,7 +544,12 @@ func (wm *WindowManager) Cursor() (term.Coordinates, term.CursorStyle, bool) {
 	if show {
 		show = term.CoordinatesInBounds(cursor, bounds)
 	}
-	return term.CoordinatesSum(cursor, offset), style, show
+	pos := term.CoordinatesSum(cursor, offset)
+	if show && window.IsFloating() {
+		// a float moved past an edge is clipped there
+		show = wm.comp.InFloatingArea(pos)
+	}
+	return pos, style, show
 }
 
 // Selection satisfies tui.Handler.

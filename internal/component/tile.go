@@ -70,6 +70,7 @@ type FloatingLayout struct {
 	MinimizedPadding   int
 	NoBar              bool
 	Title              string
+	Moved              bool
 }
 
 // SplitOrientation identifies how a TileLayout stem splits its children.

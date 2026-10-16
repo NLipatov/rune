@@ -2580,6 +2580,84 @@ func TestWinDropThroughMouseEvents(t *testing.T) {
 	})
 }
 
+func TestWinDropPastEdgesThroughMouseEvents(t *testing.T) {
+	suite := []struct {
+		name string
+		zone winDropZone
+		// float is where the float hangs while the cursor is on the band.
+		float term.Coordinates
+		// docked reports whether the new tile is on the band's side of
+		// the tile it split.
+		docked func(win, tile Window) bool
+	}{
+		{"past the left edge", winDropLeft, term.Coordinates{X: -4, Y: 9},
+			func(win, tile Window) bool { return win.Position().X < tile.Position().X }},
+		{"past the right edge", winDropRight, term.Coordinates{X: 55, Y: 9},
+			func(win, tile Window) bool { return win.Position().X > tile.Position().X }},
+		{"past the bottom edge", winDropBottom, term.Coordinates{X: 26, Y: 18},
+			func(win, tile Window) bool { return win.Position().Y > tile.Position().Y }},
+		{"inside the top edge", winDropTop, term.Coordinates{X: 26, Y: 0},
+			func(win, tile Window) bool { return win.Position().Y < tile.Position().Y }},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			b, tile, float, zoneAt := framedDragBrowser(t, 60, 20)
+			content, err := float.Content()
+			require.NoError(t, err)
+			at := zoneAt(test.zone)
+
+			b.Handle(mouseAt(b, term.MouseLeft, term.Coordinates{X: 4, Y: 0}))
+			b.Handle(mouseAt(b, term.MouseLeft, at))
+			assert.Equal(t, test.float, float.Position(), "the float follows the cursor")
+			assert.Equal(t, 14, float.Width(), "the float keeps its size")
+			assert.Equal(t, 10, float.Height(), "the float keeps its size")
+			assert.Equal(t, test.zone, b.winDrop.zone)
+			assert.Equal(t, 2, b.Tiles(), "the hover must pre-split the tile")
+
+			b.Handle(mouseAt(b, term.MouseRelease, at))
+			assert.Equal(t, 0, b.FloatingWindows())
+			require.Len(t, b.buffers, 1)
+			assert.Equal(t, content, b.buffers[0].Handler())
+			win, ok := b.buffers[0].Window()
+			require.True(t, ok)
+			assert.True(t, test.docked(win, tile), "the tab must dock on the band's side")
+		})
+	}
+}
+
+func TestWinDropDeadZonePastEdgesThroughMouseEvents(t *testing.T) {
+	suite := []struct {
+		name  string
+		at    term.Coordinates
+		float term.Coordinates
+	}{
+		{"past the left edge", term.Coordinates{X: 3, Y: 5}, term.Coordinates{X: -1, Y: 5}},
+		{"past the right edge", term.Coordinates{X: 55, Y: 5}, term.Coordinates{X: 51, Y: 5}},
+		{"past the bottom edge", term.Coordinates{X: 10, Y: 15}, term.Coordinates{X: 6, Y: 15}},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			b, tile, float, _ := framedDragBrowser(t, 60, 20)
+			local := term.Coordinates{
+				X: test.at.X - tile.Position().X, Y: test.at.Y - tile.Position().Y,
+			}
+			require.Equal(t, winDropNone, dropZoneAt(local, tile.Width(), tile.Height()),
+				"the release must land outside every band")
+
+			b.Handle(mouseAt(b, term.MouseLeft, term.Coordinates{X: 4, Y: 0}))
+			b.Handle(mouseAt(b, term.MouseLeft, test.at))
+			b.Handle(mouseAt(b, term.MouseRelease, test.at))
+
+			assert.Equal(t, 1, b.Tiles())
+			assert.Equal(t, 1, b.FloatingWindows(), "the float survives")
+			assert.Empty(t, b.buffers)
+			assert.Equal(t, test.float, float.Position(), "the float stays past the edge")
+			assert.Equal(t, 14, float.Width(), "the float keeps its size")
+			assert.Equal(t, 10, float.Height(), "the float keeps its size")
+		})
+	}
+}
+
 // complexDragBrowser returns a browser with a deliberately awkward
 // tiled layout - three vertical siblings, the last one split
 // horizontally - plus a focused float. Splitting any of the vertical
