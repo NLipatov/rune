@@ -96,7 +96,7 @@ same with or without it:
 | --- | --- | --- |
 | exits 0 | `done` | 0 |
 | exits with status N | `error`, `exit status N` | N |
-| is killed by a signal, e.g. `Ctrl-C` | `idle` | 128 + the signal number |
+| is killed by a signal, e.g. `Ctrl-C` | `error`, e.g. `signal: interrupt` | 128 + the signal number |
 | cannot be started | `error`, with the reason | 1 |
 
 `--app` names the program and `--msg` sets the message shown while it
