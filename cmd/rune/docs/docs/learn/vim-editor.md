@@ -36,7 +36,7 @@ motions, operators, and text objects on this page work everywhere:
 - **Terminals.** Terminals gain a modal mode: enter it to edit the prompt
   line, and treat the whole terminal scrollback as a scrollable, navigable
   file under the modal editor.
-- **Task and command output.** When a [task](./tasks.md) finishes, or a
+- **Task and command output.** When a [task](./terminal/tasks.md) finishes, or a
   one-shot plugin command (`! command`) completes, its output opens in a
   modal editor so you can scroll and navigate the results.
 

@@ -317,7 +317,7 @@ For ready-to-copy `exo` configs (Vim, Neovim, Helix, Nano, and more), see the
 ## Tab animations
 
 `animations.active_content_tab` plays over content tabs whose program reports
-it is [working](./develop/runectl.md#program-status), and
+it is [working](./learn/terminal/program-status.md), and
 `animations.active_workspace_tab` over the workspace tabs that own one. Both
 take the same keys:
 

@@ -33,7 +33,7 @@ motions and operators on this page work everywhere:
   prompt becomes a helix editor.
 - **Terminals.** Terminals gain a modal mode: enter it to edit the prompt
   line, and treat the whole scrollback as a navigable buffer.
-- **Task and command output.** When a [task](./tasks.md) finishes, or a
+- **Task and command output.** When a [task](./terminal/tasks.md) finishes, or a
   one-shot plugin command (`! command`) completes, its output opens in a
   helix editor so you can scroll and navigate the results.
 

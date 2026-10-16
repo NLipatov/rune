@@ -434,7 +434,7 @@ command:
 
 - [Aliases](./aliases.md): define your own commands, plus
   `$FILE`, `$1`, `${VAR:-default}`, and the rest of the expansion grammar.
-- [Tasks](./tasks.md): long-running commands pinned as tabs or
+- [Tasks](./terminal/tasks.md): long-running commands pinned as tabs or
   status bars instead of one-shot floaters.
 - [Key combination syntax](./key-syntax.md): the spelling of
   bindings like `<ctrl-r>` and `<m-enter>`.

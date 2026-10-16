@@ -157,7 +157,7 @@ pending (`2 api²`). The tab of the workspace that finished a build, hit an
 error, or needs your input shows the badge, and you can jump straight there
 without hunting through tabs. Focusing the workspace clears it.
 
-Programs that report their [status](../develop/runectl.md#program-status) over
+Programs that report their [status](./terminal/program-status.md) over
 OSC 7501 (`runectl status`, agents, builds) also show on the workspace bar: the
 tab's name takes the color of the most pressing status among the workspace's
 terminals (yellow when blocked on you, red on error, green once done), so a

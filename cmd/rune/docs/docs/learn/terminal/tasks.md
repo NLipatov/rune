@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Tasks
 
 A task in Rune is a long-running shell command that you launch from the
@@ -236,7 +240,7 @@ A reasonable split for a typical project:
 
 ## See also
 
-- [Command Variables](./aliases.md) for the `$FILE`, `$WORKSPACE`,
+- [Command Variables](../aliases.md) for the `$FILE`, `$WORKSPACE`,
   and `$1` placeholders you can use inside a task's command line.
-- [Key Syntax](./key-syntax.md) for the canonical spelling of bindings like
+- [Key Syntax](../key-syntax.md) for the canonical spelling of bindings like
   `<ctrl-r>` and `<ctrl-c>`.

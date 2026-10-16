@@ -212,7 +212,7 @@ tabs.
 
 ## Tasks
 
-A [task](./tasks.md) is a long-running command (a build, a test run, a
+A [task](./terminal/tasks.md) is a long-running command (a build, a test run, a
 dev server) that Rune keeps as a first-class window instead of hiding it
 in another terminal. Tasks plug into the same layout primitives you have
 just seen.
@@ -229,7 +229,7 @@ as a durable tab whose name and color track its status. Reach for it
 when the task's *output* is the thing you want to watch (a server log, a
 `tail -F`), and for `tasknew` when only the task's *status* matters.
 
-See the [Tasks](./tasks.md) guide for the full command grammar, file
+See the [Tasks](./terminal/tasks.md) guide for the full command grammar, file
 watchers, and examples.
 
 ## Layout aliases

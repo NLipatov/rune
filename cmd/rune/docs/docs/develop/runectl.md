@@ -63,13 +63,15 @@ tools), or a Go template for custom shaping.
 ## Program status
 
 `runectl status` speaks the [Program Status
-Protocol](https://www.superlogical.com/rex/docs/build/program-status)
+Protocol](../learn/terminal/program-status.md)
 (OSC 7501): a program tells the terminal what it is doing, and Rune shows
 it on the tab, on the workspace bar, and as a notification when the tab
 is not in focus. Every new message a program reports (`runectl status
 <state> <message>`) comes through as a notification, even without a state
 change. Programs that speak the protocol themselves need no help from
-`runectl`.
+`runectl`. See the [Program Status
+Protocol](../learn/terminal/program-status.md) guide for how Rune shows each state,
+when a status clears, and how to configure it.
 
 ### Wrap any command
 
@@ -128,34 +130,6 @@ runs and leave a `done` or `error` record behind for you to find:
 runectl status wrap --app git --msg "pre-push checks" -- make lint test
 ```
 
-### How Rune shows it
-
-A working tab's icon spins and an activity animation plays over its label.
-Content tabs and workspace tabs are styled separately, under
-`terminal.status.content_tab` and `terminal.status.workspace_tab`, which take
-the same keys. Set `progress` to `true` in either to split those labels at the
-reported percentage, with `working_done_attr` styling the completed prefix and
-the activity animation covering the remainder; with `false` the animation
-covers the full label, and reported progress is still retained in the status.
-By default only workspace tabs split: their completed prefix turns green and
-their animation shines green, so the tab reads as turning green as the work
-completes. See [Tab animations](../config.md#tab-animations) to pick another
-effect or tune this one.
-
-A tab that is blocked on you, failed, or finished takes the name and icon
-attributes configured for that state (`blocked_attr`, `blocked_icon_attr`, and
-so on), and a program that reports `idle` (waiting on you) can colour the tab's
-icon with `idle_icon_attr`. By default content tabs colour their icon and keep
-their name, while workspace tabs keep their icon and colour their name: green
-once done, yellow when blocked on you, red on error. The workspace bar shows the
-most pressing status among a workspace's tabs, including terminals that are not
-tabs, such as `!` commands and tasks. `:statuslist` (alias `:inbox`) lists every
-reported status across workspaces, most pressing first, and jumps to the
-tab you pick. A `done` or `error` status clears once you focus the tab
-or press a key in it; `working` and `blocked` clear when the program
-exits or the shell shows its next prompt. A terminal that is not a tab
-keeps its `done` or `error` status until it closes.
-
 ### Report status yourself
 
 The first argument is the state, the optional second one a message:
@@ -195,6 +169,9 @@ renders each state, with progress running from 0 to 100% while working
 ```
 runectl status demo --scenario deploy
 ```
+
+`runectl status query` checks whether the terminal supports the protocol,
+exiting with status 1 when it does not.
 
 ## Composing with POSIX tools
 

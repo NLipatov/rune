@@ -11,29 +11,57 @@ instead.
 
 [Claude Code](https://www.anthropic.com/claude-code) is Anthropic's
 third-party coding agent. It is **not** part of Rune Agent, but it runs
-happily inside a Rune terminal like any other CLI, and with a little
-configuration it works noticeably better: it can raise Rune
-notifications, highlight the workspace that needs your attention, and
-reach into Rune's own language and syntax tooling.
+inside a Rune terminal like any other CLI. Recent versions report their
+status to Rune automatically. With optional configuration, Claude Code
+can also raise Rune notifications and use Rune's language-server and
+syntax-tree tooling.
 
 This guide is about pointing the harness you already use at Rune's
 capabilities. None of it is required to run Claude Code in Rune; it just
 makes the two fit together.
 
+## See Claude's status automatically
+
+Run `claude` in a Rune terminal. Claude Code **v2.1.295 or later** reports
+whether it is working, waiting for your input, or done through the
+[Program Status Protocol](../learn/terminal/program-status.md) (OSC 7501).
+Rune displays that status on the terminal tab and the workspace bar, so
+you can see which session needs attention while working elsewhere.
+
+This needs **no hooks, Claude Code plugin, or `runectl` installation**.
+Claude Code detects Rune's support for the protocol itself.
+
+If no status appears, check `claude --version`, run directly in Rune
+rather than inside tmux, and make sure
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE` is not set to `1`. Claude Code's
+background sessions do not report terminal status, even while attached.
+See Anthropic's [terminal status
+guide](https://code.claude.com/docs/en/terminal-config#see-session-status-in-your-terminal)
+for these requirements.
+
 ## How Claude Code reaches Rune
 
-Everything below is glued together by [`runectl`](../develop/runectl.md),
-Rune's command-line companion, which you install separately with
-`pkg install runectl`. Any command Claude Code runs from a Rune terminal,
-including its hooks, talks to the right workspace automatically with no
-extra setup.
+The optional integrations below use [`runectl`](../develop/runectl.md),
+Rune's command-line companion. Install it from Rune's
+[console](../learn/console.md):
+
+```
+pkg install runectl
+```
+
+Start Claude Code inside the Rune terminal for the workspace you want it
+to use. Its commands, hooks, and stdio MCP server inherit Rune's connection
+environment and target that workspace automatically. Rune may ask you to
+authorize access when a capability is first used. A Claude Code session
+started outside Rune does not inherit this connection.
 
 ## Notify Rune when Claude is done
 
-Claude Code supports [hooks](https://docs.claude.com/en/docs/claude-code/hooks):
+Claude Code supports [hooks](https://code.claude.com/docs/en/hooks):
 shell commands it runs at lifecycle points such as finishing a turn or
 asking for permission. You can wire those hooks to `runectl notify`,
-which posts a Rune notification:
+which posts a Rune notification. These hooks are optional; they add
+explicit notifications rather than enabling the automatic status above:
 
 ```
 runectl notify <level> <message>
@@ -48,8 +76,8 @@ workspaces open and let Claude work in the background, the tab of the
 workspace that finished (or needs permission) lights up, and you know
 where to look without hunting through tabs.
 
-Put this in your project's `.claude/settings.json` (or your global
-`~/.claude/settings.json`):
+Merge this into your project's `.claude/settings.json` (or your global
+`~/.claude/settings.json`), keeping any existing hooks:
 
 ```json
 {
@@ -59,7 +87,7 @@ Put this in your project's `.claude/settings.json` (or your global
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.message // \"claude finished\"' | { IFS= read -r msg; runectl notify success \"$msg\"; }"
+            "command": "runectl notify success 'Claude finished'"
           }
         ]
       }
@@ -85,9 +113,9 @@ Put this in your project's `.claude/settings.json` (or your global
   that needs your approval. A `warn` notification flags the workspace so
   you can switch over and answer.
 
-Each hook reads the hook's JSON payload from stdin with `jq` and passes a
-message through to `runectl notify`. Adjust the levels and wording to
-taste.
+The permission hook uses `jq` to read the tool name from the hook's JSON
+payload on stdin, so install `jq` if you use that example. Adjust the
+levels and wording to taste.
 
 ## Use Rune as a Claude Code MCP server
 
@@ -96,8 +124,8 @@ server, exposing Rune's syntax-tree and language-server tooling to any
 MCP client. Claude Code is an MCP client, so you can give it Rune's tools
 by declaring `runectl mcp` as a server.
 
-Add a `.mcp.json` at your project root (Claude Code discovers it
-automatically):
+Add a `.mcp.json` at your project root, or merge the `rune` entry into an
+existing `mcpServers` object:
 
 ```json
 {
@@ -105,15 +133,16 @@ automatically):
     "rune": {
       "type": "stdio",
       "command": "runectl",
-      "args": ["mcp"],
-      "env": {}
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-That is the whole setup: `runectl mcp` starts a stdio MCP server bound to
-the current workspace. Through it Claude Code gets:
+Start Claude Code from that project's Rune terminal, approve the
+project MCP server when prompted, and run `/mcp` to check its connection.
+`runectl mcp` starts a stdio MCP server bound to the Rune workspace.
+Through it Claude Code gets:
 
 - **Syntax tools** for tree-sitter searches and structural queries
   (`syntax_search`, `syntax_search_node`, `syntax_query`,
@@ -127,10 +156,24 @@ the current workspace. Through it Claude Code gets:
 These let Claude Code navigate and reason about your code with
 language-aware precision instead of plain text search.
 
+The available language features depend on the language servers configured
+in Rune. This connection exposes MCP tools; it does not install a Claude
+Code LSP plugin or add symbol completion to Claude Code's prompt.
+
+:::note Refactoring previews
+
+The MCP `lsp_rename` tool reports affected files and edit counts without
+applying the rename. The formatting tools return proposed text edits
+without applying them. To apply a rename or formatting through `runectl`,
+use its `lsp rename` or `lsp formatting` CLI commands instead; those also
+offer `--dry-run` for previewing changes.
+
+:::
+
 ## Install Rune's skills into Claude Code
 
 Rune Agent ships a set of [Agent
-Skills](https://docs.claude.com/en/docs/claude-code/skills) that teach a
+Skills](https://code.claude.com/docs/en/skills) that teach a
 harness to use Rune's semantic tooling through `runectl`. They are plain
 `SKILL.md` files in the same format Claude Code reads, so you can install
 them into Claude Code directly and get the same code-navigation muscle
@@ -165,9 +208,11 @@ directories:
 
 ```bash
 # Per project, for everyone who clones the repo:
+mkdir -p .claude/skills
 cp -R ~/.rune/lib/rune-agent/skills/code-* .claude/skills/
 
 # Or globally, for all your projects:
+mkdir -p ~/.claude/skills
 cp -R ~/.rune/lib/rune-agent/skills/code-* ~/.claude/skills/
 ```
 
@@ -272,11 +317,11 @@ signature.
 
 - `lsp_workspace_diagnostics`: get workspace diagnostics.
 - `lsp_diagnostics`: get diagnostics for one file.
-- `lsp_rename`: rename a symbol across the workspace.
+- `lsp_rename`: preview affected files and edit counts for a rename; does not apply it.
 - `lsp_prepare_rename`: check whether a rename is valid.
 - `lsp_code_actions`: discover quick fixes and refactorings.
-- `lsp_formatting`: format a file with the language server.
-- `lsp_range_formatting`: format a range with the language server.
+- `lsp_formatting`: get proposed formatting edits for a file; does not apply them.
+- `lsp_range_formatting`: get proposed formatting edits for a range; does not apply them.
 
 Prefer these over manual find-and-replace, ad hoc formatting commands, or full
 build commands when a focused language-server result is enough.

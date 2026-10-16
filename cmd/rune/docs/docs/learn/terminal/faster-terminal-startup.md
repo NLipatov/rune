@@ -1,3 +1,7 @@
+---
+sidebar_position: 3
+---
+
 # Faster terminal startup
 
 Opening a terminal in Rune normally means allocating a fresh emulator,
