@@ -213,6 +213,7 @@ command:
     "<meta-c>": "clipboardcopy"
     "<meta-v>": "clipboardpaste"
     "<meta-`>": "workspacesearch"
+    "<ctrl-`>": "programstatus"
     "<meta-h>": "windowfocus left"
     "<meta-l>": "windowfocus right"
     "<meta-j>": "windowfocus down"

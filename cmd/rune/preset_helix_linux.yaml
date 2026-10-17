@@ -230,6 +230,7 @@ command:
     "<ctrl-shift-meta-`>": "tabsearch"
     # Workspaces: digits focus, <shift> moves.
     "<ctrl-meta-`>": "workspacesearch"
+    "<ctrl-`>": "programstatus"
     "<ctrl-meta-1>": "workspacefocus 1"
     "<ctrl-meta-2>": "workspacefocus 2"
     "<ctrl-meta-3>": "workspacefocus 3"

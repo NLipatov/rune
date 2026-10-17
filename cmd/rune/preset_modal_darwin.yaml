@@ -169,6 +169,7 @@ command:
     "<meta-enter>": "terminalneworsplit"
     "<shift-meta-enter>": "!"
     "<meta-`>": "workspacesearch"
+    "<ctrl-`>": "programstatus"
     "<alt-1>": "tabfocus 1"
     "<alt-2>": "tabfocus 2"
     "<alt-3>": "tabfocus 3"

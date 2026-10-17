@@ -221,6 +221,7 @@ command:
     "<meta-enter>": "terminalneworsplit"
     "<shift-meta-enter>": "!"
     "<meta-`>": "workspacesearch"
+    "<ctrl-`>": "programstatus"
     "<meta-1>": "workspacefocus 1"
     "<meta-2>": "workspacefocus 2"
     "<meta-3>": "workspacefocus 3"
