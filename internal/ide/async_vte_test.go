@@ -593,9 +593,10 @@ func TestAsyncVTETabNameAliasing(t *testing.T) {
 					w := m.workspaces[slot]
 					_, ok := m.status.status(w.uri, pty)
 					assert.False(t, ok, "migration must remove the detached PTY source")
-					_, ok = m.status.status(w.uri, tabURI)
-					assert.False(t, ok, "delayed replay must not outlive cleanup")
-					sum, _ := m.workspaceStatus(slot)
+					// The tab is still open, so it stays listed, holding nothing.
+					sum, _ := m.status.status(w.uri, tabURI)
+					assert.Empty(t, sum.Records, "delayed replay must not outlive cleanup")
+					sum, _ = m.workspaceStatus(slot)
 					assert.Empty(t, sum.Records)
 					assert.Empty(t, w.ex.tabAliases.pending)
 				})

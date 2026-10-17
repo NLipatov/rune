@@ -771,6 +771,15 @@ func WithOnTabStatus(
 	}
 }
 
+// WithOnTabRemoved registers fn to be called on the host event loop
+// once a tab is removed, before WithOnTabStatus reports the loss of its
+// status, if it had one.
+func WithOnTabRemoved(fn func(uri workspaceapi.URI)) Option {
+	return func(cfg *Config) {
+		cfg.OnTabRemoved = fn
+	}
+}
+
 // WithCommandOverlayConfig defines the command overlay interface properties.
 func WithCommandOverlayConfig(c CommandOverlayConfig) Option {
 	return func(cfg *Config) {

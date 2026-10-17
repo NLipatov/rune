@@ -1576,6 +1576,290 @@ func TestOnTabStatusReportsTransitions(t *testing.T) {
 	}, changes)
 }
 
+func TestOnTabRemoved(t *testing.T) {
+	// Every tab of the fixture is in a different place: "focus" in the
+	// tile in focus, "split" in another tile, "float" in a floating
+	// window, and "free1" and "free2" in no window.
+	type fixture struct {
+		b        *Component
+		tabs     map[string]*Tab
+		handlers map[string]*nopHandler
+		wins     map[string]Window
+		events   *[]string
+	}
+	names := []string{"focus", "split", "float", "free1", "free2"}
+	name := func(uri workspaceapi.URI) string { return strings.TrimPrefix(uri.String(), "file:///") }
+	setup := func(t *testing.T, reporting bool) fixture {
+		events := new([]string)
+		cfg := DefaultConfig()
+		cfg.OnTabStatus = func(uri workspaceapi.URI, _, status programstatus.Summary) {
+			*events = append(*events, "status "+name(uri)+" "+status.State.String())
+		}
+		cfg.OnTabRemoved = func(uri workspaceapi.URI) {
+			*events = append(*events, "removed "+name(uri))
+		}
+		b := NewComponent(cfg)
+		b.SetInterrupter(term.NopInterrupter())
+		b.Resize(80, 24)
+		t.Cleanup(func() { _ = b.Close() })
+		f := fixture{
+			b: b, tabs: map[string]*Tab{}, handlers: map[string]*nopHandler{},
+			wins: map[string]Window{}, events: events,
+		}
+		for _, n := range names {
+			uri, err := workspaceapi.ParseURI("file:///" + n)
+			require.NoError(t, err)
+			f.handlers[n] = newTestHandler()
+			f.tabs[n] = b.NewTab(uri, 'o', n, f.handlers[n], f.handlers[n])
+		}
+		f.wins["focus"] = b.Focus()
+		require.NoError(t, f.wins["focus"].SetContent(f.tabs["focus"]))
+		var ok bool
+		f.wins["split"], ok = b.Split(browserapi.OrientationRight, f.wins["focus"], f.tabs["split"])
+		require.True(t, ok)
+		f.wins["float"] = b.Floating(newTestHandler(), browserapi.FloatingConfig{})
+		require.NoError(t, f.wins["float"].SetContent(f.tabs["float"]))
+		b.SetFocus(f.wins["focus"])
+		if reporting {
+			for _, n := range names {
+				// Working, as being seen does not drop it: a tab coming in
+				// sight as another goes reports no change.
+				require.True(t, b.SetTabStatus(f.tabs[n].URI(),
+					programstatus.Report{State: programstatus.Working, Progress: -1}))
+			}
+		}
+		*events = nil
+		return f
+	}
+	exit := func(f fixture, n string) {
+		f.handlers[n].Exit = true
+		f.b.SetFocus(f.wins[n])
+		f.b.Handle(term.Event{Type: term.EventKey, Ch: 'x'})
+	}
+	suite := []struct {
+		name   string
+		remove func(t *testing.T, f fixture)
+		// removed lists the tabs removed, in any order.
+		removed []string
+	}{
+		{
+			name:    "RemoveTab of a free tab",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.RemoveTab(f.tabs["free1"])) },
+			removed: []string{"free1"},
+		},
+		{
+			name:    "RemoveTab of the tab in focus",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.RemoveTab(f.tabs["focus"])) },
+			removed: []string{"focus"},
+		},
+		{
+			name:    "RemoveTab of a tab in a split",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.RemoveTab(f.tabs["split"])) },
+			removed: []string{"split"},
+		},
+		{
+			name:    "RemoveTab of a tab in a floating window",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.RemoveTab(f.tabs["float"])) },
+			removed: []string{"float"},
+		},
+		{
+			name: "RemoveTab of every tab, the last ones with no free tab to take their place",
+			remove: func(t *testing.T, f fixture) {
+				for _, n := range []string{"free1", "free2", "focus", "split", "float"} {
+					require.True(t, f.b.RemoveTab(f.tabs[n]), n)
+				}
+			},
+			removed: names,
+		},
+		{
+			name: "RemoveTab of a tab removed already",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.RemoveTab(f.tabs["free1"]))
+				require.False(t, f.b.RemoveTab(f.tabs["free1"]))
+			},
+			removed: []string{"free1"},
+		},
+		{
+			name:   "RemoveTab of a handler that is no tab",
+			remove: func(t *testing.T, f fixture) { require.False(t, f.b.RemoveTab(newTestHandler())) },
+		},
+		{
+			name: "RemoveWindowContent of the window in focus",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.RemoveWindowContent(f.wins["focus"]))
+			},
+			removed: []string{"focus"},
+		},
+		{
+			name: "RemoveWindowContent of a split",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.RemoveWindowContent(f.wins["split"]))
+			},
+			removed: []string{"split"},
+		},
+		{
+			name: "RemoveWindowContent of a floating window",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.RemoveWindowContent(f.wins["float"]))
+			},
+			removed: []string{"float"},
+		},
+		{
+			name: "RemoveWindowContent of a window until no tab is left to show",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.RemoveWindowContent(f.wins["focus"]))
+				require.True(t, f.b.RemoveWindowContent(f.wins["focus"]))
+				require.False(t, f.b.RemoveWindowContent(f.wins["focus"]))
+				require.False(t, f.b.RemoveWindowContent(f.wins["focus"]))
+			},
+			removed: []string{"focus", "free1", "free2"},
+		},
+		{
+			name: "RemoveWindowContent of a window showing no tab",
+			remove: func(t *testing.T, f fixture) {
+				win := f.b.Floating(newTestHandler(), browserapi.FloatingConfig{})
+				require.True(t, f.b.RemoveWindowContent(win))
+			},
+		},
+		{
+			name:    "RemoveAllTabs",
+			remove:  func(t *testing.T, f fixture) { f.b.RemoveAllTabs() },
+			removed: names,
+		},
+		{
+			name:    "RemoveInactiveTabs",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.RemoveInactiveTabs()) },
+			removed: []string{"free1", "free2"},
+		},
+		{
+			name:    "OnTabExit of a free tab",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.OnTabExit(f.tabs["free1"].URI())) },
+			removed: []string{"free1"},
+		},
+		{
+			name:    "OnTabExit of the tab in focus",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.OnTabExit(f.tabs["focus"].URI())) },
+			removed: []string{"focus"},
+		},
+		{
+			name:    "OnTabExit of a tab in a floating window",
+			remove:  func(t *testing.T, f fixture) { require.True(t, f.b.OnTabExit(f.tabs["float"].URI())) },
+			removed: []string{"float"},
+		},
+		{
+			name: "OnTabExit of a uri no tab is at",
+			remove: func(t *testing.T, f fixture) {
+				uri, err := workspaceapi.ParseURI("file:///nowhere")
+				require.NoError(t, err)
+				require.False(t, f.b.OnTabExit(uri))
+			},
+		},
+		{
+			name:    "the handler of the tab in focus exiting",
+			remove:  func(_ *testing.T, f fixture) { exit(f, "focus") },
+			removed: []string{"focus"},
+		},
+		{
+			name:    "the handler of a tab in a split exiting",
+			remove:  func(_ *testing.T, f fixture) { exit(f, "split") },
+			removed: []string{"split"},
+		},
+		{
+			name:    "the handler of a tab in a floating window exiting",
+			remove:  func(_ *testing.T, f fixture) { exit(f, "float") },
+			removed: []string{"float"},
+		},
+		{
+			name:   "closing the window of a tab",
+			remove: func(t *testing.T, f fixture) { require.NoError(t, f.wins["split"].Close()) },
+		},
+		{
+			name:   "closing the floating window of a tab",
+			remove: func(t *testing.T, f fixture) { require.NoError(t, f.wins["float"].Close()) },
+		},
+		{
+			name: "closing the window of a tab from its bar",
+			remove: func(t *testing.T, f fixture) {
+				require.True(t, f.b.OnBarClose(f.wins["float"].(*browserWindow).win))
+			},
+		},
+		{
+			name:   "closing the other windows",
+			remove: func(t *testing.T, f fixture) { require.NoError(t, f.b.CloseOtherWindows(f.wins["focus"])) },
+		},
+		{
+			name: "restoring a tile layout",
+			remove: func(t *testing.T, f fixture) {
+				f.b.RestoreTileLayout(f.b.TileLayout(), func(uint64) browserapi.Handler { return newTestHandler() })
+			},
+		},
+		{
+			name: "showing something else in the window of a tab",
+			remove: func(t *testing.T, f fixture) {
+				require.NoError(t, f.wins["split"].SetContent(newTestHandler()))
+			},
+		},
+		{
+			name: "showing another tab in the window of a tab",
+			remove: func(t *testing.T, f fixture) {
+				require.NoError(t, f.wins["focus"].SetContent(f.tabs["free1"]))
+			},
+		},
+		{
+			name:   "moving a tab",
+			remove: func(t *testing.T, f fixture) { require.NoError(t, f.b.MoveTabRight(f.wins["focus"])) },
+		},
+		{
+			name: "replacing the handler of a tab",
+			remove: func(t *testing.T, f fixture) {
+				require.NoError(t, f.tabs["focus"].SetHandler(newTestHandler(), nil))
+			},
+		},
+	}
+	for _, tcase := range suite {
+		for _, reporting := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, reporting %v", tcase.name, reporting), func(t *testing.T) {
+				f := setup(t, reporting)
+				tcase.remove(t, f)
+
+				var left []string
+				for _, tab := range f.b.Tabs() {
+					left = append(left, name(tab.URI()))
+				}
+				var gone []string
+				for _, n := range names {
+					if !slices.Contains(left, n) {
+						gone = append(gone, n)
+					}
+				}
+				assert.ElementsMatch(t, tcase.removed, gone, "the tabs removed")
+
+				// Each tab is reported removed once, and only then, if it
+				// had a status, its status goes.
+				var removed, want []string
+				for _, ev := range *f.events {
+					if n, ok := strings.CutPrefix(ev, "removed "); ok {
+						removed = append(removed, n)
+						want = append(want, ev)
+						if reporting {
+							want = append(want, "status "+n+" idle")
+						}
+					}
+				}
+				assert.ElementsMatch(t, tcase.removed, removed, "the tabs reported removed")
+				assert.Equal(t, want, *f.events)
+			})
+		}
+	}
+
+	t.Run("closing the component reports no tab, as its tabs go along with it", func(t *testing.T) {
+		f := setup(t, true)
+		require.NoError(t, f.b.Close())
+		assert.Empty(t, f.b.Tabs())
+		assert.Empty(t, *f.events)
+	})
+}
+
 func TestRemoveTabClearsStatus(t *testing.T) {
 	var calls int
 	b, tabs := newActivityComponent(t, func() { calls++ })

@@ -1537,6 +1537,9 @@ func (h *workspaceManagerHandler) textOpts(
 		) {
 			h.status.tabStatusChanged(uri, tab, status)
 		}),
+		text.WithOnTabRemoved(func(tab workspaceapi.URI) {
+			h.status.tabRemoved(uri, tab)
+		}),
 		text.WithTabStatusConfig(tabStatusConfigFor(cfg)),
 		text.WithIconSet(cfg.icons()),
 		text.WithTabOverrideIcon(cfg.tabOverrideIcon()),

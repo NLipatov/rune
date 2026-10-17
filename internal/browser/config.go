@@ -228,6 +228,11 @@ type Config struct {
 	// status it had before and the one it has now. A tab removed with a
 	// status reports a change to idle.
 	OnTabStatus func(uri workspaceapi.URI, prev, status programstatus.Summary)
+	// OnTabRemoved is called once a tab is removed, before OnTabStatus
+	// reports the loss of its status, if it had one, so whoever lists
+	// tabs by status can drop the tab rather than see it go idle first.
+	// The tabs closed along with the Component are not reported.
+	OnTabRemoved func(uri workspaceapi.URI)
 	// TabStatus styles the decorations that reflect a tab's status.
 	TabStatus TabStatusConfig
 

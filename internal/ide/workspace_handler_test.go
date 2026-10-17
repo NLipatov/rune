@@ -1903,8 +1903,7 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 	terminalTab := func(t *testing.T, pr *program) {
 		require.NoError(t, pr.e.terminalnewtab(ctx))
 	}
-	// An idle report on the tab in sight is seen right away, leaving no
-	// row for it.
+	// Shown in no window, its status is not seen when reported.
 	terminalTabOutOfSight := func(t *testing.T, pr *program) {
 		terminalTab(t, pr)
 		other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
@@ -1950,8 +1949,10 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 		name: "terminal tab", state: programstatus.Error, key: del,
 		open: terminalTab, closed: tabGone,
 	}, {
+		// The idle report on the tab in sight is seen right away, yet the
+		// row stays until the tab is closed.
 		name: "terminal tab here", here: true, state: programstatus.Idle, key: backspace,
-		open: terminalTabOutOfSight, closed: tabGone,
+		open: terminalTab, closed: tabGone,
 	}, {
 		name: "terminal tab out of sight", state: programstatus.Idle, key: del,
 		open: terminalTabOutOfSight, closed: tabGone,

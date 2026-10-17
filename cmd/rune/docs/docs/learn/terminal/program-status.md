@@ -172,6 +172,11 @@ workspaces, most pressing first, then by workspace and tab. Each shows:
 - beneath that, while working with a reported `progress`, a progress bar with
   the percentage on its right.
 
+A tab stays listed until you close it, even once you have seen what it
+reported: it then reads `idle`, followed by the `app` it last reported. A
+terminal that is not a tab leaves the list once it holds no record, as when it
+closes.
+
 | Key | Action |
 | --- | --- |
 | `j` / `<down>` / `<ctrl-j>` / `<ctrl-n>` | Next program |

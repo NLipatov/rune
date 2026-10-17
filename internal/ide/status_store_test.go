@@ -88,7 +88,7 @@ func TestStatusInboxEntries(t *testing.T) {
 				}},
 			},
 		}},
-		{slot: 1, wsName: "2 proj", uri: idle, name: "idle", status: programstatus.Summary{Progress: -1}},
+		{slot: 1, wsName: "2 proj", uri: idle, name: "idle", app: "rune-agent", status: programstatus.Summary{Progress: -1}},
 		{slot: 0, wsName: "1 home", uri: waiting, name: "waiting", icon: 'z', status: programstatus.Summary{
 			Progress: -1, App: "opencode", Records: reported(programstatus.Idle),
 		}},
@@ -129,7 +129,8 @@ func TestStatusInboxEntries(t *testing.T) {
 			uri: waiting, icon: "z", name: "waiting", sub: "idle · opencode", progress: -1,
 			iconAttr: term.Attributes{Fg: term.ColorBlue}, subAttr: term.Attributes{Fg: term.ColorBlue},
 		},
-	}, rows, "a source is listed once, with its state and app; one that reported nothing is not")
+		{uri: idle, name: "idle", sub: "idle · rune-agent", progress: -1},
+	}, rows, "a source is listed once, with its state and app, or the app it last reported")
 
 	t.Run("sources are left untouched", func(t *testing.T) {
 		assert.Len(t, sources, 6)
@@ -221,6 +222,7 @@ func newStatusViewFixture(t *testing.T) *statusViewFixture {
 	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) {
 		store.tabStatusChanged(ws, uri, next)
 	}
+	cfg.OnTabRemoved = func(uri workspaceapi.URI) { store.tabRemoved(ws, uri) }
 	b := browser.NewComponent(cfg)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	b.Resize(120, 60)
@@ -1792,24 +1794,34 @@ func TestStatusStoreTabLifecycle(t *testing.T) {
 	host, store, ws := newStatusStoreTest(t)
 	cfg := browser.DefaultConfig()
 	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) { store.tabStatusChanged(ws, uri, next) }
+	cfg.OnTabRemoved = func(uri workspaceapi.URI) { store.tabRemoved(ws, uri) }
 	b := browser.NewComponent(cfg)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	uri := statusStoreTestURI(t, "file:///tab")
-	host.names[statusKey{ws.String(), uri.String()}] = "build"
+	key := statusKey{ws.String(), uri.String()}
+	host.names[key] = "build"
 	h := &statusStoreTestHandler{}
 	tab := b.NewTab(uri, 'b', "build", h, h)
 	tabs := statusStoreTestTabs{component: b}
 	v := store.view()
 	defer v.Close()
 	for _, state := range []programstatus.State{programstatus.Done, programstatus.Error} {
-		store.setTabStatus(ws, tabs, uri, detachedTestReport(state, "result"))
+		store.setTabStatus(ws, tabs, uri, programstatus.Report{State: state, Progress: -1, App: "make", Msg: "result"})
 		require.Len(t, v.entries, 1)
 		assert.Equal(t, "build", v.entries[0].name)
-		require.Nil(t, store.sources[statusKey{ws.String(), uri.String()}].records)
+		assert.Equal(t, state, v.entries[0].state)
+		require.Nil(t, store.sources[key].records)
+		changed := len(host.changed)
 		tab.AckStatus()
-		assert.Empty(t, v.entries)
-		_, ok := store.status(ws, uri)
-		assert.False(t, ok)
+		require.Len(t, v.entries, 1, "seen, the tab stays listed until it is removed")
+		assert.Equal(t, programstatus.Idle, v.entries[0].state)
+		assert.Equal(t, "idle · make", v.entries[0].sub, "it keeps the app it last reported")
+		sum, ok := store.status(ws, uri)
+		require.True(t, ok)
+		assert.Empty(t, sum.Records)
+		assert.Len(t, host.changed, changed+1, "the workspace learns its status went")
+		rollup, _ := store.rollup(ws)
+		assert.Empty(t, rollup.Records, "nothing it no longer reports weighs on the workspace")
 	}
 	store.setTabStatus(ws, tabs, uri, programstatus.Report{ID: "working", State: programstatus.Working, Progress: -1})
 	store.setTabStatus(ws, tabs, uri, programstatus.Report{ID: "done", State: programstatus.Done, Progress: -1})
@@ -1818,14 +1830,33 @@ func TestStatusStoreTabLifecycle(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, sum.Records, 1)
 	assert.Equal(t, programstatus.Done, sum.State)
+	changed := len(host.changed)
 	require.True(t, b.RemoveTab(tab))
 	assert.Empty(t, v.entries)
 	_, ok = store.status(ws, uri)
 	assert.False(t, ok)
+	assert.Len(t, host.changed, changed+1, "removed with a record, the workspace learns its status went once")
+
+	// Seen before it is removed, the tab goes all the same.
+	tab = b.NewTab(uri, 'b', "build", h, h)
+	store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Done, ""))
+	tab.AckStatus()
+	require.Len(t, v.entries, 1)
+	require.True(t, b.RemoveTab(tab))
+	assert.Empty(t, v.entries)
+	assert.Empty(t, store.sources)
+
+	// A tab that never reported leaves nothing behind.
+	silent := statusStoreTestURI(t, "file:///silent")
+	require.True(t, b.RemoveTab(b.NewTab(silent, 's', "silent", h, h)))
+	assert.Empty(t, store.sources)
+
+	tab = b.NewTab(uri, 'b', "build", h, h)
+	require.True(t, b.RemoveTab(tab))
 	require.Error(t, store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Working, "")))
 	require.Error(t, store.endTabStatus(ws, tabs, uri))
 	assert.Empty(t, store.sources, "a tab error must not create a detached source")
-	delete(host.names, statusKey{ws.String(), uri.String()})
+	delete(host.names, key)
 	store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Working, ""))
 	require.Len(t, v.entries, 1)
 	assert.Equal(t, detachedStatusLabel, v.entries[0].name)

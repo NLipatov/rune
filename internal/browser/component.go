@@ -1653,6 +1653,9 @@ func (c *Component) removeTab(t *Tab) bool {
 	if !ok {
 		panic(fmt.Sprintf("corrupted tabs: could not find tab with id %v", id))
 	}
+	if c.config.OnTabRemoved != nil {
+		c.config.OnTabRemoved(t.uri)
+	}
 	if len(t.status.Records) > 0 {
 		prev := t.status
 		t.status = programstatus.Summary{Progress: -1}

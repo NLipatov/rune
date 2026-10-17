@@ -128,6 +128,9 @@ type statusSource struct {
 	// for a tab, whose records its browser holds.
 	records *programstatus.Store
 	status  programstatus.Summary
+	// app is the app src last reported, which a tab keeps showing once
+	// it holds no record.
+	app string
 }
 
 func (src *statusSource) key() statusKey {
@@ -138,9 +141,11 @@ func (src *statusSource) key() statusKey {
 // workspaces, whether by the program behind a tab or by a terminal that
 // is no tab. It rolls them up per workspace, tells the user about the
 // transitions worth knowing, and lists them, live, in the status
-// inbox. A source is forgotten once it holds no record, and with its
-// workspace. It is not safe for concurrent use: every method must be
-// called on the host event loop. Use newStatusStore to create one.
+// inbox. A tab that reported is listed until it is removed, even once
+// the user saw what it reported; a terminal that is no tab is forgotten
+// once it holds no record. Both are forgotten with their workspace. It
+// is not safe for concurrent use: every method must be called on the
+// host event loop. Use newStatusStore to create one.
 type statusStore struct {
 	host   statusHost
 	cfg    browser.TabStatusConfig
@@ -224,6 +229,23 @@ func (s *statusStore) tabStatusChanged(ws, uri workspaceapi.URI, status programs
 	}
 }
 
+// tabRemoved forgets the tab at uri in the workspace at ws. It must be
+// called once the tab is removed, as nothing else tells the store about
+// a tab whose program no longer holds a record, and before the loss of
+// the tab's status is reported, for its row to go from where it is.
+func (s *statusStore) tabRemoved(ws, uri workspaceapi.URI) {
+	key := statusKey{ws: ws.String(), uri: uri.String()}
+	src, ok := s.sources[key]
+	if !ok || src.records != nil {
+		return
+	}
+	delete(s.sources, key)
+	if len(src.status.Records) > 0 {
+		s.host.statusChanged(ws)
+	}
+	s.refreshViews()
+}
+
 // dropWorkspace forgets every status reported in the workspace at ws.
 func (s *statusStore) dropWorkspace(ws workspaceapi.URI) {
 	dropped := false
@@ -284,7 +306,7 @@ func (s *statusStore) items() []statusItem {
 		}
 		ret = append(ret, statusItem{
 			slot: slot, ws: src.ws, wsName: wsName,
-			uri: src.uri, name: s.name(src), status: src.status,
+			uri: src.uri, name: s.name(src), app: src.app, status: src.status,
 		})
 		if src.records == nil {
 			ret[len(ret)-1].icon, _ = s.host.statusTabIcon(src.ws, src.uri)
@@ -337,15 +359,19 @@ func (s *statusStore) updateDetached(
 	s.update(src, src.records.Summary())
 }
 
-// update sets the status of src, keeping src while it holds a record,
-// and reacts to the change.
+// update sets the status of src, keeping a tab until it is removed and
+// a terminal that is no tab while it holds a record, and reacts to the
+// change.
 func (s *statusStore) update(src *statusSource, status programstatus.Summary) {
 	if src.status.Equal(status) {
 		return
 	}
 	prev := src.status
 	src.status = status
-	if len(status.Records) == 0 {
+	if status.App != "" {
+		src.app = status.App
+	}
+	if src.records != nil && len(status.Records) == 0 {
 		delete(s.sources, src.key())
 	} else {
 		s.sources[src.key()] = src
@@ -490,6 +516,9 @@ type statusItem struct {
 	uri    workspaceapi.URI
 	// name is the tab's name, or detachedStatusLabel.
 	name string
+	// app is the app the source last reported, which stands in for the
+	// app of status once it reports none.
+	app string
 	// icon is the icon the tab was opened with, or zero.
 	icon   rune
 	status programstatus.Summary
@@ -536,14 +565,11 @@ type statusInbox struct {
 // statusSubSeparator sits between the state and the app of an entry.
 const statusSubSeparator = " · "
 
-// entries returns one entry per item that reported a status, most
-// pressing first (blocked > error > done > working > idle), then by
-// slot and name. An item holding several records is listed once, in
-// its most pressing state.
+// entries returns one entry per item, most pressing first (blocked >
+// error > done > working > idle), then by slot and name. An item
+// holding several records is listed once, in its most pressing state.
 func (in statusInbox) entries(items []statusItem) []statusEntry {
-	items = slices.DeleteFunc(slices.Clone(items), func(it statusItem) bool {
-		return it.status.State == programstatus.Idle && len(it.status.Records) == 0
-	})
+	items = slices.Clone(items)
 	slices.SortStableFunc(items, func(a, b statusItem) int {
 		return cmp.Or(
 			programstatus.Precedence(b.status.State)-programstatus.Precedence(a.status.State),
@@ -558,18 +584,19 @@ func (in statusInbox) entries(items []statusItem) []statusEntry {
 }
 
 // entry renders it: its name, or the app of a terminal that is no tab,
-// its state followed by its app when that adds to the name, and the
-// progress of a working item. The title and the message are left to
-// the preview, as they would bury the name.
+// its state followed by its app, or the app it last reported, when
+// that adds to the name, and the progress of a working item. The title
+// and the message are left to the preview, as they would bury the name.
 func (in statusInbox) entry(it statusItem) statusEntry {
 	st := it.status
+	app := cmp.Or(st.App, it.app)
 	name := it.name
-	if (name == "" || name == detachedStatusLabel) && st.App != "" {
-		name = st.App
+	if (name == "" || name == detachedStatusLabel) && app != "" {
+		name = app
 	}
 	sub := st.State.String()
-	if st.App != "" && st.App != name {
-		sub += statusSubSeparator + st.App
+	if app != "" && app != name {
+		sub += statusSubSeparator + app
 	}
 	nameAttr, iconAttr := in.cfg.ContentTab.BarAttrs(st)
 	subAttr := nameAttr
