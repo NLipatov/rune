@@ -1687,7 +1687,7 @@ func TestCommandProgramStatusPreviewsTab(t *testing.T) {
 	// With room for it, the window is sized to show the tab whole beside
 	// the sidebar.
 	focused.comp.Resize(120, 60)
-	sideW := picker.sidebarWidth() + statusDividerWidth
+	sideW := picker.sidebarWidth()
 	assert.Equal(t, []int{sideW + tabW, tabH}, []int{picker.width, picker.height})
 	for _, ev := range []term.Event{
 		{Type: term.EventKey, Ch: 'j'},
@@ -1774,7 +1774,7 @@ func TestCommandProgramStatusPreviewsWindowedTerminal(t *testing.T) {
 	require.NoError(t, err)
 	picker := content.(*statusView)
 	focused.comp.Resize(120, 60)
-	sideW := picker.sidebarWidth() + statusDividerWidth
+	sideW := picker.sidebarWidth()
 	lines := strings.Split(handlertest.DrawHandler(picker, picker.width, picker.height), "\n")
 	assert.Equal(t, "brew", strings.TrimSpace(string([]rune(lines[0])[sideW:])))
 

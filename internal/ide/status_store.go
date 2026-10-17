@@ -701,9 +701,15 @@ const (
 	// what has no size of its own: a tab never shown, or nothing.
 	statusPreviewWidth  = 80
 	statusPreviewHeight = 21
-	statusSidebarMin    = 24
-	statusSidebarMax    = 40
-	statusDividerWidth  = 1
+	// statusSidebarMin and statusSidebarMax bound the width of the
+	// sidebar, padding included.
+	statusSidebarMin = 24
+	statusSidebarMax = 40
+	// statusPadTop is the empty rows above the first program, and
+	// statusPadRight the empty columns between the longest text of the
+	// sidebar and the preview.
+	statusPadTop   = 1
+	statusPadRight = 2
 	// statusTextX is the column names start at in the sidebar, past the
 	// marker, the icon and a space.
 	statusTextX = 3
@@ -722,8 +728,6 @@ type statusInboxStyle struct {
 	// over the background of selectedAttr, which styles the rest of it.
 	marker                   rune
 	markerAttr, selectedAttr term.Attributes
-	// frame draws the line between the programs and the preview.
-	frame component.FrameUnionCharSet
 }
 
 func defaultStatusInboxStyle() statusInboxStyle {
@@ -731,7 +735,6 @@ func defaultStatusInboxStyle() statusInboxStyle {
 		marker:       '▌',
 		markerAttr:   browser.DefaultConfig().FocusTabHighlightAttr,
 		selectedAttr: term.Attributes{Bg: term.ColorGray},
-		frame:        component.DefaultFrameUnionCharSet(),
 	}
 }
 
@@ -899,16 +902,20 @@ func (v *statusView) entryHeights() []int {
 }
 
 // sidebarSize returns the size the sidebar asks for to show every
-// program whole.
+// program whole: the widest name or state line past statusTextX, and
+// statusPadRight, within statusSidebarMin and statusSidebarMax, by the
+// programs and the gaps between them below statusPadTop.
 func (v *statusView) sidebarSize() (int, int) {
 	if len(v.entries) == 0 {
-		return min(max(2+graphemecluster.StringWidth(statusViewEmpty), statusSidebarMin), statusSidebarMax), 1
+		w := 1 + graphemecluster.StringWidth(statusViewEmpty) + statusPadRight
+		return min(max(w, statusSidebarMin), statusSidebarMax), statusPadTop + 1
 	}
 	w := 0
 	for _, e := range v.entries {
 		w = max(w, statusTextX+graphemecluster.StringWidth(e.name), statusTextX+graphemecluster.StringWidth(e.sub))
 	}
-	return min(max(w+1, statusSidebarMin), statusSidebarMax), sectionHeight(v.entryHeights())
+	return min(max(w+statusPadRight, statusSidebarMin), statusSidebarMax),
+		statusPadTop + sectionHeight(v.entryHeights())
 }
 
 // sidebarWidth returns the width the sidebar takes of the view.
@@ -950,7 +957,7 @@ func (v *statusView) sizePreview() {
 	if !ok || p.fit == nil {
 		return
 	}
-	width := v.width - v.sidebarWidth() - statusDividerWidth
+	width := v.width - v.sidebarWidth()
 	if width <= 0 || v.height <= 0 {
 		return
 	}
@@ -981,17 +988,9 @@ func (v *statusView) Draw(w term.Writer) {
 	if sideW >= v.width {
 		return
 	}
-	divider := term.NewCell(v.store.style.frame.VerticalLeft, 1, statusMutedAttr)
-	for y := range v.height {
-		w.SetCell(term.Coordinates{X: sideW, Y: y}, divider)
-	}
-	x := sideW + statusDividerWidth
-	if x >= v.width {
-		return
-	}
 	v.drawPreview(&component.VirtualWriter{
-		Writer: w, Offset: term.Coordinates{X: x}, Width: v.width - x, Height: v.height,
-	}, v.width-x, v.height)
+		Writer: w, Offset: term.Coordinates{X: sideW}, Width: v.width - sideW, Height: v.height,
+	}, v.width-sideW, v.height)
 }
 
 // drawSidebar draws the programs into w, which is width cells wide,
@@ -999,14 +998,14 @@ func (v *statusView) Draw(w term.Writer) {
 func (v *statusView) drawSidebar(w term.Writer, width int) {
 	v.rows = slices.Repeat([]int{-1}, v.height)
 	if len(v.entries) == 0 {
-		statusText(w, 1, 0, statusViewEmpty, statusMutedAttr, width-1)
+		statusText(w, 1, statusPadTop, statusViewEmpty, statusMutedAttr, width-statusPadRight)
 		return
 	}
 	sel := v.resolve()
 	style := v.store.style
 	heights := v.entryHeights()
-	v.top = statusScroll(v.top, sel, heights, v.height)
-	y := 0
+	v.top = statusScroll(v.top, sel, heights, v.height-statusPadTop)
+	y := statusPadTop
 	for i := v.top; i < len(heights); i++ {
 		if i > v.top {
 			y += statusGap
@@ -1055,12 +1054,12 @@ func (v *statusView) drawEntry(w term.Writer, i, y, width int) {
 	if i == v.hover {
 		nameAttr = term.AttributesUnion(statusBoldAttr, nameAttr)
 	}
-	// Short of room, text stops a cell before the divider, as it does
-	// when it fits, and never splits a wide character there.
-	statusText(w, statusTextX, y, e.name, nameAttr, width-1)
-	statusText(w, statusTextX, y+1, e.sub, e.subAttr, width-1)
+	// Short of room, text keeps clear of the padding, as it does when it
+	// fits, and never splits a wide character there.
+	statusText(w, statusTextX, y, e.name, nameAttr, width-statusPadRight)
+	statusText(w, statusTextX, y+1, e.sub, e.subAttr, width-statusPadRight)
 	if e.progress >= 0 {
-		statusProgress(w, statusTextX, y+2, width-statusTextX-1, e.progress)
+		statusProgress(w, statusTextX, y+2, width-statusTextX-statusPadRight, e.progress)
 	}
 }
 
@@ -1315,7 +1314,7 @@ func (v *statusView) Close() error {
 func (v *statusView) Dimensions() (int, int) {
 	sideW, sideH := v.sidebarSize()
 	w, h := v.previewSize()
-	width := sideW + statusDividerWidth + w
+	width := sideW + w
 	if v.minWidth != nil {
 		width = max(width, v.minWidth())
 	}
