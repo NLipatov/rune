@@ -358,7 +358,8 @@ func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 	}
 
 	enc := e.comp.keyboard.encoding()
-	if ev.Mod&^term.ModCtrlShift != 0 && !e.copyPassesThrough(ev, enc) {
+	if (ev.Mod&^term.ModCtrlShift != 0 && !e.copyPassesThrough(ev, enc)) ||
+		(ev.Type == term.EventKey && Whitelisted(ev.KeyComb())) {
 		return
 	}
 
@@ -412,6 +413,21 @@ func (e *Handler) copyPassesThrough(ev term.Event, enc keyEncoding) bool {
 	}
 	_, selected := e.comp.Selection()
 	return !selected
+}
+
+// whitelist holds keys no terminal spec assigns bytes to, on which
+// terminals disagree, so Handle leaves them unhandled instead of writing
+// them to the program.
+var whitelist = map[term.KeyComb]bool{
+	// conveniently used key binding for navigation
+	{Ch: '`', Mod: term.ModCtrl}: true,
+}
+
+// Whitelisted reports whether Handle leaves k unhandled for the caller,
+// although k holds no modifier but ctrl and shift, which otherwise always
+// go to the program.
+func Whitelisted(k term.KeyComb) bool {
+	return whitelist[k]
 }
 
 // OnFocusChange allows clients to report whether this vte.Handler is on focus or not.
