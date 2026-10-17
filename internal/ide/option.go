@@ -205,9 +205,8 @@ func WithWorkspaceOpenCompleter(scheme string, c command.Completer) Option {
 	}
 }
 
-// Logo is a built-in wallpaper of windows without a tab, which the
-// workspace.wallpaper_logo setting selects by its name in [WithLogos],
-// together with the intro that animates it in at startup.
+// Logo is the built-in wallpaper of windows without a tab, together with
+// the intro that animates it in at startup.
 type Logo struct {
 	Wallpaper browser.Wallpaper
 	// Shader returns the intro, which runs at ShaderFPS for ShaderDuration.
@@ -217,24 +216,13 @@ type Logo struct {
 	ShaderDuration time.Duration
 }
 
-// WithLogos sets the built-in logos, by the name workspace.wallpaper_logo
-// selects them with. Windows without a tab show the [WithFallbackLogo]
-// when it names none of them, else no wallpaper.
-// A wallpaper the user configures replaces the logo, and has no intro.
-func WithLogos(logos map[string]Logo) Option {
+// WithLogo sets the built-in logo windows without a tab show, with its
+// intro, when no workspace.wallpaper_* setting names a wallpaper. A
+// wallpaper the user configures replaces the logo, and has no intro.
+// Without a logo such windows are blank.
+func WithLogo(logo Logo) Option {
 	return func(opts *options) {
-		opts.logos = logos
-	}
-}
-
-// WithFallbackLogo sets the logo shown, with its intro, when
-// workspace.wallpaper_logo names a logo that [WithLogos] did not set, for
-// an IDE that cannot draw every built-in logo. Such a name is then not a
-// configuration error. An empty workspace.wallpaper_logo still shows no
-// logo.
-func WithFallbackLogo(logo Logo) Option {
-	return func(opts *options) {
-		opts.fallbackLogo = &logo
+		opts.logo = &logo
 	}
 }
 
@@ -558,8 +546,7 @@ type options struct {
 	shellRCDir           string
 	hostDataDir          string
 	workspaceConfig      string
-	logos                map[string]Logo
-	fallbackLogo         *Logo
+	logo                 *Logo
 	defaultConfig        string
 	bell                 func()
 	scheduleFn           func(func()) bool

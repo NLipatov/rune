@@ -5,8 +5,8 @@ sidebar_position: 46
 # Wallpaper
 
 Rune shows a wallpaper in every [window](./layout-management.md#windows) that
-has no tab to show. By default it is one of Rune's built-in logos, which plays
-an intro when Rune starts. You can replace it with ASCII or Unicode text that
+has no tab to show. By default it is Rune's built-in logo, which plays an
+intro when Rune starts. You can replace it with ASCII or Unicode text that
 Rune renders directly, or give Rune a PNG image to show as a picture, up to the
 whole window, or to ASCII encode.
 
@@ -32,46 +32,22 @@ Rune shows the first of these settings that is not empty:
 2. [`wallpaper_image_ascii`](#encode-an-image-to-ascii): a PNG encoded as
    ASCII art.
 3. [`wallpaper_ascii`](#use-ascii-art-directly): ASCII art drawn as written.
-4. [`wallpaper_logo`](#choose-the-built-in-logo): a built-in logo.
 
-Setting one takes over from those below it, so you never need to clear the
-others. Set all four to `""` to leave windows blank. A setting Rune cannot use,
+When all three are empty, which is the default, Rune shows
+[its built-in logo](#the-built-in-logo). Setting one takes over from those
+below it, so you never need to clear the others. A setting Rune cannot use,
 such as an image it cannot open, is reported as a configuration error and
 skipped in favor of the next one.
 
-## Choose the built-in logo
+## The built-in logo
 
-Without a wallpaper of your own, Rune draws the built-in logo that
-`workspace.wallpaper_logo` names:
-
-| Logo | Wallpaper | Intro |
-| --- | --- | --- |
-| `rune` | The Rune logo, drawn as a full-resolution picture. | Braille dots fly in and assemble the logo, then bloom into its picture. |
-| `unstable_build` (default) | The Unstable Build logo, drawn as colored ASCII art. | Flames sweep across the window and burn the logo in. |
-
-The config file Rune writes when you first set it up picks `rune`. A config
-file from an earlier version of Rune does not set `wallpaper_logo`, so it keeps
-the Unstable Build logo until you pick the Rune logo:
-
-```yaml tab
-workspace:
-  wallpaper_logo: rune
-```
-
-```python tab
-config["workspace"]["wallpaper_logo"] = "rune"
-```
-
-To leave empty windows blank, set `wallpaper_logo` to an empty string, with no
-other wallpaper set.
-
-The Rune logo is drawn for the fonts and pictures of the GUI. In a terminal,
-with `rune --tui`, Rune shows the Unstable Build logo whichever logo
-`wallpaper_logo` names.
+Without a wallpaper of your own, Rune draws the Rune logo as a full-resolution
+picture.
 
 ### The intro
 
-The intro is the animation that plays over the logo when Rune starts. Set
+The intro is the animation that plays over the logo when Rune starts: braille
+dots fly in and assemble the logo, then bloom into its picture. Set
 `animations.intro` to `false` to start on the logo directly, and run
 `:shaderrun intro` to play the intro at any time:
 
@@ -84,15 +60,14 @@ animations:
 config["animations"]["intro"] = False
 ```
 
-Only the built-in logos have an intro. A wallpaper of your own, ASCII art or
+Only the built-in logo has an intro. A wallpaper of your own, ASCII art or
 image, replaces the logo together with its intro, so Rune starts on your
 wallpaper without one.
 
 The intro plays once, at startup, so it belongs to the wallpaper that your
 config file in `~/.rune` sets. A project's `.rune/config.yaml` can change the
-wallpaper of its windows, but not the intro. A change to `animations.intro`,
-or to the intro that `wallpaper_logo` picks, takes effect the next time Rune
-starts.
+wallpaper of its windows, but not the intro. A change to `animations.intro`
+takes effect the next time Rune starts.
 
 ## Use ASCII art directly
 
@@ -307,22 +282,19 @@ which it reports as a configuration error.
 | `workspace.wallpaper_image` | Path to a PNG that Rune shows as a picture, or a section with its `path`, `width`, `height` and `fit` (see [Show an image](#show-an-image)). Defaults to a section whose `path` is `""`, no picture. |
 | `workspace.wallpaper_image_ascii` | Path to a PNG that Rune encodes as colored ASCII art. Relative paths start from the directory Rune was started in. Defaults to `""`, no image. |
 | `workspace.wallpaper_ascii` | ASCII art drawn as written and centered as a block. Defaults to `""`, no art. |
-| `workspace.wallpaper_logo` | Built-in logo shown when no other wallpaper is set: `rune` or `unstable_build`. Defaults to `unstable_build`, and the config file Rune writes when you first set it up sets `rune`; `""` shows no logo. |
 | `workspace.wallpaper_density_characters` | Brightness ramp used to encode images as ASCII, ordered from least to most dense. Defaults to `" ▓▓▓▓"`. |
 | `workspace.wallpaper_attr` | Foreground, background, and flags of the characters of `wallpaper_ascii`. Ignored by image wallpapers, whose colors come from the image. |
 | `workspace.wallpaper_background_attr` | Background and flags of the window behind any wallpaper, including the built-in logo. Once set, its `bg` also replaces the `bg` of `wallpaper_attr`. |
 | `animations.intro` | Plays the intro of the built-in logo when Rune starts. Defaults to `true`. |
 
-Rune shows the first of `wallpaper_image`, `wallpaper_image_ascii`,
-`wallpaper_ascii` and `wallpaper_logo` that is not empty (see
+Rune shows the first of `wallpaper_image`, `wallpaper_image_ascii` and
+`wallpaper_ascii` that is not empty, else its built-in logo (see
 [Which wallpaper Rune shows](#which-wallpaper-rune-shows)). If Rune cannot open
 or decode an image, it reports a configuration error and moves on to the next
 wallpaper. A `width`, `height` or `fit` of `wallpaper_image` that Rune cannot
 read is reported as a configuration error, and Rune uses its default. A
 `wallpaper_ascii` that is not a string is reported as a configuration error
-too, and Rune moves on to the built-in logo. A `wallpaper_logo` that names no
-built-in logo is reported as a configuration error, and the window stays blank.
-In a terminal, it shows the Unstable Build logo instead.
+too, and Rune moves on to the built-in logo.
 
 ## What happens under the hood
 

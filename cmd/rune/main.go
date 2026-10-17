@@ -592,9 +592,8 @@ func runTUI(
 	opts := []ide.Option{
 		ide.WithExtensionsRunner(runner),
 		// The Rune logo is drawn for the font and pictures of the GUI, so a
-		// terminal falls back to the Unstable Build logo, which has no GUI
-		// theme to follow.
-		ide.WithFallbackLogo(makeUnstableBuildLogo(func() string { return logoThemeDefault })),
+		// terminal shows the Unstable Build logo instead.
+		ide.WithLogo(makeUnstableBuildLogo()),
 		ide.WithShutdownShader(
 			func(defaultAttr term.Attributes) shader.Shader {
 				return shutdownShader(defaultAttr)

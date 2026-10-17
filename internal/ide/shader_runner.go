@@ -166,7 +166,7 @@ func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
 	if cmd.Args[0] == introShaderName {
 		if !r.runInitShader() {
 			err = errors.New("the wallpaper has no intro: " +
-				"only the built-in logos of workspace.wallpaper_logo have one")
+				"only the built-in logo has one")
 		}
 		return
 	}

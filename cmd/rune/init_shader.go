@@ -24,7 +24,6 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	tcomponent "unstable.build/rune/internal/component"
 	"unstable.build/rune/internal/component/shader"
-	"unstable.build/rune/internal/component/shader/glslshader"
 )
 
 const (
@@ -108,39 +107,5 @@ func makeInitShader(
 			shader.BrailleBloom(params.Bloom, defaultAttr, dots,
 				shader.BrailleSolidify(params.Solidify, defaultAttr, dots)),
 		)
-	}
-}
-
-const unstableBuildIntroDuration = 3 * time.Second
-
-// makeUnstableBuildIntro returns the intro of the Unstable Build logo:
-// flames burn in the logo of the theme themeName reports when it starts.
-func makeUnstableBuildIntro(
-	themeName func() string,
-) func(term.Attributes, component.FrameCharSet) shader.Shader {
-	return func(defaultAttr term.Attributes, fc component.FrameCharSet) shader.Shader {
-		logo := unstableBuildLogoForTheme(resolveLogoTheme(themeName))
-		params := glslshader.BurningPresetGentle(logo, false, fc)
-		params.Intensity = []float64{0.2, 0.9, 1.1, 1.1, 0.9, 0.0}
-		embers := []term.Color{
-			term.ColorMaroon,
-			term.ColorRed,
-			term.ColorOlive,
-			term.ColorYellow,
-			term.ColorYellow,
-			term.ColorOlive,
-			term.ColorRed,
-			term.ColorMaroon,
-		}
-		params.Colors = glslshader.BurningColors{
-			HeatColorGradientOverride: []term.Color{
-				term.ColorMaroon,
-				term.ColorRed,
-				term.ColorYellow,
-			},
-			RipplesGradientStart: embers,
-			RipplesGradientEnd:   embers,
-		}
-		return glslshader.Burning(params, defaultAttr, unstableBuildIntroDuration, initShaderFPS)
 	}
 }

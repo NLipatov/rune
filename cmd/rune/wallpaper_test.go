@@ -19,8 +19,6 @@ package main
 import (
 	"context"
 	"image"
-	"maps"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -307,21 +305,23 @@ func TestUnstableBuildWallpaperIsAsciiArtOnThinSpaces(t *testing.T) {
 				}
 			}
 		}
-		assert.Positive(t, thin, "%s: the intro finds the wallpaper by its thin spaces", theme)
+		assert.Positive(t, thin, "%s: no blank cells drawn", theme)
 		assert.Positive(t, blocks, "%s: no logo drawn", theme)
 	}
 	assert.NotEqual(t, drawUnstableBuildWallpaper("default", w, h),
 		drawUnstableBuildWallpaper("hopper", w, h), "hopper has its own logo")
 }
 
-func TestMakeLogosPairsEachLogoWithItsIntro(t *testing.T) {
-	logos := makeLogos(func() string { return "hopper" }, func() (int, int) { return 9, 20 })
-	assert.ElementsMatch(t, []string{logoNameRune, logoNameUnstableBuild}, slices.Collect(maps.Keys(logos)))
-	for name, logo := range logos {
-		assert.NotNil(t, logo.Wallpaper.NewComponent, name)
-		assert.NotNil(t, logo.Shader, name)
-		assert.Equal(t, initShaderFPS, logo.ShaderFPS, name)
-	}
-	assert.Equal(t, initShaderDuration, logos[logoNameRune].ShaderDuration)
-	assert.Equal(t, unstableBuildIntroDuration, logos[logoNameUnstableBuild].ShaderDuration)
+func TestRuneLogoHasItsIntro(t *testing.T) {
+	logo := makeRuneLogo(func() string { return "hopper" }, func() (int, int) { return 9, 20 })
+	assert.NotNil(t, logo.Wallpaper.NewComponent)
+	assert.NotNil(t, logo.Shader)
+	assert.Equal(t, initShaderFPS, logo.ShaderFPS)
+	assert.Equal(t, initShaderDuration, logo.ShaderDuration)
+}
+
+func TestUnstableBuildLogoHasNoIntro(t *testing.T) {
+	logo := makeUnstableBuildLogo()
+	assert.NotNil(t, logo.Wallpaper.NewComponent)
+	assert.Nil(t, logo.Shader)
 }

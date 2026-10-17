@@ -158,16 +158,3 @@ func TestInitShaderDrawsTheDotsInNonSampleColorUnlessItSamplesThem(t *testing.T)
 			"sample %t: the intro ends on the wallpaper as drawn", sample)
 	}
 }
-
-func TestUnstableBuildIntroBurnsTheWallpaperIn(t *testing.T) {
-	const w, h = 120, 40
-	total := int(unstableBuildIntroDuration / (time.Second / initShaderFPS))
-	for _, theme := range []string{"default", "hopper"} {
-		live := drawUnstableBuildWallpaper(theme, w, h)
-		sh := makeUnstableBuildIntro(func() string { return theme })(
-			term.Attributes{}, component.FrameCharSetDefault())
-		cells := term.CloneCells(live)
-		sh.Shade(total/2, total, cells)
-		assert.NotEqual(t, live, cells, "%s: the flames burn over the wallpaper", theme)
-	}
-}

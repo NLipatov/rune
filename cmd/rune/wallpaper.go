@@ -28,36 +28,25 @@ import (
 	"unstable.build/rune/internal/ide"
 )
 
-// The names workspace.wallpaper_logo picks the built-in logos by.
-const (
-	logoNameRune          = "rune"
-	logoNameUnstableBuild = "unstable_build"
-)
-
-// makeLogos returns the built-in logos of the GUI, drawn for the live GUI
-// theme themeName reports and the font cellPixelSize reports.
-func makeLogos(
+// makeRuneLogo returns the Rune logo of the GUI, drawn for the live GUI
+// theme themeName reports and the font cellPixelSize reports, with its
+// intro.
+func makeRuneLogo(
 	themeName func() string, cellPixelSize func() (width, height int),
-) map[string]ide.Logo {
-	return map[string]ide.Logo{
-		logoNameRune: {
-			Wallpaper:      makeThemedWallpaper(themeName, cellPixelSize),
-			Shader:         makeInitShader(defaultIntroParams(), logoDots(themeName, cellPixelSize)),
-			ShaderFPS:      initShaderFPS,
-			ShaderDuration: initShaderDuration,
-		},
-		logoNameUnstableBuild: makeUnstableBuildLogo(themeName),
+) ide.Logo {
+	return ide.Logo{
+		Wallpaper:      makeThemedWallpaper(themeName, cellPixelSize),
+		Shader:         makeInitShader(defaultIntroParams(), logoDots(themeName, cellPixelSize)),
+		ShaderFPS:      initShaderFPS,
+		ShaderDuration: initShaderDuration,
 	}
 }
 
-// makeUnstableBuildLogo returns the Unstable Build logo, drawn for the
-// live GUI theme themeName reports.
-func makeUnstableBuildLogo(themeName func() string) ide.Logo {
+// makeUnstableBuildLogo returns the Unstable Build logo of the terminal,
+// which has no intro.
+func makeUnstableBuildLogo() ide.Logo {
 	return ide.Logo{
-		Wallpaper:      makeUnstableBuildWallpaper(themeName),
-		Shader:         makeUnstableBuildIntro(themeName),
-		ShaderFPS:      initShaderFPS,
-		ShaderDuration: unstableBuildIntroDuration,
+		Wallpaper: makeUnstableBuildWallpaper(func() string { return logoThemeDefault }),
 	}
 }
 
@@ -126,8 +115,7 @@ func makeUnstableBuildWallpaper(themeName func() string) browser.Wallpaper {
 }
 
 // newUnstableBuildSpan builds the centered ascii art that renders img as a
-// wallpaper. Its darkest cells are thin spaces, which tell its intro where
-// the wallpaper is (see [glslshader.Burning]).
+// wallpaper, leaving its darkest cells blank.
 func newUnstableBuildSpan(img image.Image) tui.Component {
 	cfg := asciiart.DefaultConfig()
 	cfg.Color = true

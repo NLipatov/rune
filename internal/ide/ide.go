@@ -670,9 +670,8 @@ func (i *IDE) init(
 		i.publishEvent,
 		op.extensionRunner, trust, i.locker, op.extensions, func() (ideConfig, error) {
 			cfg, err := reloadConfig(cfgfilename,
-				op.logos, defaultCfg, op.bell, op.scheduleFn)
+				op.logo, defaultCfg, op.bell, op.scheduleFn)
 			cfg.storage = i.ideConfig.storage
-			cfg.fallbackLogo = op.fallbackLogo
 			cfg.cellPixelSize = op.cellPixelSize
 			cfg.clip = op.clip
 			cfg.systemOpenURL = op.systemOpenURL
@@ -798,9 +797,8 @@ func newDefaultConfig(op options) DefaultConfig {
 func loadIDEConfig(cfgfilename string, op options) (ideConfig, error) {
 	var cfg ideConfig
 	err := loadConfig(&cfg, cfgfilename,
-		op.logos, newDefaultConfig(op), op.bell,
+		op.logo, newDefaultConfig(op), op.bell,
 		op.scheduleFn)
-	cfg.fallbackLogo = op.fallbackLogo
 	cfg.cellPixelSize = op.cellPixelSize
 	cfg.clip = op.clip
 	cfg.systemOpenURL = op.systemOpenURL

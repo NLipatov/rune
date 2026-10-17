@@ -242,13 +242,17 @@ func TestIDEInitializationIntegration(t *testing.T) {
 
 		i.initRunning()
 		i.root.Draw(&term.NoopWriter{})
-
 		assert.True(t, initShader.called)
+
+		reloaded, err := i.workspaceHandler.reloadConfig()
+		require.NoError(t, err)
+		assert.NotNil(t, reloaded.intro().shader, "a reload keeps the logo")
+		assert.Empty(t, reloaded.errors)
 		assert.NoError(t, i.closeResources())
 	})
 
 	t.Run("intro is not run over a wallpaper of the user", func(t *testing.T) {
-		configPath := makeConfigFile(t, logoConfig+"  wallpaper_ascii: art\n")
+		configPath := makeConfigFile(t, "workspace:\n  wallpaper_ascii: art\n")
 		initShader := new(mockShader)
 		dataDir := t.TempDir()
 
@@ -270,37 +274,6 @@ func TestIDEInitializationIntegration(t *testing.T) {
 			Name: "shaderrun", Args: []string{introShaderName},
 		})
 		assert.Error(t, err, "the wallpaper of the user has no intro to preview")
-		assert.NoError(t, i.closeResources())
-	})
-
-	t.Run("intro of the fallback logo is run for a logo the IDE does not have", func(t *testing.T) {
-		configPath := makeConfigFile(t, logoConfig)
-		initShader := new(mockShader)
-		dataDir := t.TempDir()
-
-		i := new(IDE)
-		err := i.init("", configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
-			WithPublishEvent(nopPublishEvent),
-			WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
-			WithLocker(new(sync.Mutex)),
-			WithFallbackLogo(Logo{
-				Wallpaper: browser.NopWallpaper(),
-				Shader: func(_ term.Attributes, _ component.FrameCharSet) shader.Shader {
-					return initShader
-				},
-				ShaderFPS:      30,
-				ShaderDuration: time.Second,
-			}))
-		require.NoError(t, err)
-
-		i.initRunning()
-		i.root.Draw(&term.NoopWriter{})
-		assert.True(t, initShader.called)
-
-		reloaded, err := i.workspaceHandler.reloadConfig()
-		require.NoError(t, err)
-		assert.NotNil(t, reloaded.intro().shader, "a reload keeps the fallback logo")
-		assert.Empty(t, reloaded.errors)
 		assert.NoError(t, i.closeResources())
 	})
 
@@ -2881,18 +2854,18 @@ func makeTestFiles(t *testing.T) (*os.File, *os.File) {
 	return configFile, file
 }
 
-// logoConfig selects the built-in logo withTestLogo registers.
-const logoConfig = "workspace:\n  wallpaper_logo: test\n"
+// logoConfig names no wallpaper, so windows show the built-in logo.
+const logoConfig = "workspace:\n  wallpaper_ascii: \"\"\n"
 
-// withTestLogo registers the built-in logo logoConfig selects, which
-// intro animates in for a second.
+// withTestLogo sets the built-in logo, which intro animates in for a
+// second.
 func withTestLogo(intro func(term.Attributes, component.FrameCharSet) shader.Shader) Option {
-	return WithLogos(map[string]Logo{"test": {
+	return WithLogo(Logo{
 		Wallpaper:      browser.NopWallpaper(),
 		Shader:         intro,
 		ShaderFPS:      30,
 		ShaderDuration: time.Second,
-	}})
+	})
 }
 
 func makeConfigFile(t *testing.T, content string) string {
@@ -3099,8 +3072,9 @@ func TestIDEStartingTutorialDispatchesOnReady(t *testing.T) {
 		wantActive    string
 	}{
 		{
-			name:          "known tutorial runs",
+			name:          "known tutorial runs over a wallpaper of the user",
 			starting:      "basics",
+			config:        "workspace:\n  wallpaper_ascii: art\n",
 			wantScheduled: true,
 			wantActive:    "basics",
 		},

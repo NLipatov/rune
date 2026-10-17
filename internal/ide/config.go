@@ -270,11 +270,9 @@ type extensionConfig struct {
 }
 
 type ideConfig struct {
-	// logos are the built-in logos workspace.wallpaper_logo names.
-	logos map[string]Logo
-	// fallbackLogo is shown when workspace.wallpaper_logo names none of
-	// logos. Nil when the IDE was given none.
-	fallbackLogo *Logo
+	// logo is shown when no workspace.wallpaper_* setting names a
+	// wallpaper. Nil when the IDE was given none.
+	logo *Logo
 
 	configPath       string
 	cfg              map[string]any
@@ -319,7 +317,7 @@ func overrideConfig(ideConfig, cfg map[string]any) {
 }
 
 func initConfig(
-	c *ideConfig, cfg map[string]any, logos map[string]Logo,
+	c *ideConfig, cfg map[string]any, logo *Logo,
 	ringBell func(), scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
@@ -327,17 +325,17 @@ func initConfig(
 	c.configPath = configPath
 	c.ringBell = ringBell
 	c.scheduleNextTick = scheduleNextTick
-	c.logos = logos
+	c.logo = logo
 	c.errors = make(map[string]error)
 }
 
 func initDefaultConfig(
-	c *ideConfig, logos map[string]Logo,
+	c *ideConfig, logo *Logo,
 	ringBell func(), scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	cfg := make(map[string]any)
-	initConfig(c, cfg, logos, ringBell,
+	initConfig(c, cfg, logo, ringBell,
 		scheduleNextTick, configPath)
 }
 
@@ -4171,7 +4169,7 @@ func (c ideConfig) wallpaper() browser.Wallpaper {
 }
 
 // intro returns the intro that animates the wallpaper of windows in,
-// which only the built-in logos have.
+// which only the built-in logo has.
 func (c ideConfig) intro() initShaderConfig {
 	_, logo := c.resolveWallpaper()
 	return initShaderConfig{
@@ -4184,9 +4182,9 @@ func (c ideConfig) intro() initShaderConfig {
 // resolveWallpaper returns the wallpaper of windows without a tab: the picture
 // of workspace.wallpaper_image, else the ASCII art of
 // workspace.wallpaper_image_ascii, else the text of workspace.wallpaper_ascii,
-// else the built-in logo workspace.wallpaper_logo names, which it returns too.
-// An empty value turns its wallpaper off, as the defaults do with all but
-// the logo, so the window is blank when all four are empty.
+// else the built-in logo, which it returns too. An empty value turns its
+// wallpaper off, as the defaults do, so the logo shows when all three are
+// empty.
 func (c ideConfig) resolveWallpaper() (browser.Wallpaper, Logo) {
 	wallpaper := browser.NopWallpaper()
 	var logo Logo
@@ -4198,8 +4196,8 @@ func (c ideConfig) resolveWallpaper() (browser.Wallpaper, Logo) {
 			wallpaper = w
 		} else if w, ok := c.wallpaperText(cfg); ok {
 			wallpaper = w
-		} else if l, ok := c.wallpaperLogo(cfg); ok {
-			wallpaper, logo = l.Wallpaper, l
+		} else if c.logo != nil {
+			wallpaper, logo = c.logo.Wallpaper, *c.logo
 		}
 	}
 	wallpaper.BackgroundAttr = c.workspaceWallpaperBackgroundAttr()
@@ -4421,34 +4419,6 @@ func (c ideConfig) wallpaperText(cfg config.Config) (browser.Wallpaper, bool) {
 			return component.NewStringWithConfig(cfgText, strcfg)
 		},
 	}, true
-}
-
-// wallpaperLogo returns the built-in logo workspace.wallpaper_logo names.
-// An IDE without built-in logos shows none, whatever the setting, unless it
-// has a fallback logo.
-func (c ideConfig) wallpaperLogo(cfg config.Config) (Logo, bool) {
-	name, err := cfg.GetString("wallpaper_logo")
-	if err != nil {
-		if err != config.ErrNotFound {
-			c.errors["workspace.wallpaper_logo"] = err
-		}
-		return Logo{}, false
-	}
-	if name == "" {
-		return Logo{}, false
-	}
-	if logo, ok := c.logos[name]; ok {
-		return logo, true
-	}
-	if c.fallbackLogo != nil {
-		return *c.fallbackLogo, true
-	}
-	if len(c.logos) > 0 {
-		c.errors["workspace.wallpaper_logo"] = fmt.Errorf(
-			"unknown logo %q, expected one of: %s", name,
-			strings.Join(slices.Sorted(maps.Keys(c.logos)), ", "))
-	}
-	return Logo{}, false
 }
 
 func (c ideConfig) autoRestore() (ret bool) {
@@ -5474,12 +5444,12 @@ func decodeOverlayConfigFile(
 }
 
 func reloadConfig(
-	configFilePath string, logos map[string]Logo,
+	configFilePath string, logo *Logo,
 	defaultConfig DefaultConfig,
 	ringBell func(), scheduleNextTick func(func()) bool,
 ) (ret ideConfig, err error) {
 	err = loadConfig(&ret, configFilePath,
-		logos, defaultConfig, ringBell,
+		logo, defaultConfig, ringBell,
 		scheduleNextTick)
 	return
 }
@@ -5517,11 +5487,11 @@ func loadWorkspaceConfig(
 // of an error.
 func loadConfig(
 	c *ideConfig, configPath string,
-	logos map[string]Logo,
+	logo *Logo,
 	defaultConfig DefaultConfig,
 	ringBell func(), scheduleNextTick func(func()) bool,
 ) (err error) {
-	initDefaultConfig(c, logos, ringBell, scheduleNextTick,
+	initDefaultConfig(c, logo, ringBell, scheduleNextTick,
 		configPath)
 
 	cfg, err := decodeDefaultConfig(defaultConfig)
@@ -5529,7 +5499,7 @@ func loadConfig(
 		panic(err)
 	}
 
-	initConfig(c, cfg, logos, ringBell,
+	initConfig(c, cfg, logo, ringBell,
 		scheduleNextTick, configPath)
 
 	if err := loadFileConfig(c, configPath); err != nil {

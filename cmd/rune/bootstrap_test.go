@@ -573,23 +573,6 @@ func TestBootstrapMetaChoiceRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBootstrapPresetsShowTheRuneLogo(t *testing.T) {
-	for _, editor := range []string{editorVim, editorHelix, editorStandard, editorEmacs} {
-		t.Run(editor, func(t *testing.T) {
-			dir := t.TempDir()
-			b := &bootstrapHandler{dataDir: dir, chosenEditor: editor}
-			require.NoError(t, b.writePresetConfig())
-
-			cfg := mustLoadConfig(t, filepath.Join(dir, configFilename))
-			workspace, err := cfg.GetConfig("workspace")
-			require.NoError(t, err)
-			got, err := workspace.GetString("wallpaper_logo")
-			require.NoError(t, err)
-			require.Equal(t, logoNameRune, got)
-		})
-	}
-}
-
 func TestBootstrapTelemetryPersistenceRoundTrip(t *testing.T) {
 	cases := []struct {
 		name        string

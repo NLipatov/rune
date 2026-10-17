@@ -80,8 +80,8 @@ var (
 	logoUnstableBuildHopperPNG []byte
 )
 
-// The Unstable Build logos are only drawn when workspace.wallpaper_logo
-// picks them, so they are decoded on first use.
+// The Unstable Build logos are only drawn in a terminal, so they are
+// decoded on first use.
 var (
 	logoUnstableBuild = sync.OnceValue(func() image.Image {
 		return decodeLogoPicture(logoUnstableBuildPNG)

@@ -222,7 +222,7 @@ func (b *bootstrapHandler) buildConfiguredIDE(
 ) (*ide.IDE, error) {
 	opts := []ide.Option{
 		ide.WithExtensionsRunner(b.runner),
-		ide.WithLogos(makeLogos(b.wallpaperTheme, b.cellPixelSize)),
+		ide.WithLogo(makeRuneLogo(b.wallpaperTheme, b.cellPixelSize)),
 		ide.WithShutdownShader(shutdownShader, shutdownShaderFPS, shutdownShaderDuration),
 		ide.WithLoadingShader(loadingShader, loadingShaderFPS, loadingShaderDuration),
 		ide.WithOpenShader(openShader, openShaderFPS, openShaderDuration),

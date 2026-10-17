@@ -228,8 +228,8 @@ config = {
         # (addWorkspace). The default gray-fade desaturates the
         # screen to signal the IDE is busy.
         "loading_workspace": True,
-        # Plays the intro of the built-in logo (workspace.wallpaper_logo)
-        # when Rune starts. Your own wallpapers have no intro.
+        # Plays the intro of the built-in logo when Rune starts. Your own
+        # wallpapers have no intro.
         "intro": True,
         # Plays when a workspace finishes installing. The default
         # is a quick burn sweep that reveals the new content.
@@ -942,11 +942,8 @@ config = {
         # Index workspace symbols for faster lookups.
         "symboldb":     True,
         # Precedence: wallpaper_image, then wallpaper_image_ascii, then
-        # wallpaper_ascii, then wallpaper_logo. The first non-empty one is
-        # shown; set all four to "" for blank windows.
-        # "rune" or "unstable_build". rune --tui always shows
-        # "unstable_build".
-        "wallpaper_logo":               "unstable_build",
+        # wallpaper_ascii. The first non-empty one is shown; when all three
+        # are "" the built-in Rune logo is.
         "wallpaper_image": { # this takes a file path string, or the following object
             "path":   "",
             "width":  "60%", # or number of cells

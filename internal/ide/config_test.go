@@ -1937,15 +1937,13 @@ func TestConfigWallpaperResolvesTheImagesThenTheTextThenTheLogo(t *testing.T) {
 			ShaderFPS: fps,
 		}
 	}
-	logos := map[string]Logo{"a": logo("logo a", 1), "b": logo("logo b", 2)}
-	fallback := logo("logo f", 3)
+	logoA := logo("logo a", 1)
 
 	cases := []struct {
-		name         string
-		workspace    map[string]any
-		logos        map[string]Logo
-		fallbackLogo *Logo
-		wantDrawn    string
+		name      string
+		workspace map[string]any
+		logo      *Logo
+		wantDrawn string
 		// wantPicture are the cells of the pictures drawn, on cells of
 		// 10x20 pixels.
 		wantPicture []image.Rectangle
@@ -1955,49 +1953,48 @@ func TestConfigWallpaperResolvesTheImagesThenTheTextThenTheLogo(t *testing.T) {
 		{
 			name:      "no wallpaper",
 			workspace: map[string]any{},
-			logos:     logos,
 		},
 		{
-			name:      "the logo it names",
-			workspace: map[string]any{"wallpaper_logo": "b"},
-			logos:     logos,
-			wantDrawn: "logob",
-			wantFPS:   2,
+			name:      "the logo",
+			workspace: map[string]any{},
+			logo:      &logoA,
+			wantDrawn: "logoa",
+			wantFPS:   1,
 		},
 		{
 			name:      "the text over the logo",
-			workspace: map[string]any{"wallpaper_ascii": "art", "wallpaper_logo": "a"},
-			logos:     logos,
+			workspace: map[string]any{"wallpaper_ascii": "art"},
+			logo:      &logoA,
 			wantDrawn: "art",
 		},
 		{
 			name:      "the text of the deprecated key",
-			workspace: map[string]any{"wallpaper": "art", "wallpaper_logo": "a"},
-			logos:     logos,
+			workspace: map[string]any{"wallpaper": "art"},
+			logo:      &logoA,
 			wantDrawn: "art",
 		},
 		{
 			name: "the text over the text of the deprecated key",
 			workspace: map[string]any{
-				"wallpaper_ascii": "new", "wallpaper": "old", "wallpaper_logo": "a",
+				"wallpaper_ascii": "new", "wallpaper": "old",
 			},
-			logos:     logos,
+			logo:      &logoA,
 			wantDrawn: "new",
 		},
 		{
 			name: "the deprecated key under an empty text",
 			workspace: map[string]any{
-				"wallpaper_ascii": "", "wallpaper": "old", "wallpaper_logo": "a",
+				"wallpaper_ascii": "", "wallpaper": "old",
 			},
-			logos:     logos,
+			logo:      &logoA,
 			wantDrawn: "old",
 		},
 		{
 			name: "the picture of an image over the text",
 			workspace: map[string]any{
-				"wallpaper_image": path, "wallpaper_ascii": "art", "wallpaper_logo": "a",
+				"wallpaper_image": path, "wallpaper_ascii": "art",
 			},
-			logos:       logos,
+			logo:        &logoA,
 			wantPicture: []image.Rectangle{image.Rect(8, 1, 12, 3)},
 		},
 		{
@@ -2060,71 +2057,29 @@ func TestConfigWallpaperResolvesTheImagesThenTheTextThenTheLogo(t *testing.T) {
 			},
 		},
 		{
-			name:      "an unknown logo",
-			workspace: map[string]any{"wallpaper_logo": "c"},
-			logos:     logos,
-			wantErrs: map[string]string{
-				"workspace.wallpaper_logo": `unknown logo "c", expected one of: a, b`,
-			},
-		},
-		{
-			name:      "no logo without built-in logos",
-			workspace: map[string]any{"wallpaper_logo": "a"},
-		},
-		{
-			name:         "the fallback for a logo it does not have",
-			workspace:    map[string]any{"wallpaper_logo": "c"},
-			logos:        logos,
-			fallbackLogo: &fallback,
-			wantDrawn:    "logof",
-			wantFPS:      3,
-		},
-		{
-			name:         "the logo it names over the fallback",
-			workspace:    map[string]any{"wallpaper_logo": "a"},
-			logos:        logos,
-			fallbackLogo: &fallback,
-			wantDrawn:    "logoa",
-			wantFPS:      1,
-		},
-		{
-			name:         "the fallback without built-in logos",
-			workspace:    map[string]any{"wallpaper_logo": "a"},
-			fallbackLogo: &fallback,
-			wantDrawn:    "logof",
-			wantFPS:      3,
-		},
-		{
-			name:         "an empty logo turns the fallback off",
-			workspace:    map[string]any{"wallpaper_logo": ""},
-			fallbackLogo: &fallback,
-		},
-		{
-			name: "empty values are off",
+			name: "empty values show the logo",
 			workspace: map[string]any{
 				"wallpaper_image": "", "wallpaper_image_ascii": "", "wallpaper_ascii": "",
-				"wallpaper_logo": "b",
+				"wallpaper": "",
 			},
-			logos:     logos,
-			wantDrawn: "logob",
-			wantFPS:   2,
+			logo:      &logoA,
+			wantDrawn: "logoa",
+			wantFPS:   1,
 		},
 		{
-			name: "an empty logo leaves the window blank",
+			name: "empty values without a logo leave the window blank",
 			workspace: map[string]any{
 				"wallpaper_image": "", "wallpaper_image_ascii": "", "wallpaper_ascii": "",
-				"wallpaper": "", "wallpaper_logo": "",
+				"wallpaper": "",
 			},
-			logos: logos,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &ideConfig{
-				cfg:          map[string]any{"workspace": tc.workspace},
-				errors:       map[string]error{},
-				logos:        tc.logos,
-				fallbackLogo: tc.fallbackLogo,
+				cfg:    map[string]any{"workspace": tc.workspace},
+				errors: map[string]error{},
+				logo:   tc.logo,
 			}
 
 			const width, height = 20, 4

@@ -59,7 +59,7 @@ func TestTelemetryEnabledFromUserConfig(t *testing.T) {
 	assert.False(t, ide.TelemetryEnabled(mustLoadConfig(t, path)))
 }
 
-func TestDefaultConfigShowsTheUnstableBuildLogoWithItsIntro(t *testing.T) {
+func TestDefaultConfigShowsTheLogoWithItsIntro(t *testing.T) {
 	cfg := mustLoadConfig(t, filepath.Join(t.TempDir(), "config.star"))
 
 	workspace, err := cfg.GetConfig("workspace")
@@ -67,7 +67,6 @@ func TestDefaultConfigShowsTheUnstableBuildLogoWithItsIntro(t *testing.T) {
 	for key, want := range map[string]string{
 		"wallpaper_image_ascii":        "",
 		"wallpaper_ascii":              "",
-		"wallpaper_logo":               logoNameUnstableBuild,
 		"wallpaper_density_characters": " ▓▓▓▓",
 	} {
 		got, err := workspace.GetString(key)
@@ -79,8 +78,6 @@ func TestDefaultConfigShowsTheUnstableBuildLogoWithItsIntro(t *testing.T) {
 	assert.Equal(t, map[string]any{
 		"path": "", "width": "60%", "height": "60%", "fit": "contain",
 	}, image)
-	assert.Contains(t, makeLogos(func() string { return "" }, func() (int, int) { return 9, 20 }),
-		logoNameUnstableBuild)
 
 	animations, err := cfg.GetConfig("animations")
 	require.NoError(t, err)
