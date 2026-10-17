@@ -71,6 +71,7 @@ modal:
       <meta-enter>: terminalneworsplit
       <shift-meta-enter>: "!"
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <alt-1>: tabfocus 1
       <alt-2>: tabfocus 2
       <alt-3>: tabfocus 3
@@ -152,6 +153,7 @@ modal:
       <ctrl-meta-enter>: echo {prompt}windowconverttab<space>
       <shift-meta-`>: tabsearch
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <meta-1>: workspacefocus 1
       <meta-2>: workspacefocus 2
       <meta-3>: workspacefocus 3
@@ -269,6 +271,7 @@ helix:
       <meta-c>: clipboardcopy
       <meta-v>: clipboardpaste
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <meta-h>: windowfocus left
       <meta-l>: windowfocus right
       <meta-j>: windowfocus down
@@ -425,6 +428,7 @@ helix:
       <ctrl-meta-enter>: echo {prompt}windowconverttab<space>
       <ctrl-shift-meta-`>: tabsearch
       <ctrl-meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <ctrl-meta-1>: workspacefocus 1
       <ctrl-meta-2>: workspacefocus 2
       <ctrl-meta-3>: workspacefocus 3
@@ -551,6 +555,7 @@ standard:
       <meta-enter>: terminalneworsplit
       <shift-meta-enter>: "!"
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <alt-1>: tabfocus 1
       <alt-2>: tabfocus 2
       <alt-3>: tabfocus 3
@@ -641,6 +646,7 @@ standard:
       <ctrl-meta-enter>: echo {prompt}windowconverttab<space>
       <shift-meta-`>: tabsearch
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <meta-1>: workspacefocus 1
       <meta-2>: workspacefocus 2
       <meta-3>: workspacefocus 3
@@ -780,6 +786,7 @@ emacs:
       <meta-enter>: terminalneworsplit
       <shift-meta-enter>: "!"
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <meta-1>: workspacefocus 1
       <meta-2>: workspacefocus 2
       <meta-3>: workspacefocus 3
@@ -863,6 +870,7 @@ emacs:
       <shift-meta-]>: tabmove right
       <shift-meta-`>: tabsearch
       <meta-`>: workspacesearch
+      <ctrl-`>: programstatus
       <meta-1>: workspacefocus 1
       <meta-2>: workspacefocus 2
       <meta-3>: workspacefocus 3
