@@ -245,6 +245,22 @@ func namedShaderNames() []string {
 		"radarFrame",
 		"grayFade",
 		"trippy",
+		"beams",
+		"binaryPath",
+		"crumble",
+		"decrypt",
+		"expand",
+		"matrix",
+		"middleOut",
+		"pour",
+		"print",
+		"rain",
+		"rings",
+		"slide",
+		"spotlights",
+		"thunderstorm",
+		"unstable",
+		"vhsTape",
 	}
 }
 
@@ -402,6 +418,46 @@ func buildNamedShader(
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
+	case "beams":
+		return shader.Beams(shader.DefaultBeamsParams(), defAttr), true
+	case "binaryPath":
+		return shader.BinaryPath(shader.DefaultBinaryPathParams(), defAttr), true
+	case "crumble":
+		return shader.Crumble(shader.DefaultCrumbleParams(), defAttr), true
+	case "decrypt":
+		return shader.Decrypt(shader.DefaultDecryptParams(), defAttr), true
+	case "expand":
+		return shader.Expand(shader.DefaultExpandParams(), defAttr), true
+	case "matrix":
+		return shader.Matrix(shader.DefaultMatrixParams(), defAttr), true
+	case "middleOut":
+		return shader.MiddleOut(shader.DefaultMiddleOutParams(), defAttr), true
+	case "pour":
+		return shader.Pour(shader.DefaultPourParams(), defAttr), true
+	case "print":
+		return shader.Print(shader.DefaultPrintParams(), defAttr), true
+	case "rain":
+		return shader.Rain(shader.DefaultRainParams(), defAttr), true
+	case "rings":
+		return shader.Rings(shader.DefaultRingsParams(), defAttr), true
+	case "slide":
+		return shader.Slide(shader.DefaultSlideParams(), defAttr), true
+	case "spotlights":
+		return wrapShaderCrossFadeInOut(
+			shader.Spotlights(shader.DefaultSpotlightsParams(), defAttr),
+			fadeInPerc, fadeOutPerc,
+			defAttr,
+		), true
+	case "thunderstorm":
+		return wrapShaderCrossFadeInOut(
+			shader.Thunderstorm(shader.DefaultThunderstormParams(), defAttr),
+			fadeInPerc, fadeOutPerc,
+			defAttr,
+		), true
+	case "unstable":
+		return shader.Unstable(shader.DefaultUnstableParams(), defAttr), true
+	case "vhsTape":
+		return shader.VHSTape(shader.DefaultVHSTapeParams(), defAttr), true
 	}
 	return nil, false
 }
