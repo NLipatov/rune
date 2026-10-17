@@ -366,6 +366,49 @@ config["animations"]["active_workspace_tab"]["shine"] = {
 }
 ```
 
+## Screensaver
+
+`animations.screensaver` plays a shader once Rune has had no input for a while.
+Each time it starts, it plays the next of the shaders you list, starting over
+after the last one. The shader plays a pass at a time, over and over, until
+input stops it. Each shader decides what it draws, including whether your
+workspace still shows through.
+
+- `shaders`: the shaders to play, by the names `:shaderrun` completes, such as
+  `trippy`, `noise` or `inferno`. Empty by default, which means there is no
+  screensaver.
+- `idle_timeout`: how long Rune waits without input before it starts, such as
+  `"10m"` (the default).
+- `duration`: how long one pass lasts. Defaults to `"1m"`.
+- `time_shader`: how a pass plays the shader's animation:
+  - `loop` (the default): from start to end.
+  - `ping_pong`: to the end and back.
+  - `reverse`: from end to start.
+  - `accelerate`: starting slow and speeding up.
+  - `decelerate`: starting fast and slowing down.
+  - `boomerang`: to the end and back, slowing down at the end.
+- `fps`: how many times per second it redraws. Defaults to 30.
+- `enabled`: set to `false` to turn it off without removing your shaders.
+
+Any key, mouse movement, click or paste stops it. That input is not swallowed:
+it still reaches the editor, so the key that wakes Rune up is typed as usual.
+
+```yaml tab
+animations:
+  screensaver:
+    shaders: [trippy, noise, inferno]
+    idle_timeout: 5m
+    duration: 30s
+    time_shader: ping_pong
+```
+
+```python tab
+config["animations"]["screensaver"]["shaders"] = ["trippy", "noise", "inferno"]
+config["animations"]["screensaver"]["idle_timeout"] = "5m"
+config["animations"]["screensaver"]["duration"] = "30s"
+config["animations"]["screensaver"]["time_shader"] = "ping_pong"
+```
+
 ## GUI
 
 - `gui.default_theme` / `gui.themes`: the active color theme and the catalog

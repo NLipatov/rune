@@ -121,6 +121,10 @@ func (c *Component) Total() int {
 	return c.total
 }
 
+// Done reports whether the shader stopped animating: it ran all its
+// frames or was closed.
+func (c *Component) Done() bool { return c.done.Load() }
+
 func (c *Component) interrupt(ctx context.Context) {
 	cadence := time.Duration(int(time.Second) / c.fps)
 	ticker := time.NewTicker(cadence)

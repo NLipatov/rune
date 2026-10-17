@@ -1420,6 +1420,101 @@ func (c ideConfig) animationsOpenWorkspaceDuration() (time.Duration, bool) {
 	return dur, true
 }
 
+// screensaver returns the screensaver configured under
+// animations.screensaver, which has no shaders when it is disabled.
+// Shaders that are unknown or not strings are recorded as soft errors
+// and skipped, and an idle_timeout, duration, fps or time_shader that is
+// malformed, not positive or unknown is recorded and falls back to its
+// default.
+func (c ideConfig) screensaver() screensaverConfig {
+	ret := screensaverConfig{
+		idleTimeout: defaultScreensaverIdleTimeout,
+		duration:    defaultScreensaverDuration,
+		fps:         defaultShaderFPS,
+		timeShader:  defaultScreensaverTimeShader,
+	}
+	if !c.animationsBool("screensaver") {
+		return ret
+	}
+	d, ok := c.animationsDict("screensaver")
+	if !ok {
+		return ret
+	}
+	const prefix = "animations.screensaver."
+	cfg := config.MapConfig(d)
+	positiveDuration := func(key string, def time.Duration) time.Duration {
+		s, err := cfg.GetString(key)
+		if err != nil {
+			if err != config.ErrNotFound {
+				c.errors[prefix+key] = fmt.Errorf("expected duration string: %w", err)
+			}
+			return def
+		}
+		dur, err := time.ParseDuration(s)
+		if err != nil {
+			c.errors[prefix+key] = err
+			return def
+		}
+		if dur <= 0 {
+			c.errors[prefix+key] = fmt.Errorf("expected a positive duration, got %s", s)
+			return def
+		}
+		return dur
+	}
+	ret.idleTimeout = positiveDuration("idle_timeout", ret.idleTimeout)
+	ret.duration = positiveDuration("duration", ret.duration)
+
+	if fps, err := cfg.GetInt("fps"); err != nil {
+		if err != config.ErrNotFound {
+			c.errors[prefix+"fps"] = err
+		}
+	} else if fps <= 0 {
+		c.errors[prefix+"fps"] = fmt.Errorf("expected a positive integer, got %d", fps)
+	} else {
+		ret.fps = fps
+	}
+
+	if name, err := cfg.GetString("time_shader"); err != nil {
+		if err != config.ErrNotFound {
+			c.errors[prefix+"time_shader"] = err
+		}
+	} else if _, ok := screensaverTimeShaders[name]; !ok {
+		c.errors[prefix+"time_shader"] = fmt.Errorf(
+			"unknown time shader %q, expected one of %s",
+			name, strings.Join(slices.Sorted(maps.Keys(screensaverTimeShaders)), ", "))
+	} else {
+		ret.timeShader = name
+	}
+
+	vals, err := cfg.GetSlice("shaders")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors[prefix+"shaders"] = fmt.Errorf("expected list of shader names: %w", err)
+		}
+		return ret
+	}
+	names := namedShaderNames()
+	var errs error
+	for i, v := range vals {
+		name, ok := v.(string)
+		if !ok {
+			errs = multierr.Append(errs, fmt.Errorf("shaders[%d]: expected string, got %T", i, v))
+			continue
+		}
+		if !slices.Contains(names, name) {
+			errs = multierr.Append(errs, fmt.Errorf(
+				"shaders[%d]: unknown shader %q, expected one of %s",
+				i, name, strings.Join(names, ", ")))
+			continue
+		}
+		ret.shaders = append(ret.shaders, name)
+	}
+	if errs != nil {
+		c.errors[prefix+"shaders"] = errs
+	}
+	return ret
+}
+
 const (
 	// animActiveContentTab configures the effect run over the content
 	// tabs an extension marks as having work in progress.

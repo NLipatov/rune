@@ -248,6 +248,9 @@ func (i *IDE) Config() config.Config {
 // Close must be called when this IDE is no longer in use.
 func (i *IDE) Ready() tui.Handler {
 	i.initRunning()
+	i.locker.Lock()
+	i.root.enableScreensaver(i.options.afterFunc, i.options.scheduleFn)
+	i.locker.Unlock()
 	i.maybeStartTutorial()
 	i.maybeReopenLastSession()
 	return &i.root
@@ -689,6 +692,7 @@ func (i *IDE) init(
 	// alongside other config decode errors.
 	tutorials := buildTutorials(i)
 	intro := i.ideConfig.intro()
+	screensaver := i.ideConfig.screensaver()
 	i.playIntro = i.ideConfig.animationsIntro()
 	i.workspaceHandler.logNonFatalErrs(i.workspaceHandler.focusBrowser(),
 		configErr, i.ideConfig.errors)
@@ -757,6 +761,7 @@ func (i *IDE) init(
 	// The screen Rune starts on is the home workspace's, whose wallpaper
 	// comes from this config.
 	i.root.initShaderCfg = intro
+	i.root.screensaverCfg = screensaver
 	i.locker.Unlock()
 	if op.nagPrompt.State != nil {
 		i.nag = idenag.New(idenag.Config{

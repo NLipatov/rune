@@ -342,6 +342,19 @@ config = {
                 "speed":              1.0,
             },
         },
+        # Plays once Rune has had no key, mouse or paste input for
+        # "idle_timeout". Each time it starts it plays the next of
+        # "shaders", taking turns through the list. The shader plays a pass
+        # of "duration" at a time through "time_shader", over and over.
+        "screensaver": {
+            "enabled":      True,
+            "idle_timeout": "10s",
+            "shaders":      ["shine"],  # e.g. ["trippy", "noise", "inferno"]
+            "duration":     "5s",
+            # one of loop, ping_pong, reverse, accelerate, decelerate or boomerang
+            "time_shader":  "loop",
+            "fps":          30,
+        },
     },
     # Self-upgrade configuration. Rune polls a public manifest endpoint
     # to discover new releases and prompts before installing them.

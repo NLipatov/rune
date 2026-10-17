@@ -732,6 +732,115 @@ config = {
 	assert.Empty(t, c.errors)
 }
 
+func TestAnimationsScreensaver(t *testing.T) {
+	defaults := screensaverConfig{
+		idleTimeout: defaultScreensaverIdleTimeout,
+		duration:    defaultScreensaverDuration,
+		fps:         defaultShaderFPS,
+		timeShader:  "loop",
+	}
+	withShaders := func(cfg screensaverConfig, shaders ...string) screensaverConfig {
+		cfg.shaders = shaders
+		return cfg
+	}
+	for _, tc := range []struct {
+		name   string
+		src    string
+		want   screensaverConfig
+		errors []string
+	}{{
+		name: "absent",
+		src:  `config = {}`,
+		want: defaults,
+	}, {
+		name: "no shaders",
+		src:  `config = {"animations": {"screensaver": {"idle_timeout": "1m"}}}`,
+		want: screensaverConfig{
+			idleTimeout: time.Minute, duration: defaultScreensaverDuration,
+			fps: defaultShaderFPS, timeShader: "loop",
+		},
+	}, {
+		name: "configured",
+		src: `config = {"animations": {"screensaver": {
+    "enabled": True, "idle_timeout": "5m", "shaders": ["trippy", "noise"],
+    "duration": "30s", "fps": 12, "time_shader": "ping_pong",
+}}}`,
+		want: screensaverConfig{
+			shaders:     []string{"trippy", "noise"},
+			idleTimeout: 5 * time.Minute, duration: 30 * time.Second, fps: 12,
+			timeShader: "ping_pong",
+		},
+	}, {
+		name: "disabled",
+		src:  `config = {"animations": {"screensaver": False}}`,
+		want: defaults,
+	}, {
+		name: "disabled in its dict",
+		src:  `config = {"animations": {"screensaver": {"enabled": False, "shaders": ["trippy"]}}}`,
+		want: defaults,
+	}, {
+		name:   "unknown shaders are skipped",
+		src:    `config = {"animations": {"screensaver": {"shaders": ["trippy", "nope", "noise"]}}}`,
+		want:   withShaders(defaults, "trippy", "noise"),
+		errors: []string{"animations.screensaver.shaders"},
+	}, {
+		name:   "shaders that are not strings are skipped",
+		src:    `config = {"animations": {"screensaver": {"shaders": [1, "noise"]}}}`,
+		want:   withShaders(defaults, "noise"),
+		errors: []string{"animations.screensaver.shaders"},
+	}, {
+		name:   "shaders that are not a list",
+		src:    `config = {"animations": {"screensaver": {"shaders": "noise"}}}`,
+		want:   defaults,
+		errors: []string{"animations.screensaver.shaders"},
+	}, {
+		name:   "unknown time shader",
+		src:    `config = {"animations": {"screensaver": {"shaders": ["noise"], "time_shader": "sine"}}}`,
+		want:   withShaders(defaults, "noise"),
+		errors: []string{"animations.screensaver.time_shader"},
+	}, {
+		name: "malformed values fall back to their defaults",
+		src: `config = {"animations": {"screensaver": {
+    "shaders": ["noise"], "idle_timeout": "soon", "duration": 3, "fps": "fast", "time_shader": 1,
+}}}`,
+		want: withShaders(defaults, "noise"),
+		errors: []string{
+			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
+			"animations.screensaver.fps", "animations.screensaver.time_shader",
+		},
+	}, {
+		name: "zero values fall back to their defaults",
+		src: `config = {"animations": {"screensaver": {
+    "shaders": ["noise"], "idle_timeout": "0s", "duration": "0s", "fps": 0,
+}}}`,
+		want: withShaders(defaults, "noise"),
+		errors: []string{
+			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
+			"animations.screensaver.fps",
+		},
+	}, {
+		name: "negative values fall back to their defaults",
+		src: `config = {"animations": {"screensaver": {
+    "shaders": ["noise"], "idle_timeout": "-1m", "duration": "-1s", "fps": -1,
+}}}`,
+		want: withShaders(defaults, "noise"),
+		errors: []string{
+			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
+			"animations.screensaver.fps",
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAnimConfig(t, tc.src)
+			assert.Equal(t, tc.want, c.screensaver())
+			var got []string
+			for k := range c.errors {
+				got = append(got, k)
+			}
+			assert.ElementsMatch(t, tc.errors, got)
+		})
+	}
+}
+
 func TestIDEOpenShaderConfigOverrideAppliesToRoot(t *testing.T) {
 	configFile, _ := makeTestFiles(t)
 	require.NoError(t, os.WriteFile(configFile.Name(), []byte(""), 0666))
@@ -775,4 +884,36 @@ config = {
 
 	assert.Equal(t, time.Second, i.root.openShaderCfg.duration,
 		"open shader duration override must be applied")
+}
+
+func TestIDEScreensaverConfigArmsTheIdleTimer(t *testing.T) {
+	configFile, _ := makeTestFiles(t)
+	require.NoError(t, os.WriteFile(configFile.Name(), []byte(""), 0666))
+	starlarkSrc := `
+config = {
+    "animations": {
+        "screensaver": {"shaders": ["noise"], "idle_timeout": "3m"},
+    },
+}
+`
+	dir := t.TempDir()
+	i := new(IDE)
+	require.NoError(t, i.init(".", configFile.Name(), dir, pkgtrust.NewStore(dir, nil), newTestStorage(t, dir),
+		WithPublishEvent(nopPublishEvent),
+		WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+		WithLocker(new(sync.Mutex)),
+		WithDefaultConfigStarlark(starlarkSrc, true, true),
+		WithScheduleNextTick(func(func()) bool { return true }),
+	))
+	t.Cleanup(func() { _ = i.closeResources() })
+	var armed []time.Duration
+	i.options.afterFunc = func(d time.Duration, _ func()) *time.Timer {
+		armed = append(armed, d)
+		return nil
+	}
+
+	i.Ready()
+
+	assert.Equal(t, []string{"noise"}, i.root.screensaverCfg.shaders)
+	assert.Contains(t, armed, 3*time.Minute)
 }

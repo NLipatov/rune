@@ -273,6 +273,27 @@ AAAAAAAAAAAAAAAAAAAAA`},
 		wg.Wait()
 		assert.NoError(t, s.Close())
 	})
+
+	t.Run("is done once it ran all its frames", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		interrupter := term.FuncInterrupter(func(_ context.Context) error {
+			wg.Done()
+			return nil
+		})
+		s := New(&component.TestComponent{Ch: 'A'}, &testShader{}, interrupter, 100, 20*time.Millisecond)
+		assert.False(t, s.Done())
+		wg.Wait()
+		assert.True(t, s.Done())
+		require.NoError(t, s.Close())
+	})
+
+	t.Run("is done once closed", func(t *testing.T) {
+		s := New(&component.TestComponent{Ch: 'A'}, &testShader{}, term.NopInterrupter(), 1, time.Hour)
+		assert.False(t, s.Done())
+		require.NoError(t, s.Close())
+		assert.Eventually(t, s.Done, time.Second, time.Millisecond)
+	})
 }
 
 type testShader struct {

@@ -31,7 +31,9 @@ import (
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/component/shader"
 	"unstable.build/rune/internal/component/shader/glslshader"
+	"unstable.build/rune/internal/component/shader/shaderloop"
 	"unstable.build/rune/internal/component/shader/timeshader"
+	"unstable.build/rune/internal/debug"
 )
 
 const (
@@ -39,6 +41,10 @@ const (
 	defaultShaderDuration        = 1 * time.Second
 	defaultLoadingShaderDuration = 10 * time.Second
 	defaultOpenShaderDuration    = 1 * time.Second
+
+	defaultScreensaverIdleTimeout = 10 * time.Minute
+	defaultScreensaverDuration    = time.Minute
+	defaultScreensaverTimeShader  = "loop"
 
 	// introShaderName plays the intro of the wallpaper from :shaderrun,
 	// even when animations.intro keeps it from playing at startup.
@@ -77,6 +83,42 @@ type openShaderConfig struct {
 	duration time.Duration
 }
 
+// screensaverConfig is the screensaver that starts once the IDE has had
+// no input for idleTimeout. Each one plays the next of shaders, a pass of
+// duration at a time through the time shader named by timeShader, until
+// input stops it. There is no screensaver without shaders.
+type screensaverConfig struct {
+	shaders     []string
+	idleTimeout time.Duration
+	duration    time.Duration
+	fps         int
+	timeShader  string
+}
+
+// screensaverTimeShaders are the time shaders a pass of the screensaver
+// can play through, by the name animations.screensaver.time_shader takes.
+// Every pass is looped, so loop plays a pass as it is. Abs and Sine are
+// left out: frames are never negative for Abs to change, and Sine turns
+// half of them negative, which shaders draw nothing for.
+var screensaverTimeShaders = map[string]func(shader.Shader) shader.Shader{
+	"loop":       func(s shader.Shader) shader.Shader { return s },
+	"ping_pong":  timeshader.PingPong,
+	"reverse":    timeshader.Reverse,
+	"accelerate": timeshader.Accelerate,
+	"decelerate": timeshader.Decelerate,
+	"boomerang":  timeshader.Boomerang,
+}
+
+// play returns s played through the time shader one pass of duration at
+// a time, over and over for the shaderloop.Duration a screensaver lasts.
+// Each pass sees the whole of the frames and total it is given.
+func (c screensaverConfig) play(s shader.Shader) shader.Shader {
+	frame := time.Second / time.Duration(c.fps)
+	total := int(shaderloop.Duration / frame)
+	passes := max(1, total/max(1, int(c.duration/frame)))
+	return timeshader.Loop(screensaverTimeShaders[c.timeShader](s), passes)
+}
+
 // used as the root tui.Handler to dynamically run shaders
 type shaderRunner struct {
 	tui.Handler
@@ -95,6 +137,22 @@ type shaderRunner struct {
 	// pixelSize is the cell size of the writer last drawn into, which the
 	// screen needs to draw its pictures.
 	pixelSize cell.PixelSize
+
+	screensaverCfg screensaverConfig
+	afterFunc      func(time.Duration, func()) *time.Timer
+	scheduleFn     func(func()) bool
+	now            func() time.Time
+	lastInput      time.Time
+	idleTimer      *time.Timer
+	// idleArmed is set from arming the idle timer until its check runs on
+	// the event loop, so that input arms at most one timer at a time.
+	idleArmed bool
+	// screensaver is the shader started by the idle timer, nil once input
+	// woke it.
+	screensaver *shader.Component
+	// screensaverNext indexes the shader the next screensaver plays.
+	screensaverNext int
+	closed          bool
 }
 
 func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
@@ -364,6 +422,7 @@ func (r *shaderRunner) init(
 	r.loadingShaderCfg = loadingShaderCfg
 	r.openShaderCfg = openShaderCfg
 	r.fc = fc
+	r.now = time.Now
 
 	// Initialize zero shader so we can treat field always as non-nil.
 	//
@@ -372,6 +431,87 @@ func (r *shaderRunner) init(
 	// allows us to only use one variable (c.done) to determine if a
 	// shader is running or not.
 	r.shader = shader.New(r.Handler, shader.Nop(), r.interrupter, defaultShaderFPS, 100*time.Millisecond)
+}
+
+// enableScreensaver starts counting idle time toward the screensaver of
+// screensaverCfg, if it has shaders. afterFunc runs a function after a
+// duration, and scheduleFn runs one on the event loop.
+func (r *shaderRunner) enableScreensaver(
+	afterFunc func(time.Duration, func()) *time.Timer, scheduleFn func(func()) bool,
+) {
+	if len(r.screensaverCfg.shaders) == 0 {
+		return
+	}
+	r.afterFunc = afterFunc
+	r.scheduleFn = scheduleFn
+	r.lastInput = r.now()
+	r.armIdle(r.screensaverCfg.idleTimeout)
+}
+
+func (r *shaderRunner) screensaverEnabled() bool {
+	return r.afterFunc != nil
+}
+
+func (r *shaderRunner) armIdle(d time.Duration) {
+	r.idleArmed = true
+	r.idleTimer = r.afterFunc(d, func() {
+		debug.CapturePanicReport(func() { r.scheduleFn(r.checkIdle) })
+	})
+}
+
+// checkIdle starts the screensaver if there was no input for the idle
+// timeout and no other shader is playing, and otherwise checks again
+// later. It runs on the event loop.
+func (r *shaderRunner) checkIdle() {
+	r.idleArmed = false
+	if r.closed {
+		return
+	}
+	cfg := r.screensaverCfg
+	if idle := r.now().Sub(r.lastInput); idle < cfg.idleTimeout {
+		r.armIdle(cfg.idleTimeout - idle)
+		return
+	}
+	if !r.shader.Done() {
+		r.armIdle(cfg.idleTimeout)
+		return
+	}
+	r.runShader(r.newScreensaver(), cfg.fps, shaderloop.Duration)
+	r.screensaver = r.shader
+}
+
+// newScreensaver returns the next of the configured shaders, so that
+// screensavers take turns through them.
+func (r *shaderRunner) newScreensaver() shader.Shader {
+	cfg := r.screensaverCfg
+	name := cfg.shaders[r.screensaverNext]
+	r.screensaverNext = (r.screensaverNext + 1) % len(cfg.shaders)
+	s, _ := buildNamedShader(name, r.defAttr, cfg.fps, cfg.duration, r.fc)
+	return cfg.play(s)
+}
+
+// Handle satisfies tui.Handler. Input stops the screensaver and puts off
+// the next one, and is then handled as usual.
+func (r *shaderRunner) Handle(ev term.Event) (exit, handled bool) {
+	if r.screensaverEnabled() && isUserInput(ev) {
+		r.lastInput = r.now()
+		if r.shader == r.screensaver {
+			r.cancel()
+		}
+		r.screensaver = nil
+		if !r.idleArmed {
+			r.armIdle(r.screensaverCfg.idleTimeout)
+		}
+	}
+	return r.Handler.Handle(ev)
+}
+
+func isUserInput(ev term.Event) bool {
+	switch ev.Type {
+	case term.EventKey, term.EventMouse, term.EventPasteStart, term.EventPasteEnd:
+		return true
+	}
+	return false
 }
 
 func (r *shaderRunner) runShader(s shader.Shader, fps int, duration time.Duration) {
@@ -475,6 +615,10 @@ func (r *shaderRunner) Resize(width, height int) {
 }
 
 func (r *shaderRunner) Close() error {
+	r.closed = true
+	if r.idleTimer != nil {
+		r.idleTimer.Stop()
+	}
 	return r.shader.Close()
 }
 
