@@ -1658,14 +1658,6 @@ func (c ideConfig) animationsActiveTabParams(key string) shaderloop.Params {
 	if t, ok := tuning("inferno"); ok {
 		ret.Inferno = fire(t)
 	}
-	if t, ok := tuning("noise"); ok {
-		ret.Noise = shaderloop.NoiseParams{
-			AnimateBackground: t.bool("animate_background"),
-			Speed:             t.positive("speed"),
-			Amplitude:         t.positive("amplitude"),
-			Scale:             t.positive("scale"),
-		}
-	}
 	if t, ok := tuning("pulse"); ok {
 		ret.Pulse = shaderloop.PulseParams{
 			Color:     t.color("color"),
@@ -1678,12 +1670,6 @@ func (c ideConfig) animationsActiveTabParams(key string) shaderloop.Params {
 			Intensity: t.fraction("intensity"),
 			BandWidth: t.fraction("band_width"),
 			Direction: t.direction("direction"),
-		}
-	}
-	if t, ok := tuning("trippy"); ok {
-		ret.Trippy = shaderloop.TrippyParams{
-			AnimateBackground: t.bool("animate_background"),
-			Speed:             t.positive("speed"),
 		}
 	}
 	return ret
@@ -1782,11 +1768,6 @@ func (t shaderTuning) number(key, want string, valid func(float64) bool) (float6
 
 func (t shaderTuning) fraction(key string) float64 {
 	v, _ := t.number(key, "a value in (0, 1]", func(v float64) bool { return v > 0 && v <= 1 })
-	return v
-}
-
-func (t shaderTuning) positive(key string) float64 {
-	v, _ := t.number(key, "a positive value", func(v float64) bool { return v > 0 })
 	return v
 }
 

@@ -376,20 +376,6 @@ func BurningPresetGentle(
 	return params
 }
 
-// BurningPresetGentleOnlyFlames will show a gentle fire without the logo
-// overlay nor masking out the original wallpaper.
-//
-// Turning lights off gives more visual artifacts and higher contrast, and
-// the color can be changed from natural looking colors to blue as well.
-func BurningPresetGentleOnlyFlames(
-	switchLightsOff bool, fc component.FrameCharSet,
-) BurningParams {
-	params := BurningPresetGentle(nil, false, fc)
-	params.SwitchLightsOff = switchLightsOff
-	params.HideLogo = true
-	return params
-}
-
 // BurningPresetGentleOnlyLogo will hide the flames in the background and
 // only will show them contained within the logo. This will mask the original
 // wallpaper too.

@@ -535,9 +535,7 @@ func TestAnimationsActiveTab(t *testing.T) {
         "duration": 0.3, "seed": 7, "origin": 0,
     },
     "inferno": {"color": "#0000ff", "swap_red_blue": True},
-    "noise":   {"animate_background": True, "speed": 2, "amplitude": 0.5, "scale": 8},
     "shine":   {"direction": "left_to_right"},
-    "trippy":  {"animate_background": True, "speed": 0.5},
 }}}`,
 		shader: "pulse",
 		fps:    shaderloop.DefaultFPS,
@@ -556,11 +554,7 @@ func TestAnimationsActiveTab(t *testing.T) {
 			Inferno: shaderloop.FireParams{
 				Color: term.NewRGBColor(0, 0, 255), SwapRedBlue: true,
 			},
-			Noise: shaderloop.NoiseParams{
-				AnimateBackground: true, Speed: 2, Amplitude: 0.5, Scale: 8,
-			},
-			Shine:  shaderloop.ShineParams{Direction: glslshader.DirectionLeftToRight},
-			Trippy: shaderloop.TrippyParams{AnimateBackground: true, Speed: 0.5},
+			Shine: shaderloop.ShineParams{Direction: glslshader.DirectionLeftToRight},
 		},
 	}, {
 		name:   "integer fractions",
@@ -636,9 +630,7 @@ func TestAnimationsActiveTab(t *testing.T) {
     "blaze":   {"animate_background": "yes", "color": ["red"], "swap_red_blue": 1},
     "burn":    {"gradient": [], "duration": 2, "seed": "lucky", "origin": 1.5},
     "inferno": {"color": True, "swap_red_blue": "yes"},
-    "noise":   {"speed": 0, "amplitude": -1, "scale": "big"},
     "shine":   {"direction": "sideways"},
-    "trippy":  {"speed": -2},
 }}}`,
 		shader: "pulse",
 		fps:    shaderloop.DefaultFPS,
@@ -652,10 +644,7 @@ func TestAnimationsActiveTab(t *testing.T) {
 			"animations.KEY.burn.gradient", "animations.KEY.burn.duration",
 			"animations.KEY.burn.seed", "animations.KEY.burn.origin",
 			"animations.KEY.inferno.color", "animations.KEY.inferno.swap_red_blue",
-			"animations.KEY.noise.speed", "animations.KEY.noise.amplitude",
-			"animations.KEY.noise.scale",
 			"animations.KEY.shine.direction",
-			"animations.KEY.trippy.speed",
 		},
 	}, {
 		name: "invalid gradient colours fall back and warn",
@@ -762,11 +751,11 @@ func TestAnimationsScreensaver(t *testing.T) {
 	}, {
 		name: "configured",
 		src: `config = {"animations": {"screensaver": {
-    "enabled": True, "idle_timeout": "5m", "shaders": ["trippy", "noise"],
+    "enabled": True, "idle_timeout": "5m", "shaders": ["matrix", "rain"],
     "duration": "30s", "fps": 12, "time_shader": "ping_pong",
 }}}`,
 		want: screensaverConfig{
-			shaders:     []string{"trippy", "noise"},
+			shaders:     []string{"matrix", "rain"},
 			idleTimeout: 5 * time.Minute, duration: 30 * time.Second, fps: 12,
 			timeShader: "ping_pong",
 		},
@@ -776,34 +765,34 @@ func TestAnimationsScreensaver(t *testing.T) {
 		want: defaults,
 	}, {
 		name: "disabled in its dict",
-		src:  `config = {"animations": {"screensaver": {"enabled": False, "shaders": ["trippy"]}}}`,
+		src:  `config = {"animations": {"screensaver": {"enabled": False, "shaders": ["matrix"]}}}`,
 		want: defaults,
 	}, {
 		name:   "unknown shaders are skipped",
-		src:    `config = {"animations": {"screensaver": {"shaders": ["trippy", "nope", "noise"]}}}`,
-		want:   withShaders(defaults, "trippy", "noise"),
+		src:    `config = {"animations": {"screensaver": {"shaders": ["matrix", "nope", "rain"]}}}`,
+		want:   withShaders(defaults, "matrix", "rain"),
 		errors: []string{"animations.screensaver.shaders"},
 	}, {
 		name:   "shaders that are not strings are skipped",
-		src:    `config = {"animations": {"screensaver": {"shaders": [1, "noise"]}}}`,
-		want:   withShaders(defaults, "noise"),
+		src:    `config = {"animations": {"screensaver": {"shaders": [1, "rain"]}}}`,
+		want:   withShaders(defaults, "rain"),
 		errors: []string{"animations.screensaver.shaders"},
 	}, {
 		name:   "shaders that are not a list",
-		src:    `config = {"animations": {"screensaver": {"shaders": "noise"}}}`,
+		src:    `config = {"animations": {"screensaver": {"shaders": "rain"}}}`,
 		want:   defaults,
 		errors: []string{"animations.screensaver.shaders"},
 	}, {
 		name:   "unknown time shader",
-		src:    `config = {"animations": {"screensaver": {"shaders": ["noise"], "time_shader": "sine"}}}`,
-		want:   withShaders(defaults, "noise"),
+		src:    `config = {"animations": {"screensaver": {"shaders": ["rain"], "time_shader": "sine"}}}`,
+		want:   withShaders(defaults, "rain"),
 		errors: []string{"animations.screensaver.time_shader"},
 	}, {
 		name: "malformed values fall back to their defaults",
 		src: `config = {"animations": {"screensaver": {
-    "shaders": ["noise"], "idle_timeout": "soon", "duration": 3, "fps": "fast", "time_shader": 1,
+    "shaders": ["rain"], "idle_timeout": "soon", "duration": 3, "fps": "fast", "time_shader": 1,
 }}}`,
-		want: withShaders(defaults, "noise"),
+		want: withShaders(defaults, "rain"),
 		errors: []string{
 			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
 			"animations.screensaver.fps", "animations.screensaver.time_shader",
@@ -811,9 +800,9 @@ func TestAnimationsScreensaver(t *testing.T) {
 	}, {
 		name: "zero values fall back to their defaults",
 		src: `config = {"animations": {"screensaver": {
-    "shaders": ["noise"], "idle_timeout": "0s", "duration": "0s", "fps": 0,
+    "shaders": ["rain"], "idle_timeout": "0s", "duration": "0s", "fps": 0,
 }}}`,
-		want: withShaders(defaults, "noise"),
+		want: withShaders(defaults, "rain"),
 		errors: []string{
 			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
 			"animations.screensaver.fps",
@@ -821,9 +810,9 @@ func TestAnimationsScreensaver(t *testing.T) {
 	}, {
 		name: "negative values fall back to their defaults",
 		src: `config = {"animations": {"screensaver": {
-    "shaders": ["noise"], "idle_timeout": "-1m", "duration": "-1s", "fps": -1,
+    "shaders": ["rain"], "idle_timeout": "-1m", "duration": "-1s", "fps": -1,
 }}}`,
-		want: withShaders(defaults, "noise"),
+		want: withShaders(defaults, "rain"),
 		errors: []string{
 			"animations.screensaver.idle_timeout", "animations.screensaver.duration",
 			"animations.screensaver.fps",
@@ -892,7 +881,7 @@ func TestIDEScreensaverConfigArmsTheIdleTimer(t *testing.T) {
 	starlarkSrc := `
 config = {
     "animations": {
-        "screensaver": {"shaders": ["noise"], "idle_timeout": "3m"},
+        "screensaver": {"shaders": ["rain"], "idle_timeout": "3m"},
     },
 }
 `
@@ -914,6 +903,6 @@ config = {
 
 	i.Ready()
 
-	assert.Equal(t, []string{"noise"}, i.root.screensaverCfg.shaders)
+	assert.Equal(t, []string{"rain"}, i.root.screensaverCfg.shaders)
 	assert.Contains(t, armed, 3*time.Minute)
 }

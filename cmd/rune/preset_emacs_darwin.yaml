@@ -265,7 +265,7 @@ workspace:
 #
 # `active_content_tab` plays over tabs with work in progress, such as an agent
 # turn, and `active_workspace_tab` over the workspace tabs that own them. Their
-# shaders: blaze, burn, inferno, noise, pulse, shine, trippy.
+# shaders: blaze, burn, inferno, pulse, shine.
 # ---------------------------------------------------------------------------
 # animations:
 #   intro: true

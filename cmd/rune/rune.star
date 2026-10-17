@@ -247,8 +247,8 @@ config = {
             "cycles": 1,
         },
         # Plays over content tabs whose program reports it is working.
-        # "shader" is one of blaze, burn, inferno, noise, pulse, shine or
-        # trippy. Settings for one shader go under a key named after it;
+        # "shader" is one of blaze, burn, inferno, pulse or shine.
+        # Settings for one shader go under a key named after it;
         # see "Tab animations" in the Config docs.
         "active_content_tab": {
             "enabled": True,
@@ -274,12 +274,6 @@ config = {
                 "color":              "#ff0000",
                 "swap_red_blue":      False,
             },
-            "noise": {
-                "animate_background": False,
-                "speed":              1.0,
-                "amplitude":          1.0,
-                "scale":              5.0,
-            },
             "pulse": {
                 "color":     "#ffffff",
                 "intensity": 0.25,
@@ -289,10 +283,6 @@ config = {
                 "intensity":  0.3,
                 "band_width": 0.75,
                 "direction":  "bottom_left_to_top_right",
-            },
-            "trippy": {
-                "animate_background": False,
-                "speed":              1.0,
             },
         },
         # Plays over workspace tabs that own an active content tab. The
@@ -321,12 +311,6 @@ config = {
                 "color":              "#ff0000",
                 "swap_red_blue":      False,
             },
-            "noise": {
-                "animate_background": False,
-                "speed":              1.0,
-                "amplitude":          1.0,
-                "scale":              5.0,
-            },
             "pulse": {
                 "color":     "#ffffff",
                 "intensity": 0.25,
@@ -337,10 +321,6 @@ config = {
                 "band_width": 0.4,
                 "direction":  "bottom_left_to_top_right",
             },
-            "trippy": {
-                "animate_background": False,
-                "speed":              1.0,
-            },
         },
         # Plays once Rune has had no key, mouse or paste input for
         # "idle_timeout". Each time it starts it plays the next of
@@ -349,7 +329,7 @@ config = {
         "screensaver": {
             "enabled":      True,
             "idle_timeout": "10s",
-            "shaders":      ["shine"],  # e.g. ["trippy", "noise", "inferno"]
+            "shaders":      ["shine"],  # e.g. ["matrix", "rain", "inferno"]
             "duration":     "5s",
             # one of loop, ping_pong, reverse, accelerate, decelerate or boomerang
             "time_shader":  "loop",

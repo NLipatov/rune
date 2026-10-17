@@ -731,9 +731,8 @@ func (i *IDE) init(
 	if name, ok := i.ideConfig.animationsOpenWorkspaceShader(); ok {
 		fps := openShaderCfg.fps
 		fc := i.ideConfig.windowFrameCharset()
-		dur := openShaderCfg.duration
 		openShaderCfg.shader = func(defAttr term.Attributes) shader.Shader {
-			s, _ := buildNamedShader(name, defAttr, fps, dur, fc)
+			s, _ := buildNamedShader(name, defAttr, fps, fc)
 			return s
 		}
 	}

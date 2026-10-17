@@ -97,44 +97,6 @@ func DefaultFlamesParams() FlamesParams {
 	return FlamesPresetBlobby()
 }
 
-// FlamesPresetVShape shows a less explosive progressive burn in concave shape.
-func FlamesPresetVShape() FlamesParams {
-	return FlamesParams{
-		Chars:         blockierFlames(),
-		ColorGradient: FlamesColorGradientRed(),
-		BgContour: FlamesBgOpacityContour{
-			inEdge0: 0.05, inEdge1: 0.21,
-			outEdge0: 0.66, outEdge1: 0.88,
-		},
-		Fuel:         0.1286,
-		JitteryBirth: 0.3333,
-		Belly:        35.0,
-		NoiseAmount:  0.6,
-		NoiseSize:    0.5,
-		Clumps:       7.0,
-		ClumpHeight:  0.9,
-	}
-}
-
-// FlamesPresetAShape shows a less explosive progressive burn in convex shape.
-func FlamesPresetAShape() FlamesParams {
-	return FlamesParams{
-		Chars:         blockierFlames(),
-		ColorGradient: FlamesColorGradientRed(),
-		BgContour: FlamesBgOpacityContour{
-			inEdge0: 0.20, inEdge1: 0.300,
-			outEdge0: 0.66, outEdge1: 0.89,
-		},
-		Fuel:         0.1134,
-		JitteryBirth: 0.4333,
-		Belly:        -25.0,
-		NoiseAmount:  0.0,
-		NoiseSize:    0.0,
-		Clumps:       15.0,
-		ClumpHeight:  0.4,
-	}
-}
-
 // FlamesPresetBlobby makes big blobby blast on the flamess in convex shape.
 func FlamesPresetBlobby() FlamesParams {
 	return FlamesParams{
@@ -604,73 +566,6 @@ func defaultFlamesChars() []rune {
 		'▒',
 		'░',
 		'░',
-	}
-}
-
-func blockierFlames() []rune {
-	return []rune{
-		'\'',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'▖',
-		'▙',
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		blockChar,
-		'▜',
-		'▀',
-		'▝',
-		'▛',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
-		'.',
 	}
 }
 

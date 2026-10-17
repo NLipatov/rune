@@ -161,7 +161,7 @@ func TestBuildNamedShaderRegistersEveryListedName(t *testing.T) {
 	defAttr := term.Attributes{}
 	fc := component.FrameCharSetDefault()
 	for _, name := range namedShaderNames() {
-		sh, ok := buildNamedShader(name, defAttr, 30, time.Second, fc)
+		sh, ok := buildNamedShader(name, defAttr, 30, fc)
 		assert.True(t, ok,
 			"buildNamedShader must register %q (listed by namedShaderNames)",
 			name)
@@ -374,7 +374,7 @@ func TestShaderRunnerScreensaverWaitsForTheIdleTimeout(t *testing.T) {
 }
 
 func TestShaderRunnerScreensaverStartsOnceIdle(t *testing.T) {
-	ir := newIdleRunner(t, "nop", "fade")
+	ir := newIdleRunner(t, "nop", "grayFade")
 	initial := ir.shader
 
 	ir.startScreensaver(t)
@@ -386,7 +386,7 @@ func TestShaderRunnerScreensaverStartsOnceIdle(t *testing.T) {
 }
 
 func TestShaderRunnerScreensaversTakeTurns(t *testing.T) {
-	ir := newIdleRunner(t, "nop", "fade", "burn")
+	ir := newIdleRunner(t, "nop", "grayFade", "burn")
 	key := term.Event{Type: term.EventKey, Ch: 'a'}
 
 	var played []int

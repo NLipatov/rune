@@ -322,8 +322,7 @@ it is [working](./learn/terminal/program-status.md), and
 take the same keys:
 
 - `enabled`: set to `false` to turn the effect off.
-- `shader`: one of `blaze`, `burn`, `inferno`, `noise`, `pulse`, `shine` or
-  `trippy`.
+- `shader`: one of `blaze`, `burn`, `inferno`, `pulse` or `shine`.
 - `fps`: how many times per second the effect redraws.
 - `loop`: how long one loop of `burn`, `pulse` or `shine` lasts, such as
   `"2400ms"`. The other shaders move at their own pace.
@@ -343,10 +342,7 @@ only used while that shader is selected. All of them are optional:
 | `burn` | `duration` | 0 to 1: the part of a loop each character burns for. Shorter makes a narrower wave. |
 | `burn` | `seed` | Picks another burn order. |
 | `burn` | `origin` | 0 to 1: where across the label the wave starts, 0 being its left edge. `None` (the default) starts it at a random character. |
-| `noise`, `trippy` | `speed` | How fast the effect moves, where 1 is its usual pace. |
-| `noise` | `amplitude` | The contrast of the noise. |
-| `noise` | `scale` | How fine the noise is. Larger packs in more detail. |
-| `blaze`, `burn`, `inferno`, `noise`, `trippy` | `animate_background` | `true` animates the cell background rather than only colouring the text: blaze and inferno set it on fire, noise fills it and scatters glyphs over the label, trippy fills it and hides the text, and burn burns the label glyph by glyph. |
+| `blaze`, `burn`, `inferno` | `animate_background` | `true` animates the cell background rather than only colouring the text: blaze and inferno set it on fire, and burn burns the label glyph by glyph. |
 
 ```yaml tab
 animations:
@@ -375,7 +371,7 @@ input stops it. Each shader decides what it draws, including whether your
 workspace still shows through.
 
 - `shaders`: the shaders to play, by the names `:shaderrun` completes, such as
-  `trippy`, `noise` or `inferno`. Empty by default, which means there is no
+  `matrix`, `rain` or `inferno`. Empty by default, which means there is no
   screensaver.
 - `idle_timeout`: how long Rune waits without input before it starts, such as
   `"10m"` (the default).
@@ -396,14 +392,14 @@ it still reaches the editor, so the key that wakes Rune up is typed as usual.
 ```yaml tab
 animations:
   screensaver:
-    shaders: [trippy, noise, inferno]
+    shaders: [matrix, rain, inferno]
     idle_timeout: 5m
     duration: 30s
     time_shader: ping_pong
 ```
 
 ```python tab
-config["animations"]["screensaver"]["shaders"] = ["trippy", "noise", "inferno"]
+config["animations"]["screensaver"]["shaders"] = ["matrix", "rain", "inferno"]
 config["animations"]["screensaver"]["idle_timeout"] = "5m"
 config["animations"]["screensaver"]["duration"] = "30s"
 config["animations"]["screensaver"]["time_shader"] = "ping_pong"

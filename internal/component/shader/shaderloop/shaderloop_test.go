@@ -127,7 +127,7 @@ func TestTimeContinuousShadersIgnoreTotal(t *testing.T) {
 	// against a different framesPerLoop for each budget.
 	frame := loopFrames(DefaultFPS, DefaultLoop) + 4
 	snapshot := rowSnapshot(8)
-	for _, name := range []string{"blaze", "inferno", "noise", "trippy"} {
+	for _, name := range []string{"blaze", "inferno"} {
 		t.Run(name, func(t *testing.T) {
 			var got []string
 			for _, budget := range []int{total, 2 * total} {
@@ -317,18 +317,12 @@ func TestParamsChangeTheirEffect(t *testing.T) {
 		{"inferno", "animate_background", Params{Inferno: FireParams{AnimateBackground: true}}},
 		{"inferno", "swap_red_blue", Params{Inferno: FireParams{SwapRedBlue: true}}},
 		{"inferno", "color", Params{Inferno: FireParams{Color: green}}},
-		{"noise", "animate_background", Params{Noise: NoiseParams{AnimateBackground: true}}},
-		{"noise", "speed", Params{Noise: NoiseParams{Speed: 3}}},
-		{"noise", "amplitude", Params{Noise: NoiseParams{Amplitude: 2}}},
-		{"noise", "scale", Params{Noise: NoiseParams{Scale: 9}}},
 		{"pulse", "color", Params{Pulse: PulseParams{Color: green}}},
 		{"pulse", "intensity", Params{Pulse: PulseParams{Intensity: 1}}},
 		{"shine", "color", Params{Shine: ShineParams{Color: green}}},
 		{"shine", "intensity", Params{Shine: ShineParams{Intensity: 1}}},
 		{"shine", "band_width", Params{Shine: ShineParams{BandWidth: 0.2}}},
 		{"shine", "direction", Params{Shine: ShineParams{Direction: glslshader.DirectionRightToLeft}}},
-		{"trippy", "animate_background", Params{Trippy: TrippyParams{AnimateBackground: true}}},
-		{"trippy", "speed", Params{Trippy: TrippyParams{Speed: 3}}},
 	} {
 		t.Run(tc.name+"/"+tc.knob, func(t *testing.T) {
 			assert.NotEqual(t, loopSignature(t, tc.name, Params{}), loopSignature(t, tc.name, tc.p))
@@ -346,13 +340,11 @@ func TestParamsTuneOnlyTheirEffect(t *testing.T) {
 			Duration: 0.5, Seed: 7, FixedOrigin: true, Origin: 1,
 		},
 		Inferno: fire,
-		Noise:   NoiseParams{AnimateBackground: true, Speed: 3, Amplitude: 2, Scale: 9},
 		Pulse:   PulseParams{Color: green, Intensity: 1},
 		Shine: ShineParams{
 			Color: green, Intensity: 1, BandWidth: 0.2,
 			Direction: glslshader.DirectionRightToLeft,
 		},
-		Trippy: TrippyParams{AnimateBackground: true, Speed: 3},
 	}
 	for _, name := range Names() {
 		t.Run(name, func(t *testing.T) {
@@ -364,14 +356,10 @@ func TestParamsTuneOnlyTheirEffect(t *testing.T) {
 				others.Burn = BurnParams{}
 			case "inferno":
 				others.Inferno = FireParams{}
-			case "noise":
-				others.Noise = NoiseParams{}
 			case "pulse":
 				others.Pulse = PulseParams{}
 			case "shine":
 				others.Shine = ShineParams{}
-			case "trippy":
-				others.Trippy = TrippyParams{}
 			default:
 				require.Failf(t, "untested effect", "%s has no Params entry", name)
 			}
@@ -396,8 +384,6 @@ func TestAnimateBackground(t *testing.T) {
 		{"blaze", Params{Blaze: FireParams{AnimateBackground: true}}},
 		{"burn", Params{Burn: BurnParams{AnimateBackground: true}}},
 		{"inferno", Params{Inferno: FireParams{AnimateBackground: true}}},
-		{"noise", Params{Noise: NoiseParams{AnimateBackground: true}}},
-		{"trippy", Params{Trippy: TrippyParams{AnimateBackground: true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			row := rowSnapshot(8)[0]

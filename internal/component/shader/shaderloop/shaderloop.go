@@ -66,17 +66,14 @@ type Params struct {
 	Blaze   FireParams
 	Burn    BurnParams
 	Inferno FireParams
-	Noise   NoiseParams
 	Pulse   PulseParams
 	Shine   ShineParams
-	Trippy  TrippyParams
 }
 
 // DefaultParams spells out the tuning the zero Params stands for. New
 // paints the same with either.
 func DefaultParams() Params {
 	burn := shader.DefaultBurnParams()
-	noise := glslshader.DefaultNoiseParams()
 	shine := glslshader.DefaultShineParams()
 	// The fire's red: a hue it is turned no way from.
 	fire := FireParams{Color: term.NewRGBColor(255, 0, 0)}
@@ -88,11 +85,6 @@ func DefaultParams() Params {
 			Seed:     burn.Seed,
 		},
 		Inferno: fire,
-		Noise: NoiseParams{
-			Speed:     noise.Speed,
-			Amplitude: noise.Amplitude,
-			Scale:     noise.ScaleX,
-		},
 		Pulse: PulseParams{
 			Color:     shader.DefaultPulseParams().Color,
 			Intensity: pulseIntensity,
@@ -103,7 +95,6 @@ func DefaultParams() Params {
 			BandWidth: shineBandWidth,
 			Direction: shine.Direction,
 		},
-		Trippy: TrippyParams{Speed: glslshader.DefaultTrippyParams().Speed},
 	}
 }
 
@@ -143,31 +134,6 @@ type BurnParams struct {
 	Origin      float64
 }
 
-// NoiseParams tunes the noise effect. Positive values replace the
-// defaults; anything else keeps them.
-type NoiseParams struct {
-	// AnimateBackground paints the noise on the cell background and
-	// scatters glyphs over its brightest parts, rather than shading the
-	// text.
-	AnimateBackground bool
-	// Speed scales how fast the noise field moves.
-	Speed float64
-	// Amplitude scales the contrast of the noise field.
-	Amplitude float64
-	// Scale is the size of the noise field across the label: larger
-	// packs more, finer, detail into it.
-	Scale float64
-}
-
-// TrippyParams tunes the trippy effect.
-type TrippyParams struct {
-	// AnimateBackground paints the colours on the cell background and
-	// clears the text, rather than colouring the text.
-	AnimateBackground bool
-	// Speed, when positive, scales how fast the colours cycle.
-	Speed float64
-}
-
 // PulseParams tunes the pulse effect.
 type PulseParams struct {
 	// Color replaces the white text is blended toward, unless it is
@@ -202,7 +168,7 @@ type ShineParams struct {
 // visibly when looped, so they read as jerky rather than as activity.
 func Names() []string {
 	return []string{
-		"blaze", "burn", "inferno", "noise", "pulse", "shine", "trippy",
+		"blaze", "burn", "inferno", "pulse", "shine",
 	}
 }
 
@@ -247,14 +213,6 @@ func New(
 		infernoParams.Color = p.Inferno.Color
 		infernoParams.SwapRedBlue = p.Inferno.SwapRedBlue
 		inner, continuous = glslshader.Inferno(infernoParams, fpsf), true
-	case "noise":
-		noiseParams := glslshader.DefaultNoiseParams()
-		noiseParams.PaintForeground = !p.Noise.AnimateBackground
-		noiseParams.Speed = positiveOr(p.Noise.Speed, noiseParams.Speed)
-		noiseParams.Amplitude = positiveOr(p.Noise.Amplitude, noiseParams.Amplitude)
-		noiseParams.ScaleX = positiveOr(p.Noise.Scale, noiseParams.ScaleX)
-		noiseParams.ScaleY = positiveOr(p.Noise.Scale, noiseParams.ScaleY)
-		inner, continuous = glslshader.Noise(noiseParams, fpsf), true
 	case "pulse":
 		params := shader.DefaultPulseParams()
 		params.PeriodFrames = loopFrames(fps, loop)
@@ -272,11 +230,6 @@ func New(
 		}
 		shineParams.Direction = p.Shine.Direction
 		inner = glslshader.Shine(shineParams, defAttr)
-	case "trippy":
-		trippyParams := glslshader.DefaultTrippyParams()
-		trippyParams.PaintForeground = !p.Trippy.AnimateBackground
-		trippyParams.Speed = positiveOr(p.Trippy.Speed, trippyParams.Speed)
-		inner, continuous = glslshader.Trippy(trippyParams, fpsf), true
 	default:
 		return nil, false
 	}
@@ -289,14 +242,6 @@ func New(
 // fractionOr returns v, or def when v is not in (0, 1].
 func fractionOr(v, def float64) float64 {
 	if v <= 0 || v > 1 {
-		return def
-	}
-	return v
-}
-
-// positiveOr returns v, or def when v is not positive.
-func positiveOr(v, def float64) float64 {
-	if v <= 0 {
 		return def
 	}
 	return v

@@ -275,8 +275,8 @@ func TestBurningShadeInputSurface(t *testing.T) {
 	newSh := func(hideLogo bool) *burning {
 		var params BurningParams
 		if hideLogo {
-			params = BurningPresetGentleOnlyFlames(
-				false, component.FrameCharSetDefault())
+			params = BurningPresetGentle(nil, false, component.FrameCharSetDefault())
+			params.HideLogo = true
 		} else {
 			params = DefaultBurningParams(
 				openTestLogo(), component.FrameCharSetDefault())

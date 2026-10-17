@@ -189,7 +189,7 @@ func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
 		}
 	}
 
-	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, fps, d, r.fc)
+	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, fps, r.fc)
 	if !ok {
 		err = errors.New("expected one of the available shaders")
 		return
@@ -217,34 +217,21 @@ func (r *shaderRunner) Complete(ctx context.Context, cmd textapi.Command) (
 // for showroom UI stability.
 func namedShaderNames() []string {
 	return []string{
-		// TODO: Review and leave only useful shaders. This at the moment is a review showroom!
 		"blaze",
 		"blazeBlue",
 		"bomb",
 		"burn",
 		"embers",
-		"fade",
 		"incendium",
-		"incendiumReversed",
-		"incendiumPingPong",
 		"flames",
-		"flamesA",
-		"flamesV",
 		"inferno",
 		"infernoBlue",
-		"burningOnlyRedFlamesLightsOn",
-		"burningOnlyRedFlamesLightsOff",
-		"burningOnlyBlueFlamesLightsOn",
-		"burningOnlyBlueFlamesLightsOff",
-		"noise",
 		"nop",
 		"pulse",
-		"risingChars",
 		"shine",
 		"shineFrame",
 		"radarFrame",
 		"grayFade",
-		"trippy",
 		"beams",
 		"binaryPath",
 		"crumble",
@@ -266,13 +253,12 @@ func namedShaderNames() []string {
 
 // buildNamedShader returns the shader registered under name with the
 // default parameters used by the :shaderrun showroom, wrapped in the
-// same cross-fade transitions when applicable. fps and duration are
-// only consumed by shaders that need them (GLSL animated shaders and
-// the burning preset family). Returns ok=false when name does not
-// match any known shader.
+// same cross-fade transitions when applicable. fps is only consumed by
+// the GLSL animated shaders. Returns ok=false when name does not match
+// any known shader.
 func buildNamedShader(
 	name string, defAttr term.Attributes,
-	fps int, duration time.Duration, fc component.FrameCharSet,
+	fps int, fc component.FrameCharSet,
 ) (shader.Shader, bool) {
 	const (
 		fadeInPerc  = 0.1
@@ -303,42 +289,15 @@ func buildNamedShader(
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
-	case "fade":
-		return shader.Fade(defAttr), true
 	case "incendium":
 		return wrapShaderCrossFadeInOut(
 			glslshader.Incendium(glslshader.DefaultIncendiumParams(), defAttr, float64(fps)),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
-	case "incendiumReversed":
-		return wrapShaderCrossFadeInOut(
-			timeshader.Reverse(glslshader.Incendium(glslshader.DefaultIncendiumParams(), defAttr, float64(fps))),
-			fadeInPerc, fadeOutPerc,
-			defAttr,
-		), true
-	case "incendiumPingPong":
-		return wrapShaderCrossFadeInOut(
-			timeshader.PingPong(glslshader.Incendium(
-				glslshader.DefaultIncendiumParams(), defAttr, float64(fps))),
-			fadeInPerc, fadeOutPerc,
-			defAttr,
-		), true
 	case "flames":
 		return wrapShaderCrossFadeInOut(
 			glslshader.Flames(glslshader.DefaultFlamesParams(), defAttr, float64(fps)),
-			0.0, fadeOutPerc,
-			defAttr,
-		), true
-	case "flamesA":
-		return wrapShaderCrossFadeInOut(
-			glslshader.Flames(glslshader.FlamesPresetAShape(), defAttr, float64(fps)),
-			0.0, fadeOutPerc,
-			defAttr,
-		), true
-	case "flamesV":
-		return wrapShaderCrossFadeInOut(
-			glslshader.Flames(glslshader.FlamesPresetVShape(), defAttr, float64(fps)),
 			0.0, fadeOutPerc,
 			defAttr,
 		), true
@@ -356,36 +315,10 @@ func buildNamedShader(
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
-	case "burningOnlyRedFlamesLightsOn":
-		params := glslshader.BurningPresetGentleOnlyFlames(false, fc)
-		return glslshader.Burning(params, defAttr, duration, float64(fps)), true
-	case "burningOnlyRedFlamesLightsOff":
-		params := glslshader.BurningPresetGentleOnlyFlames(true, fc)
-		return glslshader.Burning(params, defAttr, duration, float64(fps)), true
-	case "burningOnlyBlueFlamesLightsOn":
-		params := glslshader.BurningPresetGentleOnlyFlames(false, fc)
-		params.Colors.SwapRedBlue = true
-		return glslshader.Burning(params, defAttr, duration, float64(fps)), true
-	case "burningOnlyBlueFlamesLightsOff":
-		params := glslshader.BurningPresetGentleOnlyFlames(true, fc)
-		params.Colors.SwapRedBlue = true
-		return glslshader.Burning(params, defAttr, duration, float64(fps)), true
-	case "noise":
-		return wrapShaderCrossFadeInOut(
-			glslshader.Noise(glslshader.DefaultNoiseParams(), float64(fps)),
-			fadeInPerc, fadeOutPerc,
-			defAttr,
-		), true
 	case "nop":
 		return shader.Nop(), true
 	case "pulse":
 		return shader.Pulse(shader.DefaultPulseParams(), defAttr), true
-	case "risingChars":
-		return wrapShaderCrossFadeInOut(
-			glslshader.RisingChars(glslshader.DefaultRisingCharsParams(), defAttr),
-			fadeInPerc, fadeOutPerc,
-			defAttr,
-		), true
 	case "shine":
 		return wrapShaderCrossFadeInOut(
 			glslshader.Shine(glslshader.DefaultShineParams(), defAttr),
@@ -412,12 +345,6 @@ func buildNamedShader(
 		), true
 	case "grayFade":
 		return shader.GrayFade(shader.DefaultGrayFadeParams(), defAttr), true
-	case "trippy":
-		return wrapShaderCrossFadeInOut(
-			glslshader.Trippy(glslshader.DefaultTrippyParams(), float64(fps)),
-			fadeInPerc, fadeOutPerc,
-			defAttr,
-		), true
 	case "beams":
 		return shader.Beams(shader.DefaultBeamsParams(), defAttr), true
 	case "binaryPath":
@@ -542,7 +469,7 @@ func (r *shaderRunner) newScreensaver() shader.Shader {
 	cfg := r.screensaverCfg
 	name := cfg.shaders[r.screensaverNext]
 	r.screensaverNext = (r.screensaverNext + 1) % len(cfg.shaders)
-	s, _ := buildNamedShader(name, r.defAttr, cfg.fps, cfg.duration, r.fc)
+	s, _ := buildNamedShader(name, r.defAttr, cfg.fps, r.fc)
 	return cfg.play(s)
 }
 

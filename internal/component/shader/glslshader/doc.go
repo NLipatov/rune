@@ -35,11 +35,11 @@ performing any screen space transformation such as normalizing coords or
 flipping vertical axis to match the pixel shader specification, it's all done
 by shadeGLSL() and you only responsible for your runCell().
 
-	func (s *trippy) Shade(frame, total int, in [][]term.Cell) {
-		shadeGLSL(frame, total, s.fps, in, s) // only works if trippy.runCell defined
+	func (s *myShader) Shade(frame, total int, in [][]term.Cell) {
+		shadeGLSL(frame, total, s.fps, in, s) // only works if myShader.runCell defined
 	}
 
-	func (s *trippy) runCell(
+	func (s *myShader) runCell(
 		frame, total int, fps float, time float,
 		fragCoordX, fragCoordY int,
 		resolutionX, resolutionY int,
