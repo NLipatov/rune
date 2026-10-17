@@ -565,6 +565,63 @@ func TestTabStatusConfigProgress(t *testing.T) {
 	}
 }
 
+func TestStatusInboxStyle(t *testing.T) {
+	def := defaultStatusInboxStyle()
+	for _, tc := range []struct {
+		name    string
+		cfg     map[string]any
+		want    statusInboxStyle
+		wantErr string
+	}{
+		{name: "defaults", cfg: map[string]any{}, want: def},
+		{
+			name: "the marker takes the color of the focused tab marker",
+			cfg: map[string]any{"browser": map[string]any{
+				"focus_tab_highlight_attr": map[string]any{"fg": "red"},
+			}},
+			want: func() statusInboxStyle {
+				s := def
+				s.markerAttr = term.Attributes{Fg: term.ColorRed}
+				return s
+			}(),
+		},
+		{
+			name: "configured",
+			cfg: map[string]any{"terminal": map[string]any{"status": map[string]any{
+				"programstatus": map[string]any{
+					"marker":        "┃",
+					"selected_attr": map[string]any{"bg": "navy"},
+				},
+			}}},
+			want: func() statusInboxStyle {
+				s := def
+				s.marker = '┃'
+				s.selectedAttr = term.Attributes{Bg: term.ColorNavy}
+				return s
+			}(),
+		},
+		{
+			name: "invalid",
+			cfg: map[string]any{"terminal": map[string]any{"status": map[string]any{
+				"programstatus": map[string]any{"marker": true, "selected_attr": "gray"},
+			}}},
+			want:    def,
+			wantErr: "terminal.status.programstatus.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ideConfig{cfg: tc.cfg, errors: map[string]error{}}
+			assert.Equal(t, tc.want, cfg.statusInboxStyle())
+			if tc.wantErr == "" {
+				assert.Empty(t, cfg.errors)
+				return
+			}
+			assert.Error(t, cfg.errors[tc.wantErr+"marker"])
+			assert.Error(t, cfg.errors[tc.wantErr+"selected_attr"])
+		})
+	}
+}
+
 func TestTabStatusConfigIgnoresPluginIcons(t *testing.T) {
 	m, err := decodeConfig(strings.NewReader(`
 terminal:

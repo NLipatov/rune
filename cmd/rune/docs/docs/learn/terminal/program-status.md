@@ -32,8 +32,8 @@ in four places:
 - **As a notification.** Every new message comes through as a notification,
   and a tab out of sight that becomes blocked, fails, or finishes raises one
   too. See [Notifications](#notifications).
-- **In the status inbox.** `:inbox` lists every reported status across your
-  workspaces, most pressing first, and jumps to the one you pick. See [The
+- **In the status inbox.** `:programstatus` lists every reported status across
+  your workspaces, most pressing first, and jumps to the one you pick. See [The
   status inbox](#the-status-inbox).
 
 Rune's own features report through the same model, and extensions can
@@ -105,10 +105,10 @@ icon is colored until you see the tab; a tab whose program never reported
 anything is left alone. A blocked report without a `kind` takes the
 `permission` icon.
 
-`progress` is kept with the status and shown in the [inbox](#the-status-inbox).
-Set `terminal.status.content_tab.progress` to `true` to also split working tab
-labels at the reported percentage, painting the completed part with
-`working_done_attr`. Every icon, color, and effect is configurable; see
+`progress` is kept with the status. Set `terminal.status.content_tab.progress`
+to `true` to split working tab labels at the reported percentage, painting the
+completed part with `working_done_attr`. The [inbox](#the-status-inbox) always
+shows it as a progress bar. Every icon, color, and effect is configurable; see
 [Configuration](#configuration).
 
 ### The workspace bar
@@ -159,29 +159,31 @@ worktree needs you](../worktrees.md#knowing-when-a-worktree-needs-you).
 
 ### The status inbox
 
-`statuslist` (shipped with the alias `inbox`) opens a floating list of every
-status reported across your workspaces, most pressing first, then by
-workspace and tab. Each row shows the state's icon, the workspace, the tab and
-`app`, the `title`, the percentage of a working record, and the `msg`. The
-list updates live while it is open. Rows are styled like the tabs they stand
-for: working rows turn the spinner, run the `animations.active_content_tab`
-effect, and split their label at the reported percentage when
-`terminal.status.content_tab.progress` is `true`.
+`programstatus` opens a floating window with a sidebar on the left and a live
+preview of the selected program on the right. Everything in it updates while
+it is open. The window sits at the top of the screen and takes at least 60% of
+its width, growing and shrinking downwards as the preview changes size.
 
-Above the list, the inbox previews the tab of the selected row live, as it
-draws itself, without sending it any input. A tab that no window shows is fit
-to the preview. A tab that a window shows keeps the window's size and is
-cropped around its cursor, or to its bottom rows when it shows no cursor.
+The sidebar lists every tab and terminal that reported a status, across your
+workspaces, most pressing first, then by workspace and tab. Each shows:
+
+- the state's icon and the tab's name, styled like the tab itself;
+- beneath, the state followed by the reporting `app`, in the state's color;
+- beneath that, while working with a reported `progress`, a progress bar with
+  the percentage on its right.
 
 | Key | Action |
 | --- | --- |
-| `j` / `<down>` / `<ctrl-j>` / `<ctrl-n>` | Next row |
-| `k` / `<up>` / `<ctrl-k>` / `<ctrl-p>` | Previous row |
-| `<enter>` | Switch to the row's workspace and show its tab |
+| `j` / `<down>` / `<ctrl-j>` / `<ctrl-n>` | Next program |
+| `k` / `<up>` / `<ctrl-k>` / `<ctrl-p>` | Previous program |
+| Click | Select a program |
+| `<enter>` | Switch to the program's workspace and show it |
+| `<delete>` / `<backspace>` | Close the program as `:tabclose` would: a tab or window is closed, a task stopped, and the companion terminal hidden. A `working` or `blocked` program, or a file with unwritten changes, asks first |
 | `<esc>` / `q` / `<ctrl-c>` | Close the inbox |
 
-Tabs at rest are not listed, and the inbox is not bound to a key by default.
-Bind it like any other command under `command.key_bindings`.
+Tabs that never reported a status are not listed, and the inbox is not bound
+to a key by default. Bind it like any other command under
+`command.key_bindings`.
 
 ### Several records
 
@@ -197,10 +199,9 @@ OSC 7501 ; state=blocked:kind=permission:id=eu-west:title=RVUgV2VzdA==:msg=QXBwc
 The tab shows the most pressing record, in the same order as the workspace
 bar, so it shows `blocked` while `eu-west` waits for approval even though the
 root record still says `working`. When two records share the top state, the
-most recently updated one wins. The inbox lists the tab, then one indented row
-per record beneath it, so you see both. A record without an `app` takes it from
-its nearest ancestor that has one, which is how the region rows above show
-`deploy`.
+most recently updated one wins, and the inbox lists the tab once, in that
+state. A record without an `app` takes it from its nearest ancestor that has
+one, which is how the region records above report `deploy`.
 
 ## When a status goes away
 
@@ -262,8 +263,8 @@ terminators, `ESC \` and BEL. It follows the parsing rules exactly:
 | `kind` | `permission`, `question`, `auth` | Read with `blocked` only. Picks the tab icon and is named in notifications. An unknown value is treated as absent. |
 | `progress` | `0` to `100` | Read with `working` and `blocked` only. Absent or invalid means indeterminate. |
 | `app` | `[A-Za-z0-9_.+-]`, up to 32 bytes | Names the program in notifications and the inbox. Inherited from the nearest ancestor. An invalid value is treated as absent. |
-| `title` | base64 text | The record's label in notifications and the inbox. |
-| `msg` | base64 text | Notified whenever it changes and shown in the inbox. |
+| `title` | base64 text | The record's label in notifications. |
+| `msg` | base64 text | Notified whenever it changes. |
 
 ### Feature detection
 
@@ -299,7 +300,7 @@ Everything in a report is untrusted input, so Rune:
   control character, including newline and tab.
 - Strips zero-width and bidirectional formatting characters from `msg` and
   `title` before showing them anywhere, so a program cannot disguise what a
-  notification or the inbox says.
+  notification says.
 - Never treats `msg` or `title` as markup.
 - Never writes anything from a report back to the terminal. The feature
   detection reply is fixed, and there is no way to read records.
@@ -364,6 +365,8 @@ that play over working tabs are configured separately, under
 | `workspace_tab` | see below | How workspace tabs on the bar show the status of their workspace. |
 | `notify` | `[blocked, error, done]` | The states that raise a notification when a tab out of sight enters them. `working` is also accepted. |
 | `notify_interval` | `2s` | The minimum time between two state notifications for the same tab. |
+| `programstatus.marker` | `▌` | The marker drawn down the left of the item selected in the [inbox](#the-status-inbox), colored by `browser.focus_tab_highlight_attr`. |
+| `programstatus.selected_attr` | gray background | Styles the item selected in the inbox; its background is also the marker's. |
 
 `content_tab` and `workspace_tab` take the same keys. Colors left at `default`
 keep the tab's own:

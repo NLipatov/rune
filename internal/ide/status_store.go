@@ -18,10 +18,12 @@ package ide
 
 import (
 	"cmp"
+	"context"
 	"maps"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
@@ -29,12 +31,13 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/term/graphemecluster"
+	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
-const cmdStatusList = "statuslist"
+const cmdProgramStatus = "programstatus"
 
 // detachedStatusLabel names a terminal that is no tab and whose program
 // did not name itself.
@@ -50,6 +53,13 @@ type statusHost interface {
 	// statusTabName returns the name of the tab at uri in the
 	// workspace at ws, or false when there is no such tab.
 	statusTabName(ws, uri workspaceapi.URI) (string, bool)
+	// statusPreview returns what previews what is at uri in the
+	// workspace at ws: its tab, or the window showing it. It returns
+	// false when there is nothing to show.
+	statusPreview(ws, uri workspaceapi.URI) (statusPreview, bool)
+	// statusTabIcon returns the icon the tab at uri in the workspace at
+	// ws was opened with, or false when there is no such tab.
+	statusTabIcon(ws, uri workspaceapi.URI) (rune, bool)
 	// statusInSight reports whether the user sees what is at uri in
 	// the workspace at ws: the tab in focus, or any terminal that is
 	// no tab, as it floats over its workspace, while the workspace is
@@ -64,6 +74,13 @@ type statusHost interface {
 	// showStatus brings what is at uri in the workspace at ws in
 	// sight, or tells the user why it cannot.
 	showStatus(ws, uri workspaceapi.URI)
+	// closeStatus closes what reported at uri in the workspace at ws, as
+	// tabclose closes what a window shows, or tells the user why it
+	// cannot. Its statuses go with it.
+	closeStatus(ws, uri workspaceapi.URI)
+	// confirmStatus asks the user message, a yes or no question, and
+	// calls yes on a later tick if they answer yes.
+	confirmStatus(message string, yes func())
 }
 
 // tabStatusNotifyConfig says which states a source entering raises a
@@ -125,11 +142,15 @@ func (src *statusSource) key() statusKey {
 // workspace. It is not safe for concurrent use: every method must be
 // called on the host event loop. Use newStatusStore to create one.
 type statusStore struct {
-	host     statusHost
-	cfg      browser.TabStatusConfig
-	notify   tabStatusNotifyConfig
-	schedule func(func()) bool
-	sources  map[statusKey]*statusSource
+	host   statusHost
+	cfg    browser.TabStatusConfig
+	notify tabStatusNotifyConfig
+	style  statusInboxStyle
+	// interrupter wakes the host while an inbox is open, so its spinner
+	// turns and its preview stays live. Without one, inboxes stand still.
+	interrupter term.Interrupter
+	schedule    func(func()) bool
+	sources     map[statusKey]*statusSource
 	// lastNotified and pendingNotify rate limit the notifications of
 	// each source: a pending entry holds the sequence number of the
 	// deferred notification that may still deliver it.
@@ -140,16 +161,19 @@ type statusStore struct {
 }
 
 // newStatusStore returns an empty store that styles statuses after cfg
-// and notifies them as notify says. schedule runs a function on the
-// next tick of the host event loop.
+// and its inboxes after style, notifies them as notify says, and whose
+// inboxes interrupter keeps live. schedule runs a function on the next
+// tick of the host event loop.
 func newStatusStore(
 	host statusHost, cfg browser.TabStatusConfig, notify tabStatusNotifyConfig,
-	schedule func(func()) bool,
+	style statusInboxStyle, schedule func(func()) bool, interrupter term.Interrupter,
 ) *statusStore {
 	return &statusStore{
 		host:          host,
 		cfg:           cfg,
 		notify:        notify,
+		style:         style,
+		interrupter:   interrupter,
 		schedule:      schedule,
 		sources:       make(map[statusKey]*statusSource),
 		lastNotified:  make(map[statusKey]time.Time),
@@ -262,13 +286,16 @@ func (s *statusStore) items() []statusItem {
 			slot: slot, ws: src.ws, wsName: wsName,
 			uri: src.uri, name: s.name(src), status: src.status,
 		})
+		if src.records == nil {
+			ret[len(ret)-1].icon, _ = s.host.statusTabIcon(src.ws, src.uri)
+		}
 	}
 	return ret
 }
 
 // view returns a new live status inbox over the store.
 func (s *statusStore) view() *statusView {
-	v := &statusView{store: s, list: component.NewFocusList()}
+	v := &statusView{store: s, hover: -1}
 	v.set(statusInbox{cfg: s.cfg}.entries(s.items()))
 	s.views[v] = struct{}{}
 	return v
@@ -462,43 +489,60 @@ type statusItem struct {
 	wsName string
 	uri    workspaceapi.URI
 	// name is the tab's name, or detachedStatusLabel.
-	name   string
+	name string
+	// icon is the icon the tab was opened with, or zero.
+	icon   rune
 	status programstatus.Summary
 }
 
-// statusEntry is one row of the status inbox: a source, or one of the
-// records beneath it.
+// statusEntry is one program of the status inbox: a source, read as
+// its name, its state and app beneath, and its progress, if any, and
+// styled as the tab bar styles a tab in the same state.
 type statusEntry struct {
 	ws, uri workspaceapi.URI
-	// record is the id of the record the row shows, empty for the row
-	// of the source itself.
-	record  string
-	state   programstatus.State
-	display string
-	attr    term.Attributes
+	// wsName is the name of the workspace on the workspace bar.
+	wsName string
+	state  programstatus.State
+	// status is everything reported, for the user to know what closing
+	// it would interrupt.
+	status programstatus.Summary
+	// icon is the glyph of state. A working entry turns the spinner in
+	// its place while the inbox is open.
+	icon string
+	name string
+	sub  string
+	// progress is the percentage the progress bar shows, or -1 for no
+	// bar.
+	progress int
+	// nameAttr and iconAttr style the name and the icon as the name and
+	// the icon of a tab in state are styled; subAttr colors the state.
+	nameAttr, iconAttr, subAttr term.Attributes
 }
 
-func (e statusEntry) same(o statusEntry) bool {
-	return e.ws.String() == o.ws.String() && e.uri.String() == o.uri.String() &&
-		e.record == o.record
+// height returns the rows the entry takes in the sidebar.
+func (e statusEntry) height() int {
+	if e.progress >= 0 {
+		return 3
+	}
+	return 2
 }
 
-// statusInbox renders status items as inbox rows, styled after the tab
-// status configuration.
+// statusInbox renders status items as inbox entries, styled after the
+// tab status configuration.
 type statusInbox struct {
 	cfg browser.TabStatusConfig
 }
 
-// statusInboxMaxDepth caps the indentation of a record's row.
-const statusInboxMaxDepth = 4
+// statusSubSeparator sits between the state and the app of an entry.
+const statusSubSeparator = " · "
 
-// entries returns one row per non-idle item, most pressing first
-// (blocked > error > done > working), then by slot and name, followed
-// by one indented row per record beneath it when an item holds more
-// than one.
+// entries returns one entry per item that reported a status, most
+// pressing first (blocked > error > done > working > idle), then by
+// slot and name. An item holding several records is listed once, in
+// its most pressing state.
 func (in statusInbox) entries(items []statusItem) []statusEntry {
 	items = slices.DeleteFunc(slices.Clone(items), func(it statusItem) bool {
-		return it.status.State == programstatus.Idle
+		return it.status.State == programstatus.Idle && len(it.status.Records) == 0
 	})
 	slices.SortStableFunc(items, func(a, b statusItem) int {
 		return cmp.Or(
@@ -506,65 +550,57 @@ func (in statusInbox) entries(items []statusItem) []statusEntry {
 			a.slot-b.slot,
 			strings.Compare(a.name, b.name))
 	})
-	var ret []statusEntry
+	ret := make([]statusEntry, 0, len(items))
 	for _, it := range items {
-		ret = append(ret, statusEntry{
-			ws:    it.ws,
-			uri:   it.uri,
-			state: it.status.State,
-			display: in.row(it.status.State, it.status.Kind, 0,
-				it.wsName, statusSourceLabel(it.name, it.status.App),
-				it.status.Title, it.status.Progress, it.status.Msg),
-			attr: in.rowAttr(it.status.State),
-		})
-		if len(it.status.Records) < 2 {
-			continue
-		}
-		for _, rec := range it.status.Records {
-			if rec.ID == "" {
-				continue
-			}
-			depth := min(strings.Count(rec.ID, "/")+1, statusInboxMaxDepth)
-			label := rec.ID[strings.LastIndexByte(rec.ID, '/')+1:]
-			ret = append(ret, statusEntry{
-				ws:     it.ws,
-				uri:    it.uri,
-				record: rec.ID,
-				state:  rec.State,
-				display: in.row(rec.State, rec.Kind, depth,
-					"", label, rec.Title, rec.Progress, rec.Msg),
-				attr: in.rowAttr(rec.State),
-			})
-		}
+		ret = append(ret, in.entry(it))
 	}
 	return ret
 }
 
-// row renders one inbox row: the state's glyph indented by depth, then
-// the workspace, label, title, progress and message, skipping the empty
-// ones. Progress is shown for working rows only.
-func (in statusInbox) row(
-	state programstatus.State, kind programstatus.Kind, depth int,
-	ws, label, title string, progress int, msg string,
-) string {
-	fields := []string{strings.Repeat("  ", depth) + in.glyph(state, kind)}
-	for _, f := range []string{ws, label, title} {
-		if f != "" {
-			fields = append(fields, f)
-		}
+// entry renders it: its name, or the app of a terminal that is no tab,
+// its state followed by its app when that adds to the name, and the
+// progress of a working item. The title and the message are left to
+// the preview, as they would bury the name.
+func (in statusInbox) entry(it statusItem) statusEntry {
+	st := it.status
+	name := it.name
+	if (name == "" || name == detachedStatusLabel) && st.App != "" {
+		name = st.App
 	}
-	if state == programstatus.Working && progress >= 0 {
-		fields = append(fields, strconv.Itoa(progress)+"%")
+	sub := st.State.String()
+	if st.App != "" && st.App != name {
+		sub += statusSubSeparator + st.App
 	}
-	if msg != "" {
-		fields = append(fields, msg)
+	nameAttr, iconAttr := in.cfg.ContentTab.BarAttrs(st)
+	subAttr := nameAttr
+	if subAttr == (term.Attributes{}) {
+		subAttr = iconAttr
 	}
-	return strings.Join(fields, "  ")
+	progress := -1
+	if st.State == programstatus.Working && st.Progress >= 0 {
+		progress = min(st.Progress, 100)
+	}
+	return statusEntry{
+		ws:       it.ws,
+		uri:      it.uri,
+		wsName:   it.wsName,
+		state:    st.State,
+		status:   st,
+		icon:     in.glyph(st.State, st.Kind, it.icon),
+		name:     name,
+		sub:      sub,
+		progress: progress,
+		nameAttr: nameAttr,
+		iconAttr: iconAttr,
+		subAttr:  subAttr,
+	}
 }
 
 // glyph returns the icon configured for state, the first spinner frame
-// for working, or the state's name when none is configured.
-func (in statusInbox) glyph(state programstatus.State, kind programstatus.Kind) string {
+// for working, or, when none is configured, fallback, or nothing: the
+// state is spelled out beneath the name, and a word would not fit the
+// single cell an icon takes.
+func (in statusInbox) glyph(state programstatus.State, kind programstatus.Kind, fallback rune) string {
 	var icon rune
 	switch state {
 	case programstatus.Working:
@@ -582,85 +618,485 @@ func (in statusInbox) glyph(state programstatus.State, kind programstatus.Kind) 
 		icon = in.cfg.ErrorIcon
 	}
 	if icon == 0 {
-		return state.String()
+		icon = fallback
+	}
+	if icon == 0 {
+		return ""
 	}
 	return string(icon)
 }
 
-// rowAttr returns the attributes a row in state is drawn with: the
-// state's name attributes, or its icon attributes when it has none.
-func (in statusInbox) rowAttr(state programstatus.State) term.Attributes {
-	name, icon := in.cfg.ContentTab.BarAttrs(programstatus.Summary{State: state})
-	if name == (term.Attributes{}) {
-		return icon
-	}
-	return name
-}
-
 const (
-	statusViewEmpty     = "No program reported a status"
-	statusViewMinWidth  = 40
-	statusViewMaxHeight = 15
+	// statusViewEmpty stands in the programs when none reported a
+	// status.
+	statusViewEmpty = "No program reported a status"
+	// statusPreviewNone stands in the preview of what there is nothing
+	// of to show, such as a terminal whose window closed.
+	statusPreviewNone = "No preview"
+	// statusPreviewWidth and statusPreviewHeight size the preview of
+	// what has no size of its own: a tab never shown, or nothing.
+	statusPreviewWidth  = 80
+	statusPreviewHeight = 21
+	statusSidebarMin    = 24
+	statusSidebarMax    = 40
+	statusDividerWidth  = 1
+	// statusTextX is the column names start at in the sidebar, past the
+	// marker, the icon and a space.
+	statusTextX = 3
+	// statusGap is the empty rows between two programs.
+	statusGap = 1
 )
 
-// statusView is the status inbox: a floating list of every status the
-// store accounts for, kept up to date until it is closed. Selecting a
-// row brings its source in sight and closes the view.
+var (
+	statusMutedAttr = term.Attributes{Fg: term.ColorGray}
+	statusBoldAttr  = term.Attributes{Attrs: term.AttrBold}
+)
+
+// statusInboxStyle styles the chrome of the status inbox.
+type statusInboxStyle struct {
+	// marker is drawn down the left of the selected item, in markerAttr
+	// over the background of selectedAttr, which styles the rest of it.
+	marker                   rune
+	markerAttr, selectedAttr term.Attributes
+	// frame draws the line between the programs and the preview.
+	frame component.FrameUnionCharSet
+}
+
+func defaultStatusInboxStyle() statusInboxStyle {
+	return statusInboxStyle{
+		marker:       '▌',
+		markerAttr:   browser.DefaultConfig().FocusTabHighlightAttr,
+		selectedAttr: term.Attributes{Bg: term.ColorGray},
+		frame:        component.DefaultFrameUnionCharSet(),
+	}
+}
+
+// statusPreview is what the inbox previews, drawn as it draws itself at
+// width by height cells. fit, when set, sizes what was never sized,
+// which would otherwise draw nothing; what is shown elsewhere has none,
+// as resizing it would reflow it there. Hidden content, shown nowhere,
+// such as a minimized task or a hidden terminal, has no size of its
+// own worth showing: the inbox fits it to the preview and draws it
+// whole.
+type statusPreview struct {
+	content       tui.Component
+	width, height int
+	fit           func(width, height int)
+	hidden        bool
+}
+
+// statusFit is the size the inbox last fit hidden content to.
+type statusFit struct {
+	ref           statusRef
+	width, height int
+}
+
+// statusRef identifies a program of a workspace.
+type statusRef struct {
+	ws, uri string
+}
+
+// statusView is the status inbox: a sidebar listing every program that
+// reported a status, kept up to date until it is closed, beside a live
+// preview of the tab or terminal of the selected one. The preview draws
+// it at its own size, so it looks as it does in its window, and the
+// view asks to be large enough for it; given less, the preview loses
+// the top rows and right columns. The selection wraps around. Choosing
+// a program brings it in sight and closes the view. The previewed
+// content never receives input, and only a tab never sized is resized.
 type statusView struct {
 	store   *statusStore
 	entries []statusEntry
-	list    *component.FocusList
-	idealW  int
-	idealH  int
-	width   int
-	height  int
+	sel     statusRef
+	// selIdx is where sel was last found, for the selection to stay in
+	// place when its program goes away.
+	selIdx int
+	// top is the first program the sidebar shows.
+	top int
+	// rows holds the program drawn on each row of the sidebar, as an
+	// index in entries, or -1.
+	rows []int
+	// hover is the index in entries of the program under the mouse, or
+	// -1.
+	hover int
+	// drawing is set while the view draws: a preview that draws the
+	// view, as what the view floats over would, must not recurse.
+	drawing bool
+	// ticker wakes the host while the view is open, so the spinners turn
+	// and the preview follows its content even when its workspace is out
+	// of focus.
+	ticker *statusTicker
+	// fitted is the size the hidden content previewed was last fit to,
+	// so it is only resized as the preview changes size.
+	fitted statusFit
+	// minWidth, when set, returns the least width the view asks for.
+	minWidth      func() int
+	width, height int
 }
 
-// set replaces the rows with entries, keeping the focus on the row of
-// the same source or record when it is still listed.
+// set replaces the programs with entries, keeping the selection on the
+// same program while it is listed, or in place when it is gone.
 func (v *statusView) set(entries []statusEntry) {
-	focus := 0
-	if idx := v.list.FocusOffset(); idx >= 0 && idx < len(v.entries) {
-		if i := slices.IndexFunc(entries, v.entries[idx].same); i >= 0 {
-			focus = i
-		} else {
-			focus = min(idx, max(len(entries)-1, 0))
-		}
-	}
 	v.entries = entries
-	v.list.Reset()
-	maxW, rows := 0, len(entries)
-	if rows == 0 {
-		v.list.PushBack(component.NewResponsiveString(statusViewEmpty,
-			component.StringResponsiveConfig{}))
-		maxW, rows = graphemecluster.StringWidth(statusViewEmpty), 1
+	v.resolve()
+	v.setTicking(len(entries) > 0)
+	v.sizePreview()
+}
+
+func (e statusEntry) ref() statusRef {
+	return statusRef{ws: e.ws.String(), uri: e.uri.String()}
+}
+
+// resolve returns the index of the selected program, moving the
+// selection to the program now at its place when it is gone, or -1
+// when nothing is listed.
+func (v *statusView) resolve() int {
+	if len(v.entries) == 0 {
+		return -1
 	}
-	for _, e := range entries {
-		v.list.PushBack(component.NewResponsiveString(e.display,
-			component.StringResponsiveConfig{
-				StringConfig: component.StringConfig{Attributes: e.attr},
-			}))
-		maxW = max(maxW, graphemecluster.StringWidth(e.display))
+	if i := slices.IndexFunc(v.entries, func(e statusEntry) bool { return e.ref() == v.sel }); i >= 0 {
+		v.selIdx = i
+		return i
 	}
-	v.list.Resize(v.width, v.height)
-	v.list.FocusStart()
-	for range focus {
-		v.list.FocusDown()
+	v.selIdx = min(max(v.selIdx, 0), len(v.entries)-1)
+	v.sel = v.entries[v.selIdx].ref()
+	return v.selIdx
+}
+
+// selectAt selects the program at index i.
+func (v *statusView) selectAt(i int) {
+	if i < 0 || i >= len(v.entries) {
+		return
 	}
-	v.idealW = max(maxW, statusViewMinWidth)
-	v.idealH = min(rows, statusViewMaxHeight)
+	v.sel, v.selIdx = v.entries[i].ref(), i
+	v.fitted = statusFit{}
+	v.sizePreview()
+}
+
+// move moves the selection by delta programs, wrapping around.
+func (v *statusView) move(delta int) {
+	n := len(v.entries)
+	if n == 0 {
+		return
+	}
+	v.selectAt(((v.resolve()+delta)%n + n) % n)
+}
+
+// setTicking starts or stops the ticker. Starting is a no-op without
+// an interrupter.
+func (v *statusView) setTicking(ticking bool) {
+	if ticking == (v.ticker != nil) {
+		return
+	}
+	if !ticking {
+		v.ticker.cancel()
+		v.ticker = nil
+		return
+	}
+	if v.store.interrupter == nil {
+		return
+	}
+	fps := v.store.cfg.SpinnerFPS
+	if fps <= 0 {
+		fps = browser.DefaultTabStatusConfig().SpinnerFPS
+	}
+	v.ticker = newStatusTicker(v.store.interrupter, fps)
+}
+
+// spinnerFrame returns the frame a working item shows in place of its
+// icon, or false while the inbox stands still.
+func (v *statusView) spinnerFrame() (string, bool) {
+	frames := v.store.cfg.Spinner
+	if v.ticker == nil || len(frames) == 0 {
+		return "", false
+	}
+	return string(frames[int(v.ticker.epoch.Load()%int64(len(frames)))]), true
+}
+
+// sectionHeight returns the rows items of heights take, with the gaps
+// between them.
+func sectionHeight(heights []int) int {
+	ret := 0
+	for i, h := range heights {
+		if i > 0 {
+			ret += statusGap
+		}
+		ret += h
+	}
+	return ret
+}
+
+func (v *statusView) entryHeights() []int {
+	ret := make([]int, len(v.entries))
+	for i, e := range v.entries {
+		ret[i] = e.height()
+	}
+	return ret
+}
+
+// sidebarSize returns the size the sidebar asks for to show every
+// program whole.
+func (v *statusView) sidebarSize() (int, int) {
+	if len(v.entries) == 0 {
+		return min(max(2+graphemecluster.StringWidth(statusViewEmpty), statusSidebarMin), statusSidebarMax), 1
+	}
+	w := 0
+	for _, e := range v.entries {
+		w = max(w, statusTextX+graphemecluster.StringWidth(e.name), statusTextX+graphemecluster.StringWidth(e.sub))
+	}
+	return min(max(w+1, statusSidebarMin), statusSidebarMax), sectionHeight(v.entryHeights())
+}
+
+// sidebarWidth returns the width the sidebar takes of the view.
+func (v *statusView) sidebarWidth() int {
+	w, _ := v.sidebarSize()
+	return min(w, v.width)
+}
+
+// preview returns what the selected item previews, or false when there
+// is nothing of it to show.
+func (v *statusView) preview() (statusPreview, bool) {
+	i := v.resolve()
+	if i < 0 {
+		return statusPreview{}, false
+	}
+	return v.store.host.statusPreview(v.entries[i].ws, v.entries[i].uri)
+}
+
+// previewSize returns the size the preview asks for: that of what it
+// shows, statusPreviewWidth by statusPreviewHeight for a tab never
+// sized, or room for statusPreviewNone beside the sidebar when there
+// is nothing to show.
+func (v *statusView) previewSize() (int, int) {
+	p, ok := v.preview()
+	switch {
+	case !ok:
+		return graphemecluster.StringWidth(statusPreviewNone) + 4, 0
+	case p.hidden, p.width == 0 && p.height == 0:
+		return statusPreviewWidth, statusPreviewHeight
+	}
+	return p.width, p.height
+}
+
+// sizePreview fits what the selected item previews to the preview when
+// it was never sized. It must be called whenever the selection or the
+// size changes.
+func (v *statusView) sizePreview() {
+	p, ok := v.preview()
+	if !ok || p.fit == nil {
+		return
+	}
+	width := v.width - v.sidebarWidth() - statusDividerWidth
+	if width <= 0 || v.height <= 0 {
+		return
+	}
+	switch fit := (statusFit{ref: v.sel, width: width, height: v.height}); {
+	case p.hidden:
+		if v.fitted != fit {
+			v.fitted = fit
+			p.fit(width, v.height)
+		}
+	case p.width == 0 && p.height == 0:
+		p.fit(width, v.height)
+	}
 }
 
 func (v *statusView) Resize(width, height int) {
 	v.width, v.height = width, height
-	v.list.Resize(width, height)
+	v.sizePreview()
 }
 
 func (v *statusView) Draw(w term.Writer) {
-	v.list.Draw(w)
+	if v.drawing {
+		return
+	}
+	v.drawing = true
+	defer func() { v.drawing = false }()
+	sideW := v.sidebarWidth()
+	v.drawSidebar(&component.VirtualWriter{Writer: w, Width: sideW, Height: v.height}, sideW)
+	if sideW >= v.width {
+		return
+	}
+	divider := term.NewCell(v.store.style.frame.VerticalLeft, 1, statusMutedAttr)
+	for y := range v.height {
+		w.SetCell(term.Coordinates{X: sideW, Y: y}, divider)
+	}
+	x := sideW + statusDividerWidth
+	if x >= v.width {
+		return
+	}
+	v.drawPreview(&component.VirtualWriter{
+		Writer: w, Offset: term.Coordinates{X: x}, Width: v.width - x, Height: v.height,
+	}, v.width-x, v.height)
+}
+
+// drawSidebar draws the programs into w, which is width cells wide,
+// scrolled to keep the selected one in sight.
+func (v *statusView) drawSidebar(w term.Writer, width int) {
+	v.rows = slices.Repeat([]int{-1}, v.height)
+	if len(v.entries) == 0 {
+		statusText(w, 1, 0, statusViewEmpty, statusMutedAttr, width-1)
+		return
+	}
+	sel := v.resolve()
+	style := v.store.style
+	heights := v.entryHeights()
+	v.top = statusScroll(v.top, sel, heights, v.height)
+	y := 0
+	for i := v.top; i < len(heights); i++ {
+		if i > v.top {
+			y += statusGap
+		}
+		if y >= v.height {
+			break
+		}
+		rows := min(heights[i], v.height-y)
+		if i == sel {
+			blank := term.NewCell(' ', 1, style.selectedAttr)
+			for dy := range rows {
+				for x := range width {
+					w.SetCell(term.Coordinates{X: x, Y: y + dy}, blank)
+				}
+			}
+		}
+		v.drawEntry(w, i, y, width)
+		for dy := range rows {
+			v.rows[y+dy] = i
+			if i != sel {
+				continue
+			}
+			for x := range width {
+				w.UnionAttributes(term.Coordinates{X: x, Y: y + dy}, style.selectedAttr)
+			}
+			statusText(w, 0, y+dy, string(style.marker),
+				term.AttributesUnion(style.markerAttr, term.Attributes{Bg: style.selectedAttr.Bg}), 1)
+		}
+		y += heights[i]
+	}
+}
+
+// drawEntry draws the program at index i from row y of w, which is
+// width cells wide: its icon, spinning while working, its name, bold
+// while hovered, its state and app, and its progress bar, if any.
+func (v *statusView) drawEntry(w term.Writer, i, y, width int) {
+	e := v.entries[i]
+	icon := e.icon
+	if e.state == programstatus.Working {
+		if frame, ok := v.spinnerFrame(); ok {
+			icon = frame
+		}
+	}
+	statusText(w, 1, y, icon, e.iconAttr, statusTextX)
+	nameAttr := e.nameAttr
+	if i == v.hover {
+		nameAttr = term.AttributesUnion(statusBoldAttr, nameAttr)
+	}
+	// Short of room, text stops a cell before the divider, as it does
+	// when it fits, and never splits a wide character there.
+	statusText(w, statusTextX, y, e.name, nameAttr, width-1)
+	statusText(w, statusTextX, y+1, e.sub, e.subAttr, width-1)
+	if e.progress >= 0 {
+		statusProgress(w, statusTextX, y+2, width-statusTextX-1, e.progress)
+	}
+}
+
+// statusScroll returns the first of the items of heights to show in
+// rows from top on, moved so the item at sel, if any, fits, or starts
+// them when it does not.
+func statusScroll(top, sel int, heights []int, rows int) int {
+	top = min(top, max(len(heights)-1, 0))
+	if sel < 0 || sel >= len(heights) {
+		return top
+	}
+	top = min(top, sel)
+	for top < sel && sectionHeight(heights[top:sel+1]) > rows {
+		top++
+	}
+	// With room below the last item, scroll back up rather than leave
+	// rows empty while items above are hidden.
+	for top > 0 && sectionHeight(heights[top-1:]) <= rows {
+		top--
+	}
+	return top
+}
+
+// statusText writes the first line of s at x, y in attr, up to column
+// end, leaving out the cells that would reach it, and returns the
+// column past what it wrote.
+func statusText(w term.Writer, x, y int, s string, attr term.Attributes, end int) int {
+	lines := term.StringToCells(s)
+	if len(lines) == 0 {
+		return x
+	}
+	for _, c := range lines[0] {
+		cw := max(int(c.Width), 1)
+		if x+cw > end {
+			break
+		}
+		c.SetAttributes(attr)
+		w.SetCell(term.Coordinates{X: x, Y: y}, c)
+		x += cw
+	}
+	return x
+}
+
+// statusProgress draws a progress bar of pct percent at x, y, width
+// cells wide, with the percentage on its right, as the console draws
+// the progress of a command.
+func statusProgress(w term.Writer, x, y, width, pct int) {
+	label := strconv.Itoa(pct) + "%"
+	barW := width - 1 - len(label)
+	if barW < 2 {
+		statusText(w, x, y, label, term.Attributes{}, x+width)
+		return
+	}
+	chars := component.DefaultProgressBarCharSet()
+	inner := barW - 2
+	filled := pct * inner / 100
+	bar := make([]rune, 0, barW)
+	bar = append(bar, chars.Left)
+	for i := range inner {
+		if i < filled {
+			bar = append(bar, chars.Filled)
+		} else {
+			bar = append(bar, chars.Empty)
+		}
+	}
+	bar = append(bar, chars.Right)
+	statusText(w, x, y, string(bar)+" "+label, term.Attributes{}, x+width)
+}
+
+// drawPreview draws what the selected item previews, as it draws itself
+// at its own size, into w, which is width by height cells, leaving out
+// the top rows and right columns that do not fit, as the bottom of a
+// program, such as its prompt, matters the most.
+func (v *statusView) drawPreview(w term.Writer, width, height int) {
+	p, ok := v.preview()
+	if ok && p.hidden {
+		p.content.Draw(&component.VirtualWriter{Writer: w, Width: width, Height: height})
+		return
+	}
+	if !ok || p.width == 0 || p.height == 0 {
+		s := component.NewStringWithConfig(statusPreviewNone, component.StringConfig{
+			Alignment:  component.AlignmentCentered,
+			Attributes: statusMutedAttr,
+		})
+		s.Resize(width, height)
+		s.Draw(w)
+		return
+	}
+	p.content.Draw(&component.VirtualWriter{
+		Writer: w,
+		Offset: term.Coordinates{Y: -max(p.height-height, 0)},
+		Width:  p.width,
+		Height: p.height,
+	})
 }
 
 func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
+	if ev.Type == term.EventMouse {
+		return false, v.handleMouse(ev)
+	}
 	if ev.Type != term.EventKey {
 		return false, false
 	}
@@ -668,28 +1104,25 @@ func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
 	case term.KeyEsc:
 		return true, true
 	case term.KeyEnter:
-		if idx := v.list.FocusOffset(); idx >= 0 && idx < len(v.entries) {
-			entry := v.entries[idx]
-			// The view's window closes once Handle returns, so the
-			// source is shown on the next tick to leave the window with
-			// the workspace that opened it.
-			_ = v.store.schedule(func() { v.store.host.showStatus(entry.ws, entry.uri) })
-		}
+		v.choose()
 		return true, true
 	case term.KeyArrowUp:
-		v.list.FocusUp()
+		v.move(-1)
 		return false, true
 	case term.KeyArrowDown:
-		v.list.FocusDown()
+		v.move(1)
+		return false, true
+	case term.KeyDelete, term.KeyBackspace:
+		v.closeSelected()
 		return false, true
 	}
 	if ev.Mod == term.ModCtrl {
 		switch ev.Ch {
 		case 'j', 'n':
-			v.list.FocusDown()
+			v.move(1)
 			return false, true
 		case 'k', 'p':
-			v.list.FocusUp()
+			v.move(-1)
 			return false, true
 		case 'c':
 			return true, true
@@ -697,10 +1130,10 @@ func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
 	}
 	switch ev.Ch {
 	case 'j':
-		v.list.FocusDown()
+		v.move(1)
 		return false, true
 	case 'k':
-		v.list.FocusUp()
+		v.move(-1)
 		return false, true
 	case 'q':
 		return true, true
@@ -708,24 +1141,145 @@ func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
 	return false, false
 }
 
+// handleMouse selects the program clicked in the sidebar, and emboldens
+// the one the mouse moves over.
+func (v *statusView) handleMouse(ev term.Event) bool {
+	if ev.Key != 0 && ev.Key != term.MouseLeft {
+		return false
+	}
+	v.hover = -1
+	if ev.MouseX < v.sidebarWidth() && ev.MouseY >= 0 && ev.MouseY < len(v.rows) {
+		v.hover = v.rows[ev.MouseY]
+	}
+	if ev.Key == term.MouseLeft {
+		v.selectAt(v.hover)
+	}
+	return true
+}
+
+// choose brings the selected program in sight. The view's window closes
+// once Handle returns, so it is shown on the next tick, to leave the
+// window with the workspace that opened it.
+func (v *statusView) choose() {
+	i := v.resolve()
+	if i < 0 {
+		return
+	}
+	e := v.entries[i]
+	_ = v.store.schedule(func() { v.store.host.showStatus(e.ws, e.uri) })
+}
+
+// closeSelected closes the selected program, asking first while it is
+// still at work or waiting on the user, as closing it would interrupt
+// that. The view stays open, and the program's row goes with its
+// statuses, leaving the selection on the next one. Like choose, it acts
+// on the next tick, as closing may close windows of the browser that
+// is dispatching to the view.
+func (v *statusView) closeSelected() {
+	i := v.resolve()
+	if i < 0 {
+		return
+	}
+	e := v.entries[i]
+	host := v.store.host
+	closeIt := func() { host.closeStatus(e.ws, e.uri) }
+	switch e.state {
+	case programstatus.Working, programstatus.Blocked:
+		_ = v.store.schedule(func() { host.confirmStatus(statusCloseMessage(e), closeIt) })
+	default:
+		_ = v.store.schedule(closeIt)
+	}
+}
+
+// statusCloseMessage asks whether to close the program of e, telling
+// everything it reported: where it runs, and each record's state, app,
+// title, message and progress.
+func statusCloseMessage(e statusEntry) string {
+	var b strings.Builder
+	b.WriteString("Are you sure you want to close `" + e.name + "`")
+	if e.wsName != "" {
+		b.WriteString(" in `" + e.wsName + "`")
+	}
+	b.WriteString("? It is " + e.state.String() + ".\n")
+	for _, rec := range e.status.Records {
+		b.WriteString("\n- " + rec.State.String())
+		if rec.App != "" {
+			b.WriteString(statusSubSeparator + rec.App)
+		}
+		if rec.ID != "" {
+			b.WriteString(" (" + rec.ID + ")")
+		}
+		var text []string
+		if rec.Title != "" {
+			text = append(text, rec.Title)
+		}
+		if rec.Msg != "" {
+			text = append(text, rec.Msg)
+		}
+		if rec.Progress >= 0 {
+			text = append(text, strconv.Itoa(min(rec.Progress, 100))+"%")
+		}
+		if len(text) > 0 {
+			b.WriteString(": " + strings.Join(text, " — "))
+		}
+	}
+	return b.String()
+}
+
 func (v *statusView) Cursor() (term.Coordinates, term.CursorStyle, bool) {
 	return term.Coordinates{}, term.CursorStyleDefault, false
 }
 
 func (v *statusView) Selection() (string, bool) {
-	idx := v.list.FocusOffset()
-	if idx < 0 || idx >= len(v.entries) {
+	i := v.resolve()
+	if i < 0 {
 		return "", false
 	}
-	return v.entries[idx].display, true
+	return v.entries[i].name, true
 }
 
-// Close stops following the store.
+// Close stops following the store and moving.
 func (v *statusView) Close() error {
 	delete(v.store.views, v)
+	v.setTicking(false)
 	return nil
 }
 
+// Dimensions returns the size of the sidebar beside that of the
+// preview, which follows the size of what it shows as it changes, and
+// is at least minWidth wide.
 func (v *statusView) Dimensions() (int, int) {
-	return v.idealW, v.idealH
+	sideW, sideH := v.sidebarSize()
+	w, h := v.previewSize()
+	width := sideW + statusDividerWidth + w
+	if v.minWidth != nil {
+		width = max(width, v.minWidth())
+	}
+	return width, max(sideH, h)
+}
+
+// statusTicker wakes the host at a fixed cadence and counts the frames
+// it asked for.
+type statusTicker struct {
+	epoch  atomic.Int64
+	cancel context.CancelFunc
+}
+
+func newStatusTicker(interrupter term.Interrupter, fps int) *statusTicker {
+	ctx, cancel := context.WithCancel(context.Background())
+	t := &statusTicker{cancel: cancel}
+	go debug.CapturePanicReport(func() {
+		ticker := time.NewTicker(time.Second / time.Duration(fps))
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				t.epoch.Add(1)
+				_ = interrupter.Interrupt(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
+	return t
 }

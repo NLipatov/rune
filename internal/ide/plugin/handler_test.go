@@ -218,6 +218,20 @@ func TestNewReturnsNilHandlerOnError(t *testing.T) {
 	assert.Nil(t, h)
 }
 
+func TestPluginStatusURI(t *testing.T) {
+	t.Parallel()
+
+	h := new(Handler)
+	assert.Empty(t, h.StatusURI().String(), "without a terminal there is no uri")
+	vteh, err := vte.NewHandler(nopBrowser{}, nopBrowser{},
+		&pluginTestExecutor{}, &pluginTestExecutor{}, nopBrowser{}, defaultConfig().cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vteh.Close() })
+	h.emulator = vteh
+	assert.Equal(t, vteh.Component().URI(), h.StatusURI(),
+		"the program reports under the uri of its terminal")
+}
+
 func TestPluginDoneHandlerKeepsLiveVTEPrimaryBufferInPerformanceMode(t *testing.T) {
 	t.Parallel()
 

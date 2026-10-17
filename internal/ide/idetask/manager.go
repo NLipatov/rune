@@ -30,6 +30,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
+	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/browser"
@@ -62,7 +63,7 @@ type Manager struct {
 	height           int
 	frameAttr        term.Attributes
 	focusFrameAttr   term.Attributes
-	newPlugin        pluginBuilder
+	newPlugin        ProgramBuilder
 	scheduleNextTick func(func()) bool
 }
 
@@ -131,6 +132,12 @@ func (m *Manager) Init(
 		}
 		return h, nil
 	}
+}
+
+// SetProgramBuilder makes the runs started from then on start their
+// program with build instead of in a terminal of the workspace.
+func (m *Manager) SetProgramBuilder(build ProgramBuilder) {
+	m.newPlugin = build
 }
 
 // SetMaxWidthHeight is used to ensure that a task's initial VTE is resized
@@ -313,6 +320,21 @@ func (m *Manager) startWatch(t *Task, ctx context.Context) {
 			}
 		}
 	})
+}
+
+// StatusTask returns the task whose current run reports its statuses
+// under uri.
+func (m *Manager) StatusTask(uri workspaceapi.URI) (*Task, bool) {
+	var ret *Task
+	m.tasks.Range(func(_, v any) bool {
+		t := v.(*Task)
+		if u, ok := t.StatusURI(); ok && u.Equal(uri) {
+			ret = t
+			return false
+		}
+		return true
+	})
+	return ret, ret != nil
 }
 
 // ListTasks creates a floating window that displays

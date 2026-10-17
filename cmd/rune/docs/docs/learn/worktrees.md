@@ -162,18 +162,18 @@ OSC 7501 (`runectl status`, agents, builds) also show on the workspace bar: the
 tab's name takes the color of the most pressing status among the workspace's
 terminals (yellow when blocked on you, red on error, green once done), so a
 workspace that needs you reads at a glance even before any notification, and
-`:inbox` lists every reported status across workspaces so you can jump to the
-one that needs you. (Tune the colors under `terminal.status.workspace_tab`.)
+`:programstatus` lists every reported status across workspaces so you can jump
+to the one that needs you. (Tune the colors under
+`terminal.status.workspace_tab`.)
 
 Rune Agent chats report their status this way: the chat tab spins while the
 agent thinks and runs tools, its workspace tab turns green as the tasks it
 planned complete (`terminal.status.workspace_tab.progress`; set
 `terminal.status.content_tab.progress` to fill the chat tab too), turns
 blocked when it asks you a question or for permission, and turns done with the
-first line of its reply, or failed with the reason, when the turn ends. Sub-agents
-and skills it spawns are listed beneath it in `:inbox`. Rune's own permission
-prompts, raised when an extension asks for something it was not granted, show
-as blocked on the workspace bar until you answer them.
+first line of its reply, or failed with the reason, when the turn ends. Rune's
+own permission prompts, raised when an extension asks for something it was not
+granted, show as blocked on the workspace bar until you answer them.
 
 This works no matter where the notification comes from:
 

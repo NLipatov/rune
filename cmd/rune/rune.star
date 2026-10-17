@@ -814,7 +814,6 @@ config = {
             "tabnew":         "echo {prompt}edit<space>",
             "tabsearch":      "echo {prompt}tabfocus<space>",
             "workspacesearch":"echo {prompt}workspacefocus<space>",
-            "inbox":          "statuslist",
             "worktreenew": [
                 '!! ROOT=$(git rev-parse --git-common-dir) && ROOT=$(cd "$ROOT/.." && pwd) || exit 1',
                 '!! ROOT_HASH=$(printf %s "$ROOT" | (sha256sum 2>/dev/null || shasum -a 256) | cut -c1-4)',
@@ -1097,6 +1096,14 @@ config = {
             # tab is in sight.
             "notify":          ["blocked", "error", "done"],
             "notify_interval": "2s",
+            # The :programstatus inbox. "marker" is drawn down the left of the
+            # selected workspace or program, in the color of
+            # browser.focus_tab_highlight_attr over the background of
+            # "selected_attr", which styles the rest of the selection.
+            "programstatus": {
+                "marker":        "▌",
+                "selected_attr": attr(bg = "gray"),
+            },
         },
         # Scrollback search, opened over the terminal itself. Its theme
         # follows editor.standard.search; only the key that opens it can be

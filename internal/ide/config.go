@@ -4959,6 +4959,36 @@ func (c ideConfig) terminalStatus() (config.Config, bool) {
 	return c.getConfig(cfg, "status")
 }
 
+// statusInboxStyle reads terminal.status.programstatus, which styles
+// the selection of the status inbox. Its marker takes the color of the
+// marker of the focused tab, browser.focus_tab_highlight_attr, and its
+// lines the browser's frame.
+func (c ideConfig) statusInboxStyle() statusInboxStyle {
+	ret := defaultStatusInboxStyle()
+	ret.markerAttr = c.highlightTabAttr()
+	ret.frame = c.frameUnionCharset()
+	status, ok := c.terminalStatus()
+	if !ok {
+		return ret
+	}
+	cfg, ok := c.getConfig(status, "programstatus")
+	if !ok {
+		return ret
+	}
+	const prefix = "terminal.status.programstatus."
+	if marker, err := cfg.GetRune("marker"); err == nil {
+		ret.marker = marker
+	} else if err != config.ErrNotFound {
+		c.errors[prefix+"marker"] = err
+	}
+	if attr, err := config.GetAttributes(cfg, "selected_attr"); err == nil {
+		ret.selectedAttr = attr
+	} else if err != config.ErrNotFound {
+		c.errors[prefix+"selected_attr"] = err
+	}
+	return ret
+}
+
 // tabStatusEnabled reads terminal.status.enabled; a disabled status
 // leaves tabs undecorated and raises no notifications.
 func (c ideConfig) tabStatusEnabled() bool {

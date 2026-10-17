@@ -1296,6 +1296,40 @@ func TestFloatingWindowTitle(t *testing.T) {
 	assert.Empty(t, regular.(*browserWindow).win.Title())
 }
 
+func TestComponentContentSize(t *testing.T) {
+	b := NewComponent(DefaultConfig())
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	b.Resize(40, 20)
+	other := NewComponent(DefaultConfig())
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
+	other.Resize(40, 20)
+
+	raw := b.Focus()
+	require.NoError(t, raw.SetContent(newTestHandler()))
+	b.Resize(40, 20)
+	w, h := b.ContentSize(raw)
+	assert.Positive(t, w, "the content of a window has the size it was given")
+	assert.Positive(t, h)
+	assert.True(t, b.Owns(raw))
+	assert.False(t, other.Owns(raw), "a window of another browser")
+	w, h = other.ContentSize(raw)
+	assert.Zero(t, w+h)
+
+	tab := b.NewTab(workspaceapi.URI{}, 'x', "tab", newTestHandler(), nil)
+	split, ok := b.Split(browserapi.OrientationDefault, raw, newTestHandler())
+	require.True(t, ok)
+	require.True(t, b.SetContentToTab(split, slices.Index(b.Tabs(), tab)))
+	tabW, tabH := tab.ContentSize()
+	require.Positive(t, tabW)
+	w, h = b.ContentSize(split)
+	assert.Equal(t, []int{tabW, tabH}, []int{w, h}, "a tab has its own size")
+
+	require.NoError(t, split.Close())
+	assert.False(t, b.Owns(split), "a closed window")
+	w, h = b.ContentSize(split)
+	assert.Zero(t, w+h)
+}
+
 func TestComponentCloseOtherWindows(t *testing.T) {
 	t.Run("fails if there's only one window", func(t *testing.T) {
 		b := NewComponent(DefaultConfig())

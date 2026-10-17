@@ -140,6 +140,15 @@ func (p *Handler) Dimensions() (int, int) {
 	return p.interactiveWidth, p.interactiveHeight
 }
 
+// StatusURI returns the uri the program reports its statuses under,
+// or a zero uri when it has no terminal.
+func (p *Handler) StatusURI() workspaceapi.URI {
+	if p.emulator == nil {
+		return workspaceapi.URI{}
+	}
+	return p.emulator.Component().URI()
+}
+
 // Title returns the bar title: the command and args unless
 // overridden via WithTitle.
 func (p *Handler) Title() string {

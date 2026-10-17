@@ -573,6 +573,11 @@ func TestPermissionPrompterReportsStatus(t *testing.T) {
 		fn()
 		return true
 	}, status)
+	var windows []string
+	prompter.onWindow = func(uri workspaceapi.URI, win browser.Window) {
+		require.NotNil(t, win)
+		windows = append(windows, uri.String())
+	}
 	req := PermissionRequest{
 		Path:        "/usr/local/bin/plugin-cli",
 		Permission:  extensionapi.PermissionExecute,
@@ -583,6 +588,8 @@ func TestPermissionPrompterReportsStatus(t *testing.T) {
 	decision, err := prompter.PromptPermission(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, PermissionAllowOnce, decision)
+	assert.Equal(t, []string{"ideauthorizer:///prompt/1"}, windows,
+		"the window of the prompt is told under the uri of its status")
 
 	reports := status.snapshot()
 	require.Len(t, reports, 2)

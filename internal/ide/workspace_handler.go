@@ -82,6 +82,7 @@ import (
 	"unstable.build/rune/internal/ide/idepkg/pkgrpc"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/ide/idescavenger"
+	"unstable.build/rune/internal/ide/idetask"
 	"unstable.build/rune/internal/ide/syntax/symboldb"
 	"unstable.build/rune/internal/ide/syntax/treesitter"
 	"unstable.build/rune/internal/ide/vctrl"
@@ -90,6 +91,7 @@ import (
 	"unstable.build/rune/internal/llm/llmrouter"
 	"unstable.build/rune/internal/localstorage"
 	"unstable.build/rune/internal/term/programstatus"
+	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/text"
 	"unstable.build/rune/internal/text/emacs"
 	"unstable.build/rune/internal/text/exoeditor"
@@ -708,7 +710,8 @@ func (h *workspaceManagerHandler) init(
 	if !cfg.tabStatusEnabled() {
 		notifyStatus = tabStatusNotifyConfig{}
 	}
-	h.status = newStatusStore(h, tabStatusConfigFor(cfg), notifyStatus, h.scheduleNextTick)
+	h.status = newStatusStore(h, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
+		h.scheduleNextTick, h.events.globalInterrupter())
 
 	homeWorkspace, err := h.workspace.AddWorkspace(ctx, homeDirUri)
 	if err != nil {
@@ -2307,6 +2310,7 @@ func (h *workspaceManagerHandler) buildExtensions(
 			AutoAuthorizeCommands:          cfg.authorizerAutoAuthorizeCommands(),
 			AutoAuthorizeVerifiedPublisher: cfg.authorizerAutoAuthorizeVerified(),
 			OnboardingActive:               h.onboardingActive,
+			OnPromptWindow:                 ex.setStatusWindow,
 		})
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("new command authorizer: %w", err)
@@ -3399,23 +3403,39 @@ func (h *workspaceManagerHandler) workspaceStatus(slot int) (
 	return h.status.rollup(w.uri)
 }
 
-// commandStatusList opens the status inbox over the focused workspace:
+// commandProgramStatus opens the status inbox over the focused workspace:
 // a floating list of every reported status across workspaces, where
 // selecting a row focuses its workspace and tab. It takes no arguments.
-func (h *workspaceManagerHandler) commandStatusList(args ...string) error {
+func (h *workspaceManagerHandler) commandProgramStatus(args ...string) error {
 	if len(args) != 0 {
 		return errors.New("expected no arguments")
 	}
-	_, err := h.focusEx().Browser().Floating(h.status.view(), browserapi.FloatingConfig{
-		Alignment: component.AlignmentCentered,
+	b := h.focusEx().comp.Browser()
+	v := h.status.view()
+	v.minWidth = func() int {
+		w, _ := b.WindowManagerSize()
+		return w * statusMinWidthPercent / 100
+	}
+	// Pinned to the top, the window grows and shrinks downwards as the
+	// preview changes size instead of jumping up and down.
+	_, err := h.focusEx().Browser().Floating(v, browserapi.FloatingConfig{
+		Alignment: component.AlignmentTop | component.AlignmentHorizontallyCentered,
 	})
+	if err != nil {
+		_ = v.Close()
+	}
 	return err
 }
 
+// statusMinWidthPercent is the least share of the window manager's
+// width the status inbox takes.
+const statusMinWidthPercent = 60
+
 // focusStatusEntry switches to the workspace of entry and shows its
 // tab in the focused window, or focuses the window already showing
-// it. For a terminal that is no tab, switching workspace is enough.
-// It fails when the workspace or the tab is gone.
+// it. For what is no tab, it focuses the task or the window showing
+// it, or shows the hidden companion terminal. It fails when the
+// workspace or the tab is gone.
 func (h *workspaceManagerHandler) focusStatusEntry(entry statusEntry) error {
 	slot, _, ok := h.statusWorkspace(entry.ws)
 	if !ok {
@@ -3428,7 +3448,7 @@ func (h *workspaceManagerHandler) focusStatusEntry(entry statusEntry) error {
 	tab, ok := b.Tab(entry.uri)
 	if !ok {
 		if _, ok := h.status.status(entry.ws, entry.uri); ok {
-			return nil
+			return focusStatusSource(h.workspaces[slot].ex, entry.uri)
 		}
 		return errors.New("tab is gone")
 	}
@@ -3558,6 +3578,131 @@ func (h *workspaceManagerHandler) statusTabName(ws, uri workspaceapi.URI) (strin
 	return name, ok
 }
 
+func (h *workspaceManagerHandler) statusPreview(
+	ws, uri workspaceapi.URI,
+) (statusPreview, bool) {
+	e := h.exForWorkspace(ws)
+	if e == nil {
+		return statusPreview{}, false
+	}
+	b := e.comp.Browser()
+	if tab, ok := b.Tab(uri); ok {
+		w, h := tab.ContentSize()
+		return statusPreview{content: tab, width: w, height: h, fit: tab.Resize}, true
+	}
+	if t, ok := statusTaskOf(e, uri); ok {
+		if win, ok := t.Shown(); ok {
+			return statusWindowPreview(b, win)
+		}
+		// Minimized, the task draws its bar alone: preview its program.
+		p := t.Program()
+		return statusPreview{content: p, fit: p.Resize, hidden: true}, true
+	}
+	if win, ok := statusWindowOf(e, uri); ok {
+		return statusWindowPreview(b, win)
+	}
+	if v, ok := hiddenCompanionTerminal(e, uri); ok {
+		return statusPreview{content: v, fit: v.Resize, hidden: true}, true
+	}
+	return statusPreview{}, false
+}
+
+// focusStatusSource brings in sight what reported a status at uri in
+// e outside of a tab, if it can still be found.
+func focusStatusSource(e *ex, uri workspaceapi.URI) error {
+	if t, ok := statusTaskOf(e, uri); ok {
+		if !e.tasks.FocusTask(t.Name) {
+			return fmt.Errorf("focus task %q", t.Name)
+		}
+		return nil
+	}
+	if win, ok := statusWindowOf(e, uri); ok {
+		e.comp.Browser().SetFocus(win)
+		return nil
+	}
+	if _, ok := hiddenCompanionTerminal(e, uri); ok {
+		// Closed some other way than toggling, the window would be taken
+		// for open and closed again.
+		e.companionTerminalWin = nil
+		return e.toggleCompanionTerminal()
+	}
+	return nil
+}
+
+// statusTaskOf returns the task of e whose current run reports its
+// statuses under uri.
+func statusTaskOf(e *ex, uri workspaceapi.URI) (*idetask.Task, bool) {
+	if e.tasks == nil {
+		return nil, false
+	}
+	return e.tasks.StatusTask(uri)
+}
+
+// hiddenCompanionTerminal returns the companion terminal of e when it
+// reports its statuses under uri while its window is closed.
+func hiddenCompanionTerminal(e *ex, uri workspaceapi.URI) (vtereservoir.VTE, bool) {
+	v := e.companionTerminal
+	if v == nil || (e.companionTerminalWin != nil && !e.companionTerminalWin.Closed()) ||
+		!v.URI().Equal(uri) {
+		return nil, false
+	}
+	return v, true
+}
+
+// statusWindowPreview previews the content of win.
+func statusWindowPreview(b *browser.Component, win browser.Window) (statusPreview, bool) {
+	if win == nil || win.Closed() {
+		return statusPreview{}, false
+	}
+	content, err := win.Content()
+	if err != nil {
+		return statusPreview{}, false
+	}
+	w, h := b.ContentSize(win)
+	return statusPreview{content: content, width: w, height: h}, true
+}
+
+// statusWindowOf returns the window of e showing what reported a status
+// at uri outside of a tab: a terminal in a split, the companion
+// terminal, a floating "!" command, or a window set with
+// setStatusWindow, such as a prompt.
+func statusWindowOf(e *ex, uri workspaceapi.URI) (browser.Window, bool) {
+	b := e.comp.Browser()
+	if win, ok := e.statusWindows[uri.String()]; ok && b.Owns(win) {
+		return win, true
+	}
+	var ret browser.Window
+	b.IterateWindows(func(win browser.Window) {
+		if ret != nil {
+			return
+		}
+		content, err := win.Content()
+		if err != nil {
+			return
+		}
+		switch c := content.(type) {
+		case statusReporter:
+			if c.StatusURI().Equal(uri) {
+				ret = win
+			}
+		case interface{ URI() workspaceapi.URI }:
+			if c.URI().Equal(uri) {
+				ret = win
+			}
+		}
+	})
+	return ret, ret != nil
+}
+
+func (h *workspaceManagerHandler) statusTabIcon(ws, uri workspaceapi.URI) (rune, bool) {
+	e := h.exForWorkspace(ws)
+	if e == nil {
+		return 0, false
+	}
+	_, icon, ok := e.comp.Browser().TabIcon(uri)
+	return icon, ok
+}
+
 func (h *workspaceManagerHandler) statusInSight(ws, uri workspaceapi.URI) bool {
 	e := h.exForWorkspace(ws)
 	if e == nil || h.focusEx() != e {
@@ -3583,8 +3728,63 @@ func (h *workspaceManagerHandler) statusChanged(workspaceapi.URI) {
 
 func (h *workspaceManagerHandler) showStatus(ws, uri workspaceapi.URI) {
 	if err := h.focusStatusEntry(statusEntry{ws: ws, uri: uri}); err != nil {
-		_, _ = h.focusEx().notifications.Notify(browserapi.LevelError, "%s: %v", cmdStatusList, err)
+		_, _ = h.focusEx().notifications.Notify(browserapi.LevelError, "%s: %v", cmdProgramStatus, err)
 	}
+}
+
+func (h *workspaceManagerHandler) closeStatus(ws, uri workspaceapi.URI) {
+	if err := h.closeStatusSource(ws, uri); err != nil {
+		_, _ = h.focusEx().notifications.Notify(browserapi.LevelError, "%s: close: %v", cmdProgramStatus, err)
+	}
+}
+
+// closeStatusSource closes what reported at uri in the workspace at ws
+// the way the user closes it by hand: a tab as its close icon does, a
+// task as taskstop does, the companion terminal by hiding it, a window
+// of a tile as tabclose does, and any other floating window, such as a
+// "!" command or a prompt, by closing it.
+func (h *workspaceManagerHandler) closeStatusSource(ws, uri workspaceapi.URI) error {
+	e := h.exForWorkspace(ws)
+	if e == nil {
+		return errors.New("workspace is gone")
+	}
+	b := e.comp.Browser()
+	if tab, ok := b.Tab(uri); ok {
+		if !e.tabIsDirty(tab) {
+			b.RemoveTab(tab)
+			return nil
+		}
+		// Asked over the inbox, as the tab's workspace may be out of sight.
+		h.confirmStatus(fmt.Sprintf("File '%s' has changes pending to be written. "+
+			"Close and discard changes?", tab.URI().Name()), func() { b.RemoveTab(tab) })
+		return nil
+	}
+	if t, ok := statusTaskOf(e, uri); ok {
+		return e.tasks.StopTask(t.Name)
+	}
+	if _, ok := hiddenCompanionTerminal(e, uri); ok {
+		return nil
+	}
+	win, ok := statusWindowOf(e, uri)
+	if !ok {
+		return errors.New("it is shown nowhere to close")
+	}
+	if win.IsFloating() && !sameWindow(win, e.companionTerminalWin) {
+		// Removing the content of a floating window would show a free tab
+		// in it instead of closing it.
+		return win.Close()
+	}
+	return e.closeWindowContent(win)
+}
+
+func (h *workspaceManagerHandler) confirmStatus(message string, yes func()) {
+	h.focusEx().comp.Prompt(message, []string{yesOpt, noOpt}, yesNoKeyCombs,
+		handlerapi.FuncPromptHandler(func(i int, _ string) {
+			if i == 0 {
+				// The prompt is still dispatching the answer.
+				h.scheduleNextTick(yes)
+			}
+		}, func() error { return nil }))
 }
 
 // exForWorkspace returns the ex of the workspace at uri, the home ex
@@ -3741,8 +3941,8 @@ func (h *workspaceManagerHandler) subscribeActiveWorkspaceCommands(ex *ex) (ret 
 				Synopsis: "<extension-id> <command> [<args>...]",
 			},
 		},
-		cmdStatusList: {
-			handler: (*workspaceManagerHandler).commandStatusList,
+		cmdProgramStatus: {
+			handler: (*workspaceManagerHandler).commandProgramStatus,
 			man: textapi.CommandManual{
 				Summary: "Opens the status inbox: a floating list of every tab " +
 					"whose program reported a status (OSC 7501) across all " +

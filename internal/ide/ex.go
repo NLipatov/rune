@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"runtime"
@@ -161,6 +162,7 @@ type ex struct {
 	newEmulatorHandler       func([]string) (vtereservoir.VTE, error)
 	tm                       browser.TabManager
 	tabAliases               *tabNameAliaser
+	statusWindows            map[string]browser.Window
 	newPluginHandler         func(int, ...string) (pluginHandler, error)
 	workspace                workspace.Workspace
 	terminal                 *asyncTerminal
@@ -799,12 +801,18 @@ func (e *ex) tabfocus(_ context.Context, args ...string) error {
 }
 
 func (e *ex) tabclose(_ context.Context, args ...string) error {
+	return e.closeWindowContent(e.invokeWindow())
+}
+
+// closeWindowContent closes what win shows as tabclose closes what the
+// focused window shows: it hides the companion terminal and the file
+// explorer, and asks before discarding changes pending to be written.
+func (e *ex) closeWindowContent(win browser.Window) error {
 	b := e.comp.Browser()
-	win := e.invokeWindow()
-	if win == e.companionTerminalWin {
+	if sameWindow(win, e.companionTerminalWin) {
 		return e.toggleCompanionTerminal()
 	}
-	if e.fileExplorerWin != nil && win == e.fileExplorerWin {
+	if sameWindow(win, e.fileExplorerWin) {
 		e.closeFileExplorerWindow()
 		return nil
 	}
@@ -826,6 +834,13 @@ func (e *ex) tabclose(_ context.Context, args ...string) error {
 	// on focus dispatch to vte.Handler via Close
 	b.RemoveWindowContent(win)
 	return nil
+}
+
+// sameWindow reports whether a and b are the same open window. Windows
+// are values handed out anew by each lookup, so they are told apart by
+// id.
+func sameWindow(a, b browser.Window) bool {
+	return a != nil && b != nil && !b.Closed() && a.WindowID() == b.WindowID()
 }
 
 // closeTabFromIcon closes tab like tabclose closes the one in focus,
@@ -3340,6 +3355,19 @@ type pluginAdapter struct {
 	win browser.Window
 }
 
+// statusReporter is content showing a program that reports its
+// statuses under a uri of its own, rather than that of the content.
+type statusReporter interface {
+	StatusURI() workspaceapi.URI
+}
+
+func (h *pluginAdapter) StatusURI() workspaceapi.URI {
+	if r, ok := h.pluginHandler.(statusReporter); ok {
+		return r.StatusURI()
+	}
+	return workspaceapi.URI{}
+}
+
 type workspaceExecutorAdapter struct {
 	e schemeapi.Executor
 }
@@ -3721,4 +3749,14 @@ func (e *ex) gitshowURI(rel string) (workspaceapi.URI, error) {
 	joined := workspaceapi.Join(gitshowBaseURI(), rel+".diff")
 	return workspaceapi.ParseURI(
 		fmt.Sprintf("%s?n=%d", joined.String(), e.gitshowSeq))
+}
+
+// setStatusWindow records win as showing what reports a status at uri.
+// It must be called on the host event loop.
+func (e *ex) setStatusWindow(uri workspaceapi.URI, win browser.Window) {
+	if e.statusWindows == nil {
+		e.statusWindows = make(map[string]browser.Window)
+	}
+	maps.DeleteFunc(e.statusWindows, func(_ string, w browser.Window) bool { return w.Closed() })
+	e.statusWindows[uri.String()] = win
 }

@@ -897,6 +897,21 @@ func (c *Component) IterateWindows(fn func(Window)) {
 	})
 }
 
+// ContentSize returns the size the content of win was last resized to,
+// or zero when it never was or win is not a window of c.
+func (c *Component) ContentSize(win Window) (width, height int) {
+	if !c.Owns(win) {
+		return 0, 0
+	}
+	return win.(*browserWindow).win.ContentSize()
+}
+
+// Owns reports whether win is an open window of c.
+func (c *Component) Owns(win Window) bool {
+	bw, ok := win.(*browserWindow)
+	return ok && bw.parent == c && !bw.Closed()
+}
+
 // TileLayout returns the current tiled browser window tree layout.
 func (c *Component) TileLayout() tcomponent.TileLayout {
 	return c.wm.TileLayout()

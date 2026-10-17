@@ -112,6 +112,10 @@ type Config struct {
 	AutoAuthorizeCommands          bool
 	AutoAuthorizeVerifiedPublisher bool
 	OnboardingActive               func() bool
+	// OnPromptWindow, when set, is told on the host event loop of the
+	// window showing each permission prompt and of the uri its blocked
+	// status is reported under, so the status can be traced back to it.
+	OnPromptWindow func(uri workspaceapi.URI, win browser.Window)
 }
 
 // NewAuthorizer returns an Authorizer that satisfies both the workspace
@@ -140,6 +144,9 @@ func NewAuthorizer(
 		trust:    trust,
 		once:     make(map[string]pluginPermissionOnceDecision),
 		pending:  make(map[string]*pendingPrompt),
+	}
+	if a.prompter != nil {
+		a.prompter.onWindow = config.OnPromptWindow
 	}
 	if err := registerAuthorizerREPLCommand(editor, a); err != nil {
 		return nil, fmt.Errorf("register authorizer repl command: %w", err)

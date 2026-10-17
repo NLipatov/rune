@@ -45,6 +45,8 @@ type permissionPrompter struct {
 	// own per prompt.
 	status    browser.TabManager
 	promptSeq atomic.Uint64
+	// onWindow, when set, is told of the window of each prompt.
+	onWindow func(uri workspaceapi.URI, win browser.Window)
 }
 
 func newPermissionPrompter(
@@ -78,7 +80,7 @@ func (p *permissionPrompter) PromptPermission(
 	statusURI := p.promptStatusURI()
 	scheduled := p.scheduleNextTick(func() {
 		p.announce(statusURI, warning)
-		p.promptOpener.Prompt(message, options, bindings, handler.FuncPromptHandler(
+		win := p.promptOpener.Prompt(message, options, bindings, handler.FuncPromptHandler(
 			func(i int, opt string) {
 				select {
 				case result <- pluginPromptDecision(opt):
@@ -92,6 +94,9 @@ func (p *permissionPrompter) PromptPermission(
 				}
 				return nil
 			}))
+		if p.onWindow != nil && win != nil {
+			p.onWindow(statusURI, win)
+		}
 	})
 	if !scheduled {
 		return PermissionDenyOnce, nil

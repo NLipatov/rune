@@ -56,11 +56,20 @@ type Tab struct {
 	// iconAttr is layered over the focus-dependent icon attributes.
 	// See Component.SetTabIconAttr.
 	iconAttr term.Attributes
+	// width and height are what the tab was last resized to.
+	width, height int
 }
 
 // Resize satisfies tui.Component
 func (b *Tab) Resize(width, height int) {
+	b.width, b.height = width, height
 	b.handler.Resize(width, height)
+}
+
+// ContentSize returns the dimensions the tab was last resized to: those
+// of its window while it is bound to one, or zero when it never was.
+func (b *Tab) ContentSize() (width, height int) {
+	return b.width, b.height
 }
 
 // Draw satisfies tui.Component

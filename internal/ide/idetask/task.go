@@ -87,7 +87,7 @@ type Task struct {
 	cmdAndArgs       []string
 	pluginOpts       []plugin.Option
 	donech           chan error
-	newPlugin        pluginBuilder
+	newPlugin        ProgramBuilder
 	scheduleNextTick func(fn func()) bool
 	// inflightWG tracks in-progress processing of a donech event.
 	// The donech receiver Adds(1) immediately after pulling an error
@@ -184,6 +184,43 @@ func (t *Task) currentHandler() browser.ScrollableFloating {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.handler
+}
+
+// StatusURI returns the uri the program of the current run reports its
+// statuses under, or false before a run started.
+func (t *Task) StatusURI() (workspaceapi.URI, bool) {
+	r, ok := t.currentHandler().(interface{ StatusURI() workspaceapi.URI })
+	if !ok {
+		return workspaceapi.URI{}, false
+	}
+	uri := r.StatusURI()
+	return uri, uri.String() != ""
+}
+
+// Program returns the handler of the current run, which t draws
+// unless minimized.
+func (t *Task) Program() tui.Handler {
+	return t.currentHandler()
+}
+
+// Shown returns the window showing t whole: its tab's, or its own
+// while not minimized. It returns false while t is out of sight.
+func (t *Task) Shown() (browser.Window, bool) {
+	t.mu.Lock()
+	win, tab := t.win, t.tab
+	t.mu.Unlock()
+	if tab != nil {
+		if w, ok := tab.Window(); ok && !w.Closed() {
+			return w, true
+		}
+	}
+	if win.Closed() {
+		return nil, false
+	}
+	if _, minimized := win.IsMinimized(); minimized {
+		return nil, false
+	}
+	return win, true
 }
 
 // Cursor satisfies tui.Handler.
@@ -295,7 +332,7 @@ func (t *Task) doClose() (ret error) {
 func (t *Task) init(
 	ctx context.Context, b Browser,
 	scheme schemeapi.Scheme, terminal schemeapi.Terminal,
-	newPlugin pluginBuilder,
+	newPlugin ProgramBuilder,
 	maxWidth, maxHeight int, closeHook func(),
 	scheduleNextTick func(func()) bool,
 	pluginOpts ...plugin.Option,
@@ -741,7 +778,9 @@ func (t *Task) log(level log.Level, msg string, args ...any) {
 	}).Logf(level, msg, args...)
 }
 
-type pluginBuilder func(
+// ProgramBuilder starts the program of a run of a task and returns its
+// handler, or nil and an error.
+type ProgramBuilder func(
 	publisher browser.EventPublisher, notifications browser.Notifications,
 	e schemeapi.Executor, t schemeapi.Terminal, tm browser.TabManager,
 	cmdAndArgs []string, maxWidth int, opts ...plugin.Option,

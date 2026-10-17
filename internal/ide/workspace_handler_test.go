@@ -72,6 +72,7 @@ import (
 	"unstable.build/rune/internal/ide/idehistory"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/ide/idetask"
+	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/vctrl/testgit"
 	"unstable.build/rune/internal/localstorage"
 	"unstable.build/rune/internal/term/programstatus"
@@ -1430,10 +1431,10 @@ func TestStatusSources(t *testing.T) {
 	}
 	require.Len(t, sources, 3, "every reporting source is listed: %+v", sources)
 	assertSource(statusItem{
-		slot: m.focus, ws: m.workspaces[m.focus].uri, wsName: focusedName, uri: working, name: "worker", status: summaryOf(workingReport),
+		slot: m.focus, ws: m.workspaces[m.focus].uri, wsName: focusedName, uri: working, name: "worker", icon: 'x', status: summaryOf(workingReport),
 	}, byTab[working.String()])
 	assertSource(statusItem{
-		slot: slot, ws: m.workspaces[slot].uri, wsName: otherName, uri: failed, name: "build", status: summaryOf(failedReport),
+		slot: slot, ws: m.workspaces[slot].uri, wsName: otherName, uri: failed, name: "build", icon: 'x', status: summaryOf(failedReport),
 	}, byTab[failed.String()])
 	assert.NotContains(t, byTab, silent.String(), "a tab that reported nothing is not tracked")
 	assertSource(statusItem{
@@ -1526,7 +1527,7 @@ func TestWorkspaceTabManagerDropsClosedWorkspaceStatus(t *testing.T) {
 	}
 }
 
-func TestCommandStatusListFocusesEntry(t *testing.T) {
+func TestCommandProgramStatusFocusesEntry(t *testing.T) {
 	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
 	t.Cleanup(func() { _ = m.Close() })
 	blocked, err := workspaceapi.ParseURI("rune-agent://model/agent")
@@ -1543,7 +1544,7 @@ func TestCommandStatusListFocusesEntry(t *testing.T) {
 			State: programstatus.Blocked, Progress: -1, Msg: "needs you",
 		}))
 		focused := m.focusEx()
-		require.NoError(t, m.commandStatusList())
+		require.NoError(t, m.commandProgramStatus())
 		require.Equal(t, 1, focused.comp.Browser().FloatingWindows())
 		win, err := focused.comp.Focus()
 		require.NoError(t, err)
@@ -1571,7 +1572,621 @@ func TestCommandStatusListFocusesEntry(t *testing.T) {
 	assert.NotEqual(t, -1, slices.IndexFunc(other.comp.Browser().Tabs(),
 		func(t *browser.Tab) bool { return t.URI().Equal(blocked) }))
 
-	assert.Error(t, m.commandStatusList("extra"))
+	assert.Error(t, m.commandProgramStatus("extra"))
+}
+
+func TestCommandProgramStatusDrawsEveryProgramOverItsWorkspace(t *testing.T) {
+	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	focused := m.focusEx()
+	here := m.workspaces[m.focus]
+	require.Same(t, focused, here.ex, "the inbox floats over a workspace that reports too")
+	there := m.workspaces[slot]
+	focused.Resize(120, 40)
+	there.ex.Resize(120, 40)
+	report := func(w *workspaceHandler, uri workspaceapi.URI, app string) {
+		m.status.setTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
+			State: programstatus.Working, Progress: -1, App: app,
+		})
+		_, ok := m.status.status(w.uri, uri)
+		require.True(t, ok, app)
+	}
+	tab := func(w *workspaceHandler, raw, app string) {
+		uri := mustURI(t, raw)
+		_, err := w.ex.comp.Tab(uri, 'x', app, browsertest.NewTestHandler())
+		require.NoError(t, err)
+		require.NoError(t, w.ex.comp.SetTabStatus(uri, programstatus.Report{
+			State: programstatus.Working, Progress: -1, App: app,
+		}))
+	}
+	tab(here, "rune-agent://model/here", "tab-here")
+	tab(there, "rune-agent://model/there", "tab-there")
+	b := focused.comp.Browser()
+	for i, w := range []*workspaceHandler{here, there} {
+		pty := mustURI(t, "file:///dev/ttys07"+strconv.Itoa(i))
+		tv := newTestVteWithConfig([]string{"sh"})
+		tv.uri = pty
+		win, ok := w.ex.comp.Browser().Split(browserapi.OrientationDefault,
+			w.ex.comp.Browser().Focus(), tv)
+		require.True(t, ok)
+		w.ex.comp.Browser().SetFocus(win)
+		report(w, pty, "terminal-"+strconv.Itoa(i))
+	}
+	cmd := mustURI(t, "file:///dev/ttys080")
+	ph := &pluginAdapter{pluginHandler: &statusTestPluginHandler{testVte: newTestVteWithConfig([]string{"make"}), uri: cmd}}
+	ph.win = b.Floating(ph, browserapi.FloatingConfig{Alignment: component.AlignmentCentered})
+	report(here, cmd, "command")
+	prompt := mustURI(t, "ideauthorizer:///prompt/1")
+	focused.setStatusWindow(prompt, focused.comp.Prompt("Allow make?", []string{"Yes", "No"}, nil,
+		handler.FuncPromptHandler(func(int, string) {}, func() error { return nil })))
+	report(here, prompt, "prompt")
+	shell := mustURI(t, "terminal://loading/9100")
+	companion := newTestVteWithConfig(nil)
+	companion.uri = shell
+	focused.companionTerminal = companion
+	report(here, shell, "companion")
+
+	require.NoError(t, m.commandProgramStatus())
+	win, err := focused.comp.Focus()
+	require.NoError(t, err)
+	content, err := win.Content()
+	require.NoError(t, err)
+	inbox, ok := content.(*statusView)
+	require.True(t, ok)
+	require.Len(t, inbox.entries, 7)
+	for i, e := range inbox.entries {
+		inbox.selectAt(i)
+		w := term.NewStringWriter(120, 40)
+		require.NotPanics(t, func() { focused.Draw(w) }, e.name)
+		require.NoError(t, w.Flush())
+		assert.Contains(t, w.String(), e.name, "the inbox is drawn over its workspace")
+		if e.name == "command" || e.name == "prompt" || e.name == "companion" {
+			// Shown in the very workspace the inbox floats over.
+			_, ok := inbox.preview()
+			assert.True(t, ok, "%s is previewed", e.name)
+		}
+	}
+}
+
+func TestCommandProgramStatusPreviewsTab(t *testing.T) {
+	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	uri, err := workspaceapi.ParseURI("rune-agent://model/agent")
+	require.NoError(t, err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	other := m.workspaces[slot].ex
+	agent := browsertest.NewTestHandler()
+	_, err = other.comp.Tab(uri, 'x', "agent", agent)
+	require.NoError(t, err)
+	b := other.comp.Browser()
+	tab, ok := b.Tab(uri)
+	require.True(t, ok)
+	require.True(t, b.SetContentToTab(b.Focus(), slices.Index(b.Tabs(), tab)))
+	// As if the workspace had been in focus once.
+	other.Resize(60, 30)
+	tabW, tabH := tab.ContentSize()
+	require.NotZero(t, tabW)
+	require.NotZero(t, tabH)
+	require.NoError(t, other.comp.SetTabStatus(uri, programstatus.Report{
+		State: programstatus.Working, Progress: -1,
+	}))
+	focused := m.focusEx()
+	focused.comp.Resize(120, 60)
+	require.NoError(t, m.commandProgramStatus())
+	win, err := focused.comp.Focus()
+	require.NoError(t, err)
+	content, err := win.Content()
+	require.NoError(t, err)
+	picker, ok := content.(*statusView)
+	require.True(t, ok)
+
+	// With room for it, the window is sized to show the tab whole beside
+	// the sidebar.
+	focused.comp.Resize(120, 60)
+	sideW := picker.sidebarWidth() + statusDividerWidth
+	assert.Equal(t, []int{sideW + tabW, tabH}, []int{picker.width, picker.height})
+	for _, ev := range []term.Event{
+		{Type: term.EventKey, Ch: 'j'},
+		{Type: term.EventKey, Ch: 'k'},
+	} {
+		_, handled := picker.Handle(ev)
+		assert.True(t, handled)
+	}
+	lines := strings.Split(handlertest.DrawHandler(picker, picker.width, picker.height), "\n")
+	for y := range tabH {
+		assert.Equal(t, strings.Repeat("A", tabW), string([]rune(lines[y])[sideW:]),
+			"the tab of another workspace is previewed")
+	}
+	assert.Equal(t, 'A', agent.Ch, "the previewed tab receives no input")
+
+	// The window keeps its top as what it previews changes size.
+	top := win.Position().Y
+	require.Zero(t, top, "the window opens at the top")
+	gone, err := workspaceapi.ParseURI("file:///dev/ttys043")
+	require.NoError(t, err)
+	m.status.updateDetached(m.workspaces[slot].uri, gone, func(r *programstatus.Store) {
+		r.Apply(programstatus.Report{State: programstatus.Done, Progress: -1})
+	})
+	at := func(uri workspaceapi.URI) int {
+		return slices.IndexFunc(picker.entries, func(e statusEntry) bool { return e.uri.Equal(uri) })
+	}
+	picker.selectAt(at(gone))
+	require.Equal(t, gone.String(), picker.sel.uri)
+	focused.comp.Draw(term.NewStringWriter(120, 60))
+	assert.NotEqual(t, sideW+tabW, picker.width, "the window follows the preview")
+	wmW, _ := focused.comp.Browser().WindowManagerSize()
+	assert.GreaterOrEqual(t, picker.width, wmW*statusMinWidthPercent/100,
+		"the window takes at least its share of the width")
+	assert.Equal(t, top, win.Position().Y, "the window keeps its top")
+	picker.selectAt(at(uri))
+	focused.comp.Draw(term.NewStringWriter(120, 60))
+	assert.Equal(t, sideW+tabW, picker.width)
+	assert.Equal(t, top, win.Position().Y, "the window keeps its top")
+
+	// Without, the window takes what there is and the preview less
+	// than the tab.
+	focused.comp.Resize(40, 20)
+	assert.Less(t, picker.width, sideW+tabW)
+	assert.Less(t, picker.height, tabH)
+	w, h := tab.ContentSize()
+	assert.Equal(t, []int{tabW, tabH}, []int{w, h}, "the previewed tab keeps its size")
+}
+
+func TestCommandProgramStatusPreviewsWindowedTerminal(t *testing.T) {
+	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	pty, err := workspaceapi.ParseURI("file:///dev/ttys042")
+	require.NoError(t, err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// As :terminal opens it: the content of a window, in no tab.
+	w := m.workspaces[slot]
+	b := w.ex.comp.Browser()
+	tv := newTestVteWithConfig([]string{"brew"})
+	tv.uri = pty
+	termWin := b.Focus()
+	require.NoError(t, termWin.SetContent(tv))
+	w.ex.Resize(60, 30)
+	m.status.setTabStatus(w.uri, &w.ex.comp, pty, programstatus.Report{
+		State: programstatus.Done, Progress: -1, App: "brew",
+	})
+	_, ok := m.status.status(w.uri, pty)
+	require.True(t, ok)
+
+	preview, ok := m.statusPreview(w.uri, pty)
+	require.True(t, ok, "a terminal outside of a tab is previewed in its window")
+	assert.Same(t, tv, preview.content)
+	assert.Nil(t, preview.fit, "a terminal shown in a window is never resized")
+	tvW, tvH := b.ContentSize(termWin)
+	require.NotZero(t, tvW)
+	assert.Equal(t, []int{tvW, tvH}, []int{preview.width, preview.height})
+
+	focused := m.focusEx()
+	require.NoError(t, m.commandProgramStatus())
+	inbox, err := focused.comp.Focus()
+	require.NoError(t, err)
+	content, err := inbox.Content()
+	require.NoError(t, err)
+	picker := content.(*statusView)
+	focused.comp.Resize(120, 60)
+	sideW := picker.sidebarWidth() + statusDividerWidth
+	lines := strings.Split(handlertest.DrawHandler(picker, picker.width, picker.height), "\n")
+	assert.Equal(t, "brew", strings.TrimSpace(string([]rune(lines[0])[sideW:])))
+
+	// Choosing it focuses its window.
+	split, ok := b.Split(browserapi.OrientationDefault, termWin, browsertest.NewTestHandler())
+	require.True(t, ok)
+	b.SetFocus(split)
+	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: pty}))
+	assert.Equal(t, termWin.WindowID(), b.Focus().WindowID())
+}
+
+func TestCommandProgramStatusPreviewsPermissionPrompt(t *testing.T) {
+	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	uri, err := workspaceapi.ParseURI("ideauthorizer:///prompt/1")
+	require.NoError(t, err)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	w := m.workspaces[slot]
+	b := w.ex.comp.Browser()
+	tiled := b.Focus()
+	prompt := w.ex.comp.Prompt("Allow make?", []string{"Yes", "No"}, nil,
+		handler.FuncPromptHandler(func(int, string) {}, func() error { return nil }))
+	w.ex.Resize(60, 30)
+	m.status.setTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
+		State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
+		App: programstatus.HostApp,
+	})
+	_, ok := m.statusPreview(w.uri, uri)
+	require.False(t, ok, "nothing tells which window shows the status yet")
+
+	w.ex.setStatusWindow(uri, prompt)
+	preview, ok := m.statusPreview(w.uri, uri)
+	require.True(t, ok, "the permission prompt is previewed")
+	content, err := prompt.Content()
+	require.NoError(t, err)
+	assert.Same(t, content, preview.content)
+	assert.Positive(t, preview.width)
+	assert.Positive(t, preview.height)
+
+	b.SetFocus(tiled)
+	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: uri}))
+	assert.Equal(t, prompt.WindowID(), b.Focus().WindowID(), "choosing it focuses the prompt")
+
+	require.NoError(t, prompt.Close())
+	_, ok = m.statusPreview(w.uri, uri)
+	assert.False(t, ok, "a closed prompt has no preview")
+}
+
+func TestCommandProgramStatusPreviewsDetachedPrograms(t *testing.T) {
+	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	w := m.workspaces[slot]
+	e := w.ex
+	b := e.comp.Browser()
+	w.ex.Resize(60, 30)
+	tiled := b.Focus()
+	report := func(uri workspaceapi.URI) {
+		m.status.setTabStatus(w.uri, &e.comp, uri, programstatus.Report{
+			State: programstatus.Working, Progress: -1,
+		})
+		_, ok := m.status.status(w.uri, uri)
+		require.True(t, ok)
+	}
+
+	// A floating "!" command, whose window shows the program behind
+	// layers that report under the uri of its terminal.
+	cmd := mustURI(t, "file:///dev/ttys050")
+	program := &statusTestPluginHandler{testVte: newTestVteWithConfig([]string{"make"}), uri: cmd}
+	assert.Equal(t, cmd, (&asyncPlugin{real: program}).StatusURI())
+	ph := &pluginAdapter{pluginHandler: program}
+	win, err := e.comp.Floating(ph, browserapi.FloatingConfig{Alignment: component.AlignmentCentered})
+	require.NoError(t, err)
+	ph.win = win
+	report(cmd)
+	preview, ok := m.statusPreview(w.uri, cmd)
+	require.True(t, ok, "a floating command is previewed in its window")
+	assert.Same(t, ph, preview.content)
+	assert.False(t, preview.hidden)
+	b.SetFocus(tiled)
+	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: cmd}))
+	assert.Equal(t, win.WindowID(), b.Focus().WindowID(), "choosing it focuses its window")
+	require.NoError(t, win.Close())
+
+	// The companion terminal, hidden while its shell runs on.
+	shell := mustURI(t, "terminal://loading/9000")
+	tv := newTestVteWithConfig(nil)
+	tv.uri = shell
+	e.companionTerminal = tv
+	report(shell)
+	preview, ok = m.statusPreview(w.uri, shell)
+	require.True(t, ok, "a hidden companion terminal is previewed")
+	assert.Same(t, tv, preview.content)
+	assert.True(t, preview.hidden, "the inbox sizes what is shown nowhere")
+	assert.NotNil(t, preview.fit)
+	b.SetFocus(tiled)
+	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: shell}))
+	require.NotNil(t, e.companionTerminalWin, "choosing it shows it")
+	assert.Equal(t, e.companionTerminalWin.WindowID(), b.Focus().WindowID())
+	preview, ok = m.statusPreview(w.uri, shell)
+	require.True(t, ok)
+	assert.False(t, preview.hidden, "shown, it is previewed in its window")
+}
+
+type statusTestPluginHandler struct {
+	*testVte
+	uri workspaceapi.URI
+}
+
+func (h *statusTestPluginHandler) StatusURI() workspaceapi.URI { return h.uri }
+
+func TestCommandProgramStatusClosesPrograms(t *testing.T) {
+	type program struct {
+		m   *testWorkspaceManagerHandler
+		e   *ex
+		uri workspaceapi.URI
+		p   *statusTestProgram
+		win browser.Window
+	}
+	del := term.Event{Type: term.EventKey, Key: term.KeyDelete}
+	backspace := term.Event{Type: term.EventKey, Key: term.KeyBackspace}
+	ctx := context.Background()
+	terminalTab := func(t *testing.T, pr *program) {
+		require.NoError(t, pr.e.terminalnewtab(ctx))
+	}
+	task := func(t *testing.T, pr *program, tab bool) {
+		if tab {
+			require.NoError(t, pr.e.newTaskTab(ctx, "build", "--", "make"))
+		} else {
+			require.NoError(t, pr.e.newTask(ctx, "build", "left", "--", "make"))
+		}
+	}
+	taskStopped := func(t *testing.T, pr *program) {
+		assert.True(t, pr.p.calledClose, "the program is closed")
+		assert.Empty(t, pr.e.tasks.ListTasks(), "the task is stopped")
+	}
+	tabGone := func(t *testing.T, pr *program) {
+		assert.True(t, pr.p.calledClose, "the program is closed")
+		_, ok := pr.e.comp.Browser().Tab(pr.uri)
+		assert.False(t, ok, "its tab is gone")
+	}
+	for _, tc := range []struct {
+		name string
+		// here runs the program in the workspace the inbox floats over.
+		here  bool
+		state programstatus.State
+		key   term.Event
+		open  func(t *testing.T, pr *program)
+		// answer is the key answering the question asked before closing,
+		// if any.
+		answer rune
+		// stays is set for what is hidden rather than closed: its row
+		// stays.
+		stays  bool
+		closed func(t *testing.T, pr *program)
+	}{{
+		name: "terminal tab", state: programstatus.Error, key: del,
+		open: terminalTab, closed: tabGone,
+	}, {
+		name: "terminal tab here", here: true, state: programstatus.Idle, key: backspace,
+		open: terminalTab, closed: tabGone,
+	}, {
+		name: "terminal tab out of sight", state: programstatus.Idle, key: del,
+		open: func(t *testing.T, pr *program) {
+			terminalTab(t, pr)
+			other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
+				browsertest.NewTestHandler())
+			require.NoError(t, err)
+			require.NoError(t, pr.e.invokeWindow().SetContent(other))
+			tab, ok := pr.e.comp.Browser().Tab(pr.uri)
+			require.True(t, ok)
+			_, shown := tab.Window()
+			require.False(t, shown)
+		},
+		closed: tabGone,
+	}, {
+		name: "working terminal tab", state: programstatus.Working, key: del,
+		open: terminalTab, answer: 'y', closed: tabGone,
+	}, {
+		name: "working terminal tab kept", state: programstatus.Working, key: del,
+		open: terminalTab, answer: 'n', stays: true,
+		closed: func(t *testing.T, pr *program) {
+			assert.False(t, pr.p.calledClose, "the program runs on")
+			_, ok := pr.e.comp.Browser().Tab(pr.uri)
+			assert.True(t, ok, "its tab stays")
+		},
+	}, {
+		name: "terminal in a window", state: programstatus.Error, key: backspace,
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.terminalneworsplit(ctx))
+			win, ok := statusWindowOf(pr.e, pr.uri)
+			require.True(t, ok)
+			pr.win = win
+		},
+		closed: func(t *testing.T, pr *program) {
+			assert.True(t, pr.p.calledClose, "the program is closed")
+			_, ok := statusWindowOf(pr.e, pr.uri)
+			assert.False(t, ok, "no window shows it")
+		},
+	}, {
+		name: "blocked terminal in a split here", here: true, state: programstatus.Blocked, key: del,
+		open: func(t *testing.T, pr *program) {
+			other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
+				browsertest.NewTestHandler())
+			require.NoError(t, err)
+			require.NoError(t, pr.e.invokeWindow().SetContent(other))
+			require.NoError(t, pr.e.terminalneworsplit(ctx))
+			_, shown := other.(*browser.Tab).Window()
+			require.True(t, shown, "the terminal is split off")
+		},
+		answer: 'y',
+		closed: func(t *testing.T, pr *program) {
+			assert.True(t, pr.p.calledClose, "the program is closed")
+			_, ok := statusWindowOf(pr.e, pr.uri)
+			assert.False(t, ok, "no window shows it")
+		},
+	}, {
+		name: "floating command", here: true, state: programstatus.Done, key: del,
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.executePlugin(ctx, "make"))
+		},
+		closed: func(t *testing.T, pr *program) {
+			assert.True(t, pr.p.calledClose, "the program is closed")
+			_, ok := statusWindowOf(pr.e, pr.uri)
+			assert.False(t, ok, "its window is closed")
+		},
+	}, {
+		name: "working floating command", state: programstatus.Working, key: backspace,
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.executePlugin(ctx, "make"))
+		},
+		answer: 'y',
+		closed: func(t *testing.T, pr *program) {
+			assert.True(t, pr.p.calledClose, "the program is closed")
+			_, ok := statusWindowOf(pr.e, pr.uri)
+			assert.False(t, ok, "its window is closed")
+		},
+	}, {
+		name: "task", state: programstatus.Error, key: del,
+		open:   func(t *testing.T, pr *program) { task(t, pr, false) },
+		closed: taskStopped,
+	}, {
+		name: "working task in a tab", state: programstatus.Working, key: del,
+		open:   func(t *testing.T, pr *program) { task(t, pr, true) },
+		answer: 'y', closed: taskStopped,
+	}, {
+		name: "permission prompt", state: programstatus.Blocked, key: del,
+		open: func(t *testing.T, pr *program) {
+			// As ideauthorizer prompts: denied when closed, and its status
+			// withdrawn.
+			pr.win = pr.e.comp.Prompt("Allow make?", []string{"Yes", "No"}, nil,
+				handler.FuncPromptHandler(func(int, string) {}, func() error {
+					return pr.e.tm.SetTabStatus(pr.uri, programstatus.Report{State: programstatus.Clear})
+				}))
+			pr.e.setStatusWindow(pr.uri, pr.win)
+		},
+		answer: 'y',
+		closed: func(t *testing.T, pr *program) {
+			assert.True(t, pr.win.Closed(), "the prompt is closed")
+		},
+	}, {
+		name: "shown companion terminal", here: true, state: programstatus.Working, key: del,
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.toggleCompanionTerminal())
+		},
+		answer: 'y', stays: true,
+		closed: func(t *testing.T, pr *program) {
+			assert.False(t, pr.p.calledClose, "its shell runs on")
+			assert.Nil(t, pr.e.companionTerminalWin, "it is hidden")
+			_, ok := hiddenCompanionTerminal(pr.e, pr.uri)
+			assert.True(t, ok)
+		},
+	}, {
+		name: "hidden companion terminal", state: programstatus.Idle, key: backspace,
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.toggleCompanionTerminal())
+			require.NoError(t, pr.e.toggleCompanionTerminal())
+		},
+		stays: true,
+		closed: func(t *testing.T, pr *program) {
+			assert.False(t, pr.p.calledClose, "its shell runs on")
+			assert.Nil(t, pr.e.companionTerminalWin, "it stays hidden")
+		},
+	}, {
+		name: "file with changes", state: programstatus.Error, key: del,
+		open: func(t *testing.T, pr *program) {
+			var err error
+			pr.uri, err = pr.e.workspace.URI("dirty.go")
+			require.NoError(t, err)
+			_, err = pr.e.editFileURI(pr.uri, pr.e.invokeWindow(), false)
+			require.NoError(t, err)
+			editBuffer(t, pr.e, pr.uri, "ABC")
+		},
+		// Asked whether to discard the changes.
+		answer: 'y',
+		closed: func(t *testing.T, pr *program) {
+			_, ok := pr.e.comp.Browser().Tab(pr.uri)
+			assert.False(t, ok, "its tab is gone")
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+			t.Cleanup(func() { _ = m.Close() })
+			pr := program{m: m}
+			var focused *ex
+			ws := m.workspaces[slot].uri
+			m.locked(func() {
+				focused = m.focusEx()
+				pr.e = m.workspaces[slot].ex
+				if tc.here {
+					pr.e = focused
+					ws = m.workspaces[m.focus].uri
+				}
+				require.NotSame(t, focused, m.workspaces[slot].ex)
+				pr.e.Resize(80, 30)
+				focused.Resize(120, 40)
+				pr.uri = mustURI(t, "file:///dev/ttys060")
+				pr.p = newStatusTestProgram(pr.e.tm, pr.uri, "make")
+				pr.e.newEmulatorHandler = func([]string) (vtereservoir.VTE, error) { return pr.p, nil }
+				pr.e.newPluginHandler = func(int, ...string) (pluginHandler, error) { return pr.p, nil }
+				pr.e.tasks.SetProgramBuilder(func(
+					browser.EventPublisher, browser.Notifications, schemeapi.Executor,
+					schemeapi.Terminal, browser.TabManager, []string, int, ...plugin.Option,
+				) (browser.ScrollableFloating, error) {
+					return pr.p, nil
+				})
+				tc.open(t, &pr)
+			})
+			m.quiesce()
+			require.Eventually(t, func() bool {
+				ok := true
+				m.locked(func() {
+					if len(pr.e.tasks.ListTasks()) > 0 {
+						_, ok = pr.e.tasks.StatusTask(pr.uri)
+					}
+				})
+				return ok
+			}, 5*time.Second, time.Millisecond, "a task runs its program")
+			m.locked(func() {
+				require.NoError(t, pr.e.tm.SetTabStatus(pr.uri, programstatus.Report{
+					State: tc.state, Progress: -1, App: "make", Msg: tc.name,
+				}))
+			})
+			m.quiesce()
+
+			var inbox *statusView
+			var inboxWin browser.Window
+			m.locked(func() {
+				require.NoError(t, m.commandProgramStatus())
+				var err error
+				inboxWin, err = focused.comp.Focus()
+				require.NoError(t, err)
+				content, err := inboxWin.Content()
+				require.NoError(t, err)
+				var ok bool
+				inbox, ok = content.(*statusView)
+				require.True(t, ok)
+				i := slices.IndexFunc(inbox.entries, func(e statusEntry) bool { return e.uri.Equal(pr.uri) })
+				require.GreaterOrEqual(t, i, 0, "the program is listed")
+				inbox.selectAt(i)
+				m.Handle(tc.key)
+			})
+			m.quiesce()
+			if tc.answer != 0 {
+				m.locked(func() {
+					win, err := focused.comp.Focus()
+					require.NoError(t, err)
+					require.NotEqual(t, inboxWin.WindowID(), win.WindowID(), "a question is asked")
+					assert.False(t, pr.p.calledClose, "nothing is closed before the answer")
+					m.Handle(term.Event{Type: term.EventKey, Ch: tc.answer})
+				})
+				m.quiesce()
+			}
+
+			m.locked(func() {
+				tc.closed(t, &pr)
+				_, listed := m.status.status(ws, pr.uri)
+				listed = listed || slices.ContainsFunc(inbox.entries,
+					func(e statusEntry) bool { return e.uri.Equal(pr.uri) })
+				assert.Equal(t, tc.stays, listed, "the row goes with the program")
+				assert.False(t, inboxWin.Closed(), "the inbox stays open")
+				win, err := focused.comp.Focus()
+				require.NoError(t, err)
+				assert.Equal(t, inboxWin.WindowID(), win.WindowID(), "the inbox keeps the focus")
+			})
+		})
+	}
+}
+
+// statusTestProgram is a program that, as a terminal does, reports its
+// statuses through tm under the uri of its own, and withdraws them when
+// closed.
+type statusTestProgram struct {
+	*testVte
+	tm browser.TabManager
+}
+
+func newStatusTestProgram(tm browser.TabManager, uri workspaceapi.URI, cmd string) *statusTestProgram {
+	tv := newTestVteWithConfig([]string{cmd})
+	tv.uri = uri
+	return &statusTestProgram{testVte: tv, tm: tm}
+}
+
+func (p *statusTestProgram) StatusURI() workspaceapi.URI { return p.uri }
+
+func (p *statusTestProgram) Close() error {
+	err := p.testVte.Close()
+	_ = p.tm.SetTabStatus(p.uri, programstatus.Report{State: programstatus.Clear})
+	return err
 }
 
 func TestWorkspaceBarActiveTabAnimationConfig(t *testing.T) {
