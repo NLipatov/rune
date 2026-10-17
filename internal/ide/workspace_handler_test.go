@@ -1903,6 +1903,19 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 	terminalTab := func(t *testing.T, pr *program) {
 		require.NoError(t, pr.e.terminalnewtab(ctx))
 	}
+	// An idle report on the tab in sight is seen right away, leaving no
+	// row for it.
+	terminalTabOutOfSight := func(t *testing.T, pr *program) {
+		terminalTab(t, pr)
+		other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
+			browsertest.NewTestHandler())
+		require.NoError(t, err)
+		require.NoError(t, pr.e.invokeWindow().SetContent(other))
+		tab, ok := pr.e.comp.Browser().Tab(pr.uri)
+		require.True(t, ok)
+		_, shown := tab.Window()
+		require.False(t, shown)
+	}
 	task := func(t *testing.T, pr *program, tab bool) {
 		if tab {
 			require.NoError(t, pr.e.newTaskTab(ctx, "build", "--", "make"))
@@ -1938,21 +1951,10 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 		open: terminalTab, closed: tabGone,
 	}, {
 		name: "terminal tab here", here: true, state: programstatus.Idle, key: backspace,
-		open: terminalTab, closed: tabGone,
+		open: terminalTabOutOfSight, closed: tabGone,
 	}, {
 		name: "terminal tab out of sight", state: programstatus.Idle, key: del,
-		open: func(t *testing.T, pr *program) {
-			terminalTab(t, pr)
-			other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
-				browsertest.NewTestHandler())
-			require.NoError(t, err)
-			require.NoError(t, pr.e.invokeWindow().SetContent(other))
-			tab, ok := pr.e.comp.Browser().Tab(pr.uri)
-			require.True(t, ok)
-			_, shown := tab.Window()
-			require.False(t, shown)
-		},
-		closed: tabGone,
+		open: terminalTabOutOfSight, closed: tabGone,
 	}, {
 		name: "working terminal tab", state: programstatus.Working, key: del,
 		open: terminalTab, answer: 'y', closed: tabGone,
