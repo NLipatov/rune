@@ -34,6 +34,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/debug"
+	"unstable.build/rune/internal/ide/idehistory"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -244,6 +245,42 @@ func (s *statusStore) tabRemoved(ws, uri workspaceapi.URI) {
 		s.host.statusChanged(ws)
 	}
 	s.refreshViews()
+}
+
+// programs returns the tabs of the workspace at ws that are listed, for
+// a later session of the workspace to list them again.
+func (s *statusStore) programs(ws workspaceapi.URI) []idehistory.Program {
+	var ret []idehistory.Program
+	for _, src := range s.sorted() {
+		if src.records == nil && src.ws.String() == ws.String() {
+			ret = append(ret, idehistory.Program{URI: src.uri, App: src.app})
+		}
+	}
+	return ret
+}
+
+// restore lists again the programs of a previous session of the
+// workspace at ws, as having reported nothing yet, but only those whose
+// tab came back with the session: the rest are gone. It leaves alone
+// what reported since.
+func (s *statusStore) restore(ws workspaceapi.URI, programs []idehistory.Program) {
+	restored := false
+	for _, p := range programs {
+		key := statusKey{ws: ws.String(), uri: p.URI.String()}
+		if _, ok := s.sources[key]; ok {
+			continue
+		}
+		if _, ok := s.host.statusTabName(ws, p.URI); !ok {
+			continue
+		}
+		s.sources[key] = &statusSource{
+			ws: ws, uri: p.URI, status: programstatus.Summary{Progress: -1}, app: p.App,
+		}
+		restored = true
+	}
+	if restored {
+		s.refreshViews()
+	}
 }
 
 // dropWorkspace forgets every status reported in the workspace at ws.

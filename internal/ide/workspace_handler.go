@@ -2194,7 +2194,7 @@ func (h *workspaceManagerHandler) installPendingWorkspace(
 	}
 	fexplorerURI, _ := workspaceapi.ParseURI(fileExplorerURI)
 	wh.historyCloser = h.state.SubscribeEvents(
-		ctx, uri, &ex.comp, exSnapshotter{ex: ex, wh: wh},
+		ctx, uri, &ex.comp, exSnapshotter{ex: ex, wh: wh, status: h.status},
 		fexplorerURI, gitshowBaseURI())
 	// The name identifies the workspace rather than its contents, so it
 	// comes back whether or not the session itself is restored.
@@ -2216,7 +2216,7 @@ func (h *workspaceManagerHandler) installPendingWorkspace(
 		h.openRestorePrompt(ex, uri, state)
 		return
 	}
-	if err := h.restorePreviousSession(ex, state); err != nil {
+	if err := h.restorePreviousSession(ex, uri, state); err != nil {
 		_, _ = h.notifications.current().Notify(browserapi.LevelError,
 			"restore previous session: %v", err)
 	}
@@ -2652,9 +2652,10 @@ func (h *workspaceManagerHandler) openPrevSessionFiles(
 	return err
 }
 
+// restorePreviousSession restores state into ex, the ex of the workspace
+// at uri.
 func (h *workspaceManagerHandler) restorePreviousSession(
-	ex *ex,
-	state idehistory.State,
+	ex *ex, uri workspaceapi.URI, state idehistory.State,
 ) error {
 	ret := new(multierror.Error)
 	layout := state.Layout
@@ -2675,18 +2676,19 @@ func (h *workspaceManagerHandler) restorePreviousSession(
 		ret = multierror.Append(ret,
 			restoreOpenTaskSessions(ex, state.Tasks))
 	}
-	if len(state.Files) == 0 {
-		return ret.ErrorOrNil()
-	}
-	if h.width == 0 || h.height == 0 {
+	switch {
+	case len(state.Files) == 0:
+	case h.width == 0 || h.height == 0:
 		// if restoreSession is called on an size 0,0 handler
 		// then cursor is not properly set.
 		h.openPrevFiles = state.Files
 		h.openPrevWindows = windows
 		h.openPrevFilesEx = ex
-		return ret.ErrorOrNil()
+	default:
+		ret = multierror.Append(ret, h.openPrevSessionFiles(ex, state.Files, windows))
 	}
-	ret = multierror.Append(ret, h.openPrevSessionFiles(ex, state.Files, windows))
+	// Last, for the tabs the programs report from to be back.
+	h.status.restore(uri, state.Programs)
 	return ret.ErrorOrNil()
 }
 
@@ -4314,7 +4316,7 @@ func (h *workspaceManagerHandler) exHandler(focus tui.Handler) *ex {
 func (h *workspaceManagerHandler) persistWorkspaceStateOnClose(hm *workspaceHandler) {
 	if err := h.state.StoreWorkspaceStateForClose(
 		context.Background(), hm.uri,
-		exSnapshotter{ex: hm.ex, wh: hm}); err != nil {
+		exSnapshotter{ex: hm.ex, wh: hm, status: h.status}); err != nil {
 		log.Warnf("persist workspace state %s: %v", hm.uri.String(), err)
 	}
 	if hm.historyCloser != nil {

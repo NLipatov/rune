@@ -38,6 +38,8 @@ type exSnapshotter struct {
 	// read live rather than captured because the name changes under
 	// the subscription, via workspacerename.
 	wh *workspaceHandler
+	// status, when set, holds the programs the workspace of wh lists.
+	status *statusStore
 }
 
 func (s exSnapshotter) Name() string {
@@ -120,6 +122,15 @@ func (s exSnapshotter) Tasks() []idehistory.TaskSession {
 		})
 	}
 	return ret
+}
+
+// Programs lists the tabs of the workspace whose program reported a
+// status, for the next session to list them again.
+func (s exSnapshotter) Programs() []idehistory.Program {
+	if s.status == nil || s.wh == nil {
+		return nil
+	}
+	return s.status.programs(s.wh.uri)
 }
 
 func (s exSnapshotter) Layout() (tcomponent.TileLayout, bool) {

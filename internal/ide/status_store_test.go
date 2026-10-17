@@ -17,6 +17,7 @@
 package ide
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -36,6 +37,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/handler/handlertest"
+	"unstable.build/rune/internal/ide/idehistory"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -1862,6 +1864,187 @@ func TestStatusStoreTabLifecycle(t *testing.T) {
 	assert.Equal(t, detachedStatusLabel, v.entries[0].name)
 	store.endTabStatus(ws, tabs, uri)
 	assert.Empty(t, v.entries)
+}
+
+func TestStatusStoreRestore(t *testing.T) {
+	parse := func(raw string) workspaceapi.URI { return statusStoreTestURI(t, raw) }
+	other, closed := parse("file:///other"), parse("file:///closed")
+	// The tabs back, silent and live came back with the workspace, and
+	// elsewhere with other; gone did not, and pty is a terminal that is
+	// no tab.
+	back, silent, live := parse("rune-agent://model/back"), parse("rune-agent://model/silent"),
+		parse("rune-agent://model/live")
+	gone, pty, elsewhere := parse("rune-agent://model/gone"), parse("file:///dev/ttys001"),
+		parse("rune-agent://model/elsewhere")
+	setup := func(t *testing.T) (*statusStoreTestHost, *statusStore, workspaceapi.URI, *statusView) {
+		host, store, ws := newStatusStoreTest(t)
+		host.addWorkspace(other, "2 other")
+		for _, uri := range []workspaceapi.URI{back, silent, live} {
+			host.names[statusKey{ws.String(), uri.String()}] = uri.Name()
+		}
+		host.names[statusKey{other.String(), elsewhere.String()}] = elsewhere.Name()
+		v := store.view()
+		t.Cleanup(func() { _ = v.Close() })
+		return host, store, ws, v
+	}
+	working := func(app string) programstatus.Summary {
+		records := programstatus.New()
+		records.Apply(programstatus.Report{State: programstatus.Working, Progress: -1, App: app})
+		return records.Summary()
+	}
+	type row struct{ uri, sub string }
+	rows := func(v *statusView) []row {
+		var ret []row
+		for _, e := range v.entries {
+			ret = append(ret, row{e.uri.String(), e.sub})
+		}
+		return ret
+	}
+
+	suite := []struct {
+		name string
+		// reported is where a program reported working with the app
+		// fresh before the restore, as a tab or as a terminal that is
+		// no tab, whichever it is.
+		reported []workspaceapi.URI
+		// into is the workspace restored: the one setup opens when it
+		// is zero.
+		into     workspaceapi.URI
+		programs []idehistory.Program
+		want     []row
+	}{
+		{
+			name: "with no program saved, no tab that came back is listed",
+		},
+		{
+			name:     "a program whose tab came back is listed idle, with the app it last reported",
+			programs: []idehistory.Program{{URI: back, App: "rune-agent"}},
+			want:     []row{{back.String(), "idle · rune-agent"}},
+		},
+		{
+			name:     "a program that reported no app is listed idle",
+			programs: []idehistory.Program{{URI: back}},
+			want:     []row{{back.String(), "idle"}},
+		},
+		{
+			name:     "a program whose tab did not come back is not listed",
+			programs: []idehistory.Program{{URI: gone, App: "rune-agent"}},
+		},
+		{
+			name: "the programs whose tab came back are listed, those whose tab did not are not",
+			programs: []idehistory.Program{
+				{URI: gone, App: "a"}, {URI: live, App: "b"}, {URI: pty, App: "c"}, {URI: back, App: "d"},
+			},
+			want: []row{{back.String(), "idle · d"}, {live.String(), "idle · b"}},
+		},
+		{
+			name:     "a program saved twice is listed once, with the app saved first",
+			programs: []idehistory.Program{{URI: back, App: "first"}, {URI: back, App: "second"}},
+			want:     []row{{back.String(), "idle · first"}},
+		},
+		{
+			name:     "a program that reported since keeps what it reported",
+			reported: []workspaceapi.URI{live},
+			programs: []idehistory.Program{{URI: live, App: "stale"}},
+			want:     []row{{live.String(), "working · fresh"}},
+		},
+		{
+			name:     "a program saved for a terminal that is no tab is not listed",
+			programs: []idehistory.Program{{URI: pty, App: "make"}},
+		},
+		{
+			name:     "a terminal that is no tab and reported since keeps what it reported",
+			reported: []workspaceapi.URI{pty},
+			programs: []idehistory.Program{{URI: pty, App: "stale"}},
+			want:     []row{{pty.String(), "working"}},
+		},
+		{
+			name:     "a program whose tab came back in another workspace is not listed in this one",
+			programs: []idehistory.Program{{URI: elsewhere, App: "rune-agent"}},
+		},
+		{
+			name:     "a program is listed in the workspace restored only",
+			into:     other,
+			programs: []idehistory.Program{{URI: elsewhere, App: "a"}, {URI: back, App: "b"}},
+			want:     []row{{elsewhere.String(), "idle · a"}},
+		},
+		{
+			name:     "a program restored into a workspace that is not open is not listed",
+			into:     closed,
+			programs: []idehistory.Program{{URI: back, App: "rune-agent"}},
+		},
+	}
+	for _, tcase := range suite {
+		t.Run(tcase.name, func(t *testing.T) {
+			host, store, ws, v := setup(t)
+			for _, uri := range tcase.reported {
+				if _, ok := host.statusTabName(ws, uri); ok {
+					store.tabStatusChanged(ws, uri, working("fresh"))
+					continue
+				}
+				store.updateDetached(ws, uri, func(r *programstatus.Store) {
+					r.Apply(programstatus.Report{State: programstatus.Working, Progress: -1, App: "fresh"})
+				})
+			}
+			into := cmp.Or(tcase.into, ws)
+			changed := len(host.changed)
+			sources := len(store.sources)
+
+			store.restore(into, tcase.programs)
+			assert.Equal(t, tcase.want, rows(v))
+			assert.Len(t, store.sources, sources+len(tcase.want)-len(tcase.reported),
+				"what is not listed is not kept either")
+			assert.Len(t, host.changed, changed, "what was restored weighs nothing on any workspace")
+		})
+	}
+
+	t.Run("restoring twice lists a program once", func(t *testing.T) {
+		_, store, ws, v := setup(t)
+		programs := []idehistory.Program{{URI: back, App: "rune-agent"}}
+		store.restore(ws, programs)
+		store.restore(ws, programs)
+		assert.Equal(t, []row{{back.String(), "idle · rune-agent"}}, rows(v))
+	})
+
+	t.Run("a restored program is saved as it was, for the next session to list it again", func(t *testing.T) {
+		_, store, ws, _ := setup(t)
+		programs := []idehistory.Program{{URI: back, App: "rune-agent"}, {URI: live}}
+		store.restore(ws, programs)
+		assert.Equal(t, programs, store.programs(ws))
+		assert.Empty(t, store.programs(other))
+
+		_, next, _, v := setup(t)
+		next.restore(ws, store.programs(ws))
+		assert.Equal(t, []row{{back.String(), "idle · rune-agent"}, {live.String(), "idle"}}, rows(v))
+	})
+
+	t.Run("a restored program lists what it reports next, and keeps the app it reports", func(t *testing.T) {
+		host, store, ws, v := setup(t)
+		store.restore(ws, []idehistory.Program{{URI: back, App: "stale"}})
+		store.tabStatusChanged(ws, back, working("fresh"))
+		assert.Equal(t, []row{{back.String(), "working · fresh"}}, rows(v))
+		assert.Len(t, host.changed, 1, "what it reports weighs on its workspace")
+		store.tabStatusChanged(ws, back, programstatus.Summary{Progress: -1})
+		assert.Equal(t, []row{{back.String(), "idle · fresh"}}, rows(v))
+		assert.Equal(t, []idehistory.Program{{URI: back, App: "fresh"}}, store.programs(ws))
+	})
+
+	t.Run("a restored program goes with its tab", func(t *testing.T) {
+		host, store, ws, v := setup(t)
+		store.restore(ws, []idehistory.Program{{URI: back, App: "rune-agent"}, {URI: live}})
+		store.tabRemoved(ws, back)
+		assert.Equal(t, []row{{live.String(), "idle"}}, rows(v))
+		assert.Empty(t, host.changed, "as it reported nothing, no workspace learns it went")
+		assert.Equal(t, []idehistory.Program{{URI: live}}, store.programs(ws))
+	})
+
+	t.Run("a restored program goes with its workspace", func(t *testing.T) {
+		_, store, ws, v := setup(t)
+		store.restore(ws, []idehistory.Program{{URI: back, App: "rune-agent"}})
+		store.dropWorkspace(ws)
+		assert.Empty(t, rows(v))
+		assert.Empty(t, store.programs(ws))
+	})
 }
 
 func TestStatusSourceLabel(t *testing.T) {

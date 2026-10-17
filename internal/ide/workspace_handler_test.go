@@ -10086,6 +10086,225 @@ func TestRestoreExtensionTabs(t *testing.T) {
 		}
 	})
 
+	t.Run("the programs listing a status are listed again if their tab is back", func(t *testing.T) {
+		m, ws := setup(t, true)
+		// No opener serves its scheme, so its tab is not saved.
+		gone := mustURI(t, "nowhere://host/gone")
+		m.locked(func() {
+			ex := m.exHandler(m.focusHandler())
+			_, err := ex.comp.Tab(gone, 'g', "gone", browsertest.NewTestHandler())
+			require.NoError(t, err)
+			for _, u := range []workspaceapi.URI{uri, gone} {
+				require.NoError(t, ex.comp.SetTabStatus(u, programstatus.Report{
+					State: programstatus.Done, Progress: -1, App: "agent",
+				}))
+			}
+			b := ex.comp.Browser()
+			chat, ok := b.Tab(uri)
+			require.True(t, ok)
+			chat.AckStatus()
+			require.Len(t, m.status.items(), 2, "seen, a tab is still listed")
+		})
+
+		reload(t, m)
+		m.locked(func() {
+			items := m.status.items()
+			require.Len(t, items, 1, "only the program whose tab came back is listed")
+			assert.Equal(t, ws, items[0].ws)
+			assert.Equal(t, uri, items[0].uri)
+			assert.Equal(t, "chat", items[0].name)
+			assert.Equal(t, "agent", items[0].app)
+			assert.Empty(t, items[0].status.Records, "it reported nothing since")
+		})
+
+		reload(t, m)
+		m.locked(func() {
+			require.Len(t, m.status.items(), 1, "it is saved again with the workspace")
+			b := m.exHandler(m.focusHandler()).comp.Browser()
+			chat, ok := b.Tab(uri)
+			require.True(t, ok)
+			b.RemoveTab(chat)
+			assert.Empty(t, m.status.items(), "closed, its tab takes it away")
+		})
+		reload(t, m)
+		m.locked(func() {
+			assert.Empty(t, m.status.items(), "a closed tab does not come back")
+		})
+	})
+
+	// reopen closes the workspace in focus and opens it again as reload
+	// does, with edit, if any, applied to the state it saved, as a later
+	// run may find it, and restores the session only if restore. It
+	// returns the state the workspace opens with.
+	reopen := func(
+		t *testing.T, m *testWorkspaceManagerHandler, restore bool, edit func(*idehistory.State),
+	) idehistory.State {
+		t.Helper()
+		m.mu.Lock()
+		slot := m.focus
+		ws, _, err := m.closeWorkspace()
+		require.NoError(t, err)
+		state, err := m.state.LoadWorkspaceState(context.Background(), ws)
+		require.NoError(t, err)
+		if edit != nil {
+			edit(&state)
+		}
+		require.NoError(t, m.state.StoreWorkspaceState(context.Background(), ws, state))
+		require.NoError(t, m.addWorkspace(ws, restore, false, slot))
+		m.mu.Unlock()
+		m.quiesce()
+		return state
+	}
+	// reporting sets up a workspace whose fake tab is saved and reported
+	// done as the app agent.
+	reporting := func(t *testing.T) (*testWorkspaceManagerHandler, workspaceapi.URI) {
+		m, ws := setup(t, true)
+		m.locked(func() {
+			require.NoError(t, m.exHandler(m.focusHandler()).comp.SetTabStatus(uri, programstatus.Report{
+				State: programstatus.Done, Progress: -1, App: "agent",
+			}))
+		})
+		m.quiesce()
+		return m, ws
+	}
+	type listed struct{ ws, uri, app string }
+	listing := func(m *testWorkspaceManagerHandler) []listed {
+		var ret []listed
+		m.locked(func() {
+			for _, it := range m.status.items() {
+				ret = append(ret, listed{it.ws.String(), it.uri.String(), it.app})
+			}
+		})
+		return ret
+	}
+
+	t.Run("the programs of a saved state", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			restore bool
+			edit    func(*idehistory.State)
+			wantTab bool
+			want    []string
+		}{
+			{
+				name: "a program saved with its tab is listed with it", restore: true,
+				wantTab: true, want: []string{"agent"},
+			},
+			{
+				name: "a program whose tab was not saved is not listed", restore: true,
+				edit: func(s *idehistory.State) { s.Extensions = nil },
+			},
+			{
+				name: "a tab saved without its program comes back unlisted", restore: true,
+				edit:    func(s *idehistory.State) { s.Programs = nil },
+				wantTab: true,
+			},
+			{
+				name: "a program saved where no tab was is not listed", restore: true,
+				edit: func(s *idehistory.State) {
+					s.Programs = append(s.Programs, idehistory.Program{
+						URI: mustURI(t, "fake://host/nowhere"), App: "agent",
+					})
+				},
+				wantTab: true, want: []string{"agent"},
+			},
+			{
+				name: "a program saved without a uri is not listed", restore: true,
+				edit: func(s *idehistory.State) {
+					s.Programs = append([]idehistory.Program{{App: "agent"}}, s.Programs...)
+				},
+				wantTab: true, want: []string{"agent"},
+			},
+			{
+				name: "a program saved twice is listed once, with the app saved first", restore: true,
+				edit: func(s *idehistory.State) {
+					s.Programs = []idehistory.Program{{URI: uri, App: "first"}, {URI: uri, App: "second"}}
+				},
+				wantTab: true, want: []string{"first"},
+			},
+			{
+				name: "a program saved without an app is listed without one", restore: true,
+				edit:    func(s *idehistory.State) { s.Programs = []idehistory.Program{{URI: uri}} },
+				wantTab: true, want: []string{""},
+			},
+			{
+				name: "a session that is not restored lists no program",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				m, ws := reporting(t)
+				reopen(t, m, tt.restore, tt.edit)
+
+				_, ok := tabOf(t, m)
+				assert.Equal(t, tt.wantTab, ok, "whether the tab is back")
+				var want []listed
+				for _, app := range tt.want {
+					want = append(want, listed{ws.String(), uri.String(), app})
+				}
+				assert.Equal(t, want, listing(m))
+
+				reload(t, m)
+				assert.Equal(t, want, listing(m), "what is listed is saved again, and only that")
+			})
+		}
+	})
+
+	t.Run("the programs restored from the prompt", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			idx    int
+			option string
+			want   []string
+		}{
+			{name: "answered yes", idx: 0, option: yesOpt, want: []string{"agent"}},
+			{name: "answered no", idx: 1, option: noOpt},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				m, ws := reporting(t)
+				state := reopen(t, m, false, nil)
+				require.Empty(t, listing(m))
+				m.locked(func() {
+					newOpenRestorePromptHandler(m.workspaceManagerHandler, m.exHandler(m.focusHandler()),
+						ws, state, yesOpt, noOpt).OnSelect(tt.idx, tt.option)
+				})
+				m.quiesce()
+				var want []listed
+				for _, app := range tt.want {
+					want = append(want, listed{ws.String(), uri.String(), app})
+				}
+				assert.Equal(t, want, listing(m))
+
+				reload(t, m)
+				assert.Equal(t, want, listing(m), "what is listed is saved again, and only that")
+			})
+		}
+	})
+
+	t.Run("a restored program stays listed once its extension reopens its tab", func(t *testing.T) {
+		m, ws := reporting(t)
+		reload(t, m)
+		require.Equal(t, []listed{{ws.String(), uri.String(), "agent"}}, listing(m),
+			"the placeholder of the tab is listed")
+
+		h := browsertest.NewTestHandler()
+		rec := recordingOpener{h: h}
+		rec.register(t, m)
+		require.Eventually(t, func() bool { return showsHandler(m, h) },
+			2*time.Second, 10*time.Millisecond)
+		assert.Equal(t, []listed{{ws.String(), uri.String(), "agent"}}, listing(m))
+
+		m.locked(func() {
+			require.NoError(t, m.exHandler(m.focusHandler()).comp.SetTabStatus(uri, programstatus.Report{
+				State: programstatus.Working, Progress: -1, App: "fresh",
+			}))
+		})
+		m.quiesce()
+		assert.Equal(t, []listed{{ws.String(), uri.String(), "fresh"}}, listing(m),
+			"it lists what its program reports next")
+	})
+
 	// A second reload can land while the first one's placeholder is still
 	// being opened. The reloaded workspace saves the placeholder as the
 	// tab, and the open in flight belongs to the workspace that is gone: it

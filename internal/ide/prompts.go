@@ -96,7 +96,7 @@ func (h *openRestorePromptHandler) OnSelect(idx int, option string) {
 
 	switch option {
 	case h.restoreCwdOption:
-		err = h.wm.restorePreviousSession(h.ex, h.state)
+		err = h.wm.restorePreviousSession(h.ex, h.workspaceURI, h.state)
 	case h.noRestoreOption:
 		err = h.wm.state.ClearWorkspaceState(
 			context.Background(), h.workspaceURI)
