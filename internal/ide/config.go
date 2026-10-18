@@ -5056,10 +5056,12 @@ func (c ideConfig) terminalStatus() (config.Config, bool) {
 
 // statusInboxStyle reads terminal.status.programstatus, which styles
 // the selection of the status inbox. Its marker takes the color of the
-// marker of the focused tab, browser.focus_tab_highlight_attr.
+// marker of the focused tab, browser.focus_tab_highlight_attr, and its
+// lines the browser's frame.
 func (c ideConfig) statusInboxStyle() statusInboxStyle {
 	ret := defaultStatusInboxStyle()
 	ret.markerAttr = c.highlightTabAttr()
+	ret.frame = c.frameUnionCharset()
 	status, ok := c.terminalStatus()
 	if !ok {
 		return ret

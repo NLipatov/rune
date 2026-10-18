@@ -318,18 +318,18 @@ func TestStatusView(t *testing.T) {
 		{
 			name: "nothing reported",
 			steps: []statusViewStep{
-				{width: 45, height: 2, wantSize: []int{45, 2}, want: `
-                                 No preview  
- No program reported a status                `[1:]},
+				{width: 45, height: 2, wantSize: []int{47, statusMinHeight}, want: `
+                                │ No preview 
+  No program reported a status  │            `[1:]},
 				{keys: "jk<down><up>", want: `
-                                 No preview  
- No program reported a status                `[1:]},
+                                │ No preview 
+  No program reported a status  │            `[1:]},
 				{keys: "<enter>", wantShown: []string{}, want: `
-                                 No preview  
- No program reported a status                `[1:]},
+                                │ No preview 
+  No program reported a status  │            `[1:]},
 				{width: 20, height: 3, want: `
                     
- No program report  
+  No program repor  
                     `[1:]},
 			},
 		},
@@ -351,59 +351,59 @@ func TestStatusView(t *testing.T) {
 			steps: []statusViewStep{
 				{width: 40, height: 16, wantSize: []int{
 					// The widest line, "working · rune-agent", takes 20 cells.
-					statusTextX + 20 + statusPadRight + len(statusPreviewNone) + 4, 16,
+					statusTextX + 20 + statusPadRight + statusDividerWidth + len(statusPreviewNone) + 4, statusMinHeight,
 				}, want: `
-                                        
-▌! claude                               
-▌  blocked                              
-                                        
- ✗ terminal                             
-   error                                
-                                        
- ✓ make                    No preview   
-   done                                 
-                                        
- ⠋ agent                                
-   working · rune-agent                 
-   ╢░░░░░_________╟ 40%                 
-                                        
-   vim                                  
-   idle                                 `[1:]},
+                          │             
+ ▌! claude                │             
+ ▌  blocked               │             
+                          │             
+  ✗ terminal              │             
+    error                 │             
+                          │             
+  ✓ make                  │ No preview  
+    done                  │             
+                          │             
+  ⠋ agent                 │             
+    working · rune-agent  │             
+    ╢░░░░░_________╟ 40%  │             
+                          │             
+    vim                   │             
+    idle                  │             `[1:]},
 				// A tab never shown is fit to the preview.
 				{keys: "jjj", want: `
-                         agent0678901234
- ! claude                agent1678901234
-   blocked               agent2678901234
-                         agent3678901234
- ✗ terminal              agent4678901234
-   error                 agent5678901234
-                         agent6678901234
- ✓ make                  agent7678901234
-   done                  agent8678901234
-                         agent9678901234
-▌⠋ agent                 agent1078901234
-▌  working · rune-agent  agent1178901234
-▌  ╢░░░░░_________╟ 40%  agent1278901234
-                         agent1378901234
-   vim                   agent1478901234
-   idle                  agent1578901234`[1:]},
+                          │agent06789012
+  ! claude                │agent16789012
+    blocked               │agent26789012
+                          │agent36789012
+  ✗ terminal              │agent46789012
+    error                 │agent56789012
+                          │agent66789012
+  ✓ make                  │agent76789012
+    done                  │agent86789012
+                          │agent96789012
+ ▌⠋ agent                 │agent10789012
+ ▌  working · rune-agent  │agent11789012
+ ▌  ╢░░░░░_________╟ 40%  │agent12789012
+                          │agent13789012
+    vim                   │agent14789012
+    idle                  │agent15789012`[1:]},
 				{keys: "<enter>", wantShown: []string{"file:///agent"}, want: `
-                         agent0678901234
- ! claude                agent1678901234
-   blocked               agent2678901234
-                         agent3678901234
- ✗ terminal              agent4678901234
-   error                 agent5678901234
-                         agent6678901234
- ✓ make                  agent7678901234
-   done                  agent8678901234
-                         agent9678901234
-▌⠋ agent                 agent1078901234
-▌  working · rune-agent  agent1178901234
-▌  ╢░░░░░_________╟ 40%  agent1278901234
-                         agent1378901234
-   vim                   agent1478901234
-   idle                  agent1578901234`[1:]},
+                          │agent06789012
+  ! claude                │agent16789012
+    blocked               │agent26789012
+                          │agent36789012
+  ✗ terminal              │agent46789012
+    error                 │agent56789012
+                          │agent66789012
+  ✓ make                  │agent76789012
+    done                  │agent86789012
+                          │agent96789012
+ ▌⠋ agent                 │agent10789012
+ ▌  working · rune-agent  │agent11789012
+ ▌  ╢░░░░░_________╟ 40%  │agent12789012
+                          │agent13789012
+    vim                   │agent14789012
+    idle                  │agent15789012`[1:]},
 			},
 		},
 		{
@@ -416,140 +416,140 @@ func TestStatusView(t *testing.T) {
 				f.report("e", statusTestReport(done, "done", 70))
 			},
 			steps: []statusViewStep{{width: 40, height: 19, want: `
-                                        
-▌✓ done                                 
-▌  done                                 
-                                        
- ⠋ none                                 
-   working                              
-                                        
- ⠋ zero                                 
-   working                              
-   ╢______________╟ 0%     No preview   
-                                        
- ⠋ full                                 
-   working                              
-   ╢░░░░░░░░░░░░╟ 100%                  
-                                        
- ⠋ over                                 
-   working                              
-   ╢░░░░░░░░░░░░╟ 100%                  
-                                        `[1:]}},
+                        │               
+ ▌✓ done                │               
+ ▌  done                │               
+                        │               
+  ⠋ none                │               
+    working             │               
+                        │               
+  ⠋ zero                │               
+    working             │               
+    ╢_____________╟ 0%  │  No preview   
+                        │               
+  ⠋ full                │               
+    working             │               
+    ╢░░░░░░░░░░░╟ 100%  │               
+                        │               
+  ⠋ over                │               
+    working             │               
+    ╢░░░░░░░░░░░╟ 100%  │               
+                        │               `[1:]}},
 		},
 		{
 			name:  "navigation wraps around both ways",
 			setup: threeDone,
 			steps: []statusViewStep{
 				{width: 40, height: 9, want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "k", want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{keys: "<down>", want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "<c-j>", want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
-▌✓ b                       No preview   
-▌  done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+ ▌✓ b                   │  No preview   
+ ▌  done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "<c-n>", want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{keys: "<c-p><up>", want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "<c-k>", want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{keys: "j", want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "x<left><right>", want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "kk<enter>", wantShown: []string{"file:///b"}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
-▌✓ b                       No preview   
-▌  done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+ ▌✓ b                   │  No preview   
+ ▌  done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{keys: "<esc>q<c-c>", wantShown: []string{"file:///b"}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
-▌✓ b                       No preview   
-▌  done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+ ▌✓ b                   │  No preview   
+ ▌  done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 			},
 		},
 		{
@@ -561,54 +561,54 @@ func TestStatusView(t *testing.T) {
 			},
 			steps: []statusViewStep{
 				{width: 40, height: 6, want: `
-                                        
-▌✓ a                                    
-▌  done                    No preview   
-                                        
- ✓ b                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │  No preview   
+                        │               
+  ✓ b                   │               
+    done                │               `[1:]},
 				{keys: "jj", want: `
-                                        
- ✓ b                                    
-   done                    No preview   
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ b                   │               
+    done                │  No preview   
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{keys: "jj", want: `
-                                        
- ✓ d                                    
-   done                    No preview   
-                                        
-▌✓ e                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ d                   │               
+    done                │  No preview   
+                        │               
+ ▌✓ e                   │               
+ ▌  done                │               `[1:]},
 				{keys: "k", want: `
-                                        
-▌✓ d                                    
-▌  done                    No preview   
-                                        
- ✓ e                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ d                   │               
+ ▌  done                │  No preview   
+                        │               
+  ✓ e                   │               
+    done                │               `[1:]},
 				{keys: "j", want: `
-                                        
- ✓ d                                    
-   done                    No preview   
-                                        
-▌✓ e                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ d                   │               
+    done                │  No preview   
+                        │               
+ ▌✓ e                   │               
+ ▌  done                │               `[1:]},
 				{keys: "j", want: `
-                                        
-▌✓ a                                    
-▌  done                    No preview   
-                                        
- ✓ b                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │  No preview   
+                        │               
+  ✓ b                   │               
+    done                │               `[1:]},
 				{keys: "k", want: `
-                                        
- ✓ d                                    
-   done                    No preview   
-                                        
-▌✓ e                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ d                   │               
+    done                │  No preview   
+                        │               
+ ▌✓ e                   │               
+ ▌  done                │               `[1:]},
 			},
 		},
 		{
@@ -619,19 +619,19 @@ func TestStatusView(t *testing.T) {
 			},
 			steps: []statusViewStep{
 				{width: 40, height: 3, want: `
-                                        
-▌✓ a                       No preview   
-▌  done                                 `[1:]},
+                        │               
+ ▌✓ a                   │  No preview   
+ ▌  done                │               `[1:]},
 				{keys: "j", want: `
-                                        
-▌⠋ b                       No preview   
-▌  working                              `[1:]},
+                        │               
+ ▌⠋ b                   │  No preview   
+ ▌  working             │               `[1:]},
 				{width: 40, height: 2, want: `
-                           No preview   
-▌⠋ b                                    `[1:]},
+                        │  No preview   
+ ▌⠋ b                   │               `[1:]},
 				{keys: "k", want: `
-                           No preview   
-▌✓ a                                    `[1:]},
+                        │  No preview   
+ ▌✓ a                   │               `[1:]},
 			},
 		},
 		{
@@ -641,13 +641,13 @@ func TestStatusView(t *testing.T) {
 				f.report("b", statusTestReport(done, strings.Repeat("界", 25), -1))
 			},
 			steps: []statusViewStep{
-				{width: 60, height: 6, wantSize: []int{statusSidebarMax + len(statusPreviewNone) + 4, 6}, want: `
-                                                            
-▌✓ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa                      
-▌  done                                      No preview     
-                                                            
- ✓ 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界                        
-   done                                                     `[1:]},
+				{width: 60, height: 6, wantSize: []int{statusSidebarMax + statusDividerWidth + len(statusPreviewNone) + 4, statusMinHeight}, want: `
+                                        │                   
+ ▌✓ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  │                   
+ ▌  done                                │    No preview     
+                                        │                   
+  ✓ 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界 界   │                   
+    done                                │                   `[1:]},
 			},
 		},
 		{
@@ -656,20 +656,20 @@ func TestStatusView(t *testing.T) {
 			steps: []statusViewStep{
 				{width: 10, height: 3, want: `
           
-▌✓ a      
-▌  done   `[1:]},
+ ▌✓ a     
+ ▌  done  `[1:]},
 				{width: statusSidebarMin, height: 3, want: `
                         
-▌✓ a                    
-▌  done                 `[1:]},
+ ▌✓ a                   
+ ▌  done                `[1:]},
 				{width: statusSidebarMin + 1, height: 3, want: `
-                         
-▌✓ a                    N
-▌  done                  `[1:]},
+                        │
+ ▌✓ a                   │
+ ▌  done                │`[1:]},
 				{width: statusSidebarMin + 2, height: 3, want: `
-                          
-▌✓ a                    No
-▌  done                   `[1:]},
+                        │ 
+ ▌✓ a                   │N
+ ▌  done                │ `[1:]},
 			},
 		},
 		{
@@ -678,9 +678,9 @@ func TestStatusView(t *testing.T) {
 			steps: []statusViewStep{
 				{width: 0, height: 0, keys: "j", want: ""},
 				{width: 30, height: 3, want: `
-                              
-▌✓ b                    No pre
-▌  done                       `[1:]},
+                        │     
+ ▌✓ b                   │No pr
+ ▌  done                │     `[1:]},
 			},
 		},
 		{
@@ -691,65 +691,65 @@ func TestStatusView(t *testing.T) {
 			},
 			steps: []statusViewStep{
 				{width: 40, height: 9, keys: "j", want: `
-                                        
- ! a                                    
-   blocked                              
-                                        
-▌✓ b                       No preview   
-▌  done                                 
-                                        
-                                        
-                                        `[1:]},
+                        │               
+  ! a                   │               
+    blocked             │               
+                        │               
+ ▌✓ b                   │  No preview   
+ ▌  done                │               
+                        │               
+                        │               
+                        │               `[1:]},
 				{do: func(f *statusViewFixture) { f.report("c", statusTestReport(failed, "c", -1)) }, want: `
-                                        
- ! a                                    
-   blocked                              
-                                        
- ✗ c                       No preview   
-   error                                
-                                        
-▌✓ b                                    
-▌  done                                 `[1:]},
+                        │               
+  ! a                   │               
+    blocked             │               
+                        │               
+  ✗ c                   │  No preview   
+    error               │               
+                        │               
+ ▌✓ b                   │               
+ ▌  done                │               `[1:]},
 				{do: func(f *statusViewFixture) { f.report("b", statusTestReport(working, "b", 10)) }, want: `
-                                        
- ✗ c                                    
-   error                                
-                                        
-▌⠋ b                       No preview   
-▌  working                              
-▌  ╢░____________╟ 10%                  
-                                        
-                                        `[1:]},
+                        │               
+  ✗ c                   │               
+    error               │               
+                        │               
+ ▌⠋ b                   │  No preview   
+ ▌  working             │               
+ ▌  ╢░___________╟ 10%  │               
+                        │               
+                        │               `[1:]},
 				{do: func(f *statusViewFixture) { f.clear("b") }, want: `
-                                        
- ! a                                    
-   blocked                              
-                                        
-▌✗ c                       No preview   
-▌  error                                
-                                        
-                                        
-                                        `[1:]},
+                        │               
+  ! a                   │               
+    blocked             │               
+                        │               
+ ▌✗ c                   │  No preview   
+ ▌  error               │               
+                        │               
+                        │               
+                        │               `[1:]},
 				{do: func(f *statusViewFixture) { f.clear("a"); f.clear("c") }, want: `
-                                        
- No program reported a status           
-                                        
-                                        
-                               No previe
-                                        
-                                        
-                                        
-                                        `[1:]},
+                                │       
+  No program reported a status  │       
+                                │       
+                                │       
+                                │No prev
+                                │       
+                                │       
+                                │       
+                                │       `[1:]},
 				{do: func(f *statusViewFixture) { f.report("d", statusTestReport(done, "d", -1)) }, want: `
-                                        
-▌✓ d                                    
-▌  done                                 
-                                        
-                           No preview   
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+ ▌✓ d                   │               
+ ▌  done                │               
+                        │               
+                        │  No preview   
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 			},
 		},
 		{
@@ -757,71 +757,71 @@ func TestStatusView(t *testing.T) {
 			setup: threeDone,
 			steps: []statusViewStep{
 				{width: 40, height: 9, want: `
-                                        
-▌✓ a                                    
-▌  done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+ ▌✓ a                   │               
+ ▌  done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				// Either row of a program, at any column of the sidebar.
 				{events: []term.Event{statusTestClick(5, 5)}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
-▌✓ b                       No preview   
-▌  done                                 
-                                        
- ✓ c                                    
-   done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+ ▌✓ b                   │  No preview   
+ ▌  done                │               
+                        │               
+  ✓ c                   │               
+    done                │               `[1:]},
 				{events: []term.Event{statusTestClick(0, 7)}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				// A gap, the padding, the preview and other buttons select
 				// nothing.
 				{events: []term.Event{statusTestClick(5, 6)}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{events: []term.Event{statusTestClick(5, 0), statusTestClick(30, 1), statusTestClick(24, 1)}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 				{events: []term.Event{
 					{Type: term.EventMouse, Key: term.MouseWheelUp, MouseX: 1, MouseY: 1},
 					{Type: term.EventMouse, Key: term.MouseRight, MouseX: 1, MouseY: 1},
 				}, want: `
-                                        
- ✓ a                                    
-   done                                 
-                                        
- ✓ b                       No preview   
-   done                                 
-                                        
-▌✓ c                                    
-▌  done                                 `[1:]},
+                        │               
+  ✓ a                   │               
+    done                │               
+                        │               
+  ✓ b                   │  No preview   
+    done                │               
+                        │               
+ ▌✓ c                   │               
+ ▌  done                │               `[1:]},
 			},
 		},
 		{
@@ -846,35 +846,35 @@ func TestStatusView(t *testing.T) {
 				f.report("d", statusTestReport(working, "gone", -1))
 			},
 			steps: []statusViewStep{
-				{width: 40, height: 4, wantSize: []int{statusSidebarMin + 20, 12}, want: `
-                        L123456789012345
-▌! large                L223456789012345
-▌  blocked              L323456789012345
-                        L423456789012345`[1:]},
-				{keys: "j", wantSize: []int{statusSidebarMin + 4, 12}, want: `
-                        S023            
-▌✗ small                S123            
-▌  error                                
-                                        `[1:]},
-				{keys: "j", wantSize: []int{statusSidebarMin + statusPreviewWidth, statusPreviewHeight}, want: `
-                        H023456789012345
-▌✓ hidden               H123456789012345
-▌  done                 H223456789012345
-                        H323456789012345`[1:]},
+				{width: 40, height: 4, wantSize: []int{statusSidebarMin + statusDividerWidth + 20, statusMinHeight}, want: `
+                        │L12345678901234
+ ▌! large               │L22345678901234
+ ▌  blocked             │L32345678901234
+                        │L42345678901234`[1:]},
+				{keys: "j", wantSize: []int{statusSidebarMin + statusDividerWidth + 4, statusMinHeight}, want: `
+                        │S023           
+ ▌✗ small               │S123           
+ ▌  error               │               
+                        │               `[1:]},
+				{keys: "j", wantSize: []int{statusSidebarMin + statusDividerWidth + statusPreviewWidth, max(statusPreviewHeight, statusMinHeight)}, want: `
+                        │H02345678901234
+ ▌✓ hidden              │H12345678901234
+ ▌  done                │H22345678901234
+                        │H32345678901234`[1:]},
 				{keys: "j", want: `
-                                        
-▌⠋ gone                    No preview   
-▌  working                              
-                                        `[1:]},
+                        │               
+ ▌⠋ gone                │  No preview   
+ ▌  working             │               
+                        │               `[1:]},
 				// A preview drawing the inbox, as previewing the workspace it
 				// floats over would, leaves the nested inbox blank.
 				{do: func(f *statusViewFixture) {
 					f.preview("d", statusPreview{content: f.v, width: 15, height: 4})
 				}, want: `
-                                        
-▌⠋ gone                                 
-▌  working                              
-                                        `[1:]},
+                        │               
+ ▌⠋ gone                │               
+ ▌  working             │               
+                        │               `[1:]},
 			},
 		},
 		{
@@ -893,75 +893,75 @@ func TestStatusView(t *testing.T) {
 			},
 			steps: []statusViewStep{
 				{width: 40, height: 15, want: `
-                        agent06789012345
-▌! agent                agent16789012345
-▌  blocked · claude     agent26789012345
-                        agent36789012345
- ✗ test                 agent46789012345
-   error                agent56789012345
-                        agent66789012345
- ✓ make                 agent76789012345
-   done                 agent86789012345
-                        agent96789012345
- ⠋ build                agent10789012345
-   working              agent11789012345
-   ╢░░░░░________╟ 40%  agent12789012345
-                        agent13789012345
-   vim                  agent14789012345`[1:]},
+                        │agent0678901234
+ ▌! agent               │agent1678901234
+ ▌  blocked · claude    │agent2678901234
+                        │agent3678901234
+  ✗ test                │agent4678901234
+    error               │agent5678901234
+                        │agent6678901234
+  ✓ make                │agent7678901234
+    done                │agent8678901234
+                        │agent9678901234
+  ⠋ build               │agent1078901234
+    working             │agent1178901234
+    ╢░░░░________╟ 40%  │agent1278901234
+                        │agent1378901234
+    vim                 │agent1478901234`[1:]},
 				// Done with, it closes at once and the next program is
 				// selected.
 				{keys: "j<delete>", wantClosed: []string{"file:///test"}, wantConfirms: []string{}, want: `
-                                        
- ! agent                                
-   blocked · claude                     
-                                        
-▌✓ make                                 
-▌  done                                 
-                                        
- ⠋ build                   No preview   
-   working                              
-   ╢░░░░░________╟ 40%                  
-                                        
-   vim                                  
-   idle                                 
-                                        
-                                        `[1:]},
+                        │               
+  ! agent               │               
+    blocked · claude    │               
+                        │               
+ ▌✓ make                │               
+ ▌  done                │               
+                        │               
+  ⠋ build               │  No preview   
+    working             │               
+    ╢░░░░________╟ 40%  │               
+                        │               
+    vim                 │               
+    idle                │               
+                        │               
+                        │               `[1:]},
 				{keys: "<backspace>", wantClosed: []string{"file:///test", "file:///make"}, want: `
-                                        
- ! agent                                
-   blocked · claude                     
-                                        
-▌⠋ build                                
-▌  working                              
-▌  ╢░░░░░________╟ 40%                  
-                           No preview   
-   vim                                  
-   idle                                 
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+  ! agent               │               
+    blocked · claude    │               
+                        │               
+ ▌⠋ build               │               
+ ▌  working             │               
+ ▌  ╢░░░░________╟ 40%  │               
+                        │  No preview   
+    vim                 │               
+    idle                │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 				// At work, it is only closed once the user says so.
 				{keys: "<delete>", wantClosed: []string{"file:///test", "file:///make"}, wantConfirms: []string{
 					"Are you sure you want to close `build` in `1 home`? It is working.\n\n" +
 						"- working · build: Compiling — 40%",
 				}, want: `
-                                        
- ! agent                                
-   blocked · claude                     
-                                        
-▌⠋ build                                
-▌  working                              
-▌  ╢░░░░░________╟ 40%                  
-                           No preview   
-   vim                                  
-   idle                                 
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+  ! agent               │               
+    blocked · claude    │               
+                        │               
+ ▌⠋ build               │               
+ ▌  working             │               
+ ▌  ╢░░░░________╟ 40%  │               
+                        │  No preview   
+    vim                 │               
+    idle                │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 				// Waiting on the user, likewise.
 				{keys: "k<backspace>", wantClosed: []string{"file:///test", "file:///make"}, wantConfirms: []string{
 					"Are you sure you want to close `build` in `1 home`? It is working.\n\n" +
@@ -969,58 +969,58 @@ func TestStatusView(t *testing.T) {
 					"Are you sure you want to close `agent` in `1 home`? It is blocked.\n\n" +
 						"- blocked · claude (tool/edit): Allow edit? — edit main.go",
 				}, want: `
-                        agent06789012345
-▌! agent                agent16789012345
-▌  blocked · claude     agent26789012345
-                        agent36789012345
- ⠋ build                agent46789012345
-   working              agent56789012345
-   ╢░░░░░________╟ 40%  agent66789012345
-                        agent76789012345
-   vim                  agent86789012345
-   idle                 agent96789012345
-                        agent10789012345
-                        agent11789012345
-                        agent12789012345
-                        agent13789012345
-                        agent14789012345`[1:]},
+                        │agent0678901234
+ ▌! agent               │agent1678901234
+ ▌  blocked · claude    │agent2678901234
+                        │agent3678901234
+  ⠋ build               │agent4678901234
+    working             │agent5678901234
+    ╢░░░░________╟ 40%  │agent6678901234
+                        │agent7678901234
+    vim                 │agent8678901234
+    idle                │agent9678901234
+                        │agent1078901234
+                        │agent1178901234
+                        │agent1278901234
+                        │agent1378901234
+                        │agent1478901234`[1:]},
 				{do: func(f *statusViewFixture) { f.host.yes() }, wantClosed: []string{
 					"file:///test", "file:///make", "file:///agent",
 				}, want: `
-                                        
-▌⠋ build                                
-▌  working                              
-▌  ╢░░░░░________╟ 40%                  
-                                        
-   vim                                  
-   idle                                 
-                           No preview   
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+ ▌⠋ build               │               
+ ▌  working             │               
+ ▌  ╢░░░░________╟ 40%  │               
+                        │               
+    vim                 │               
+    idle                │               
+                        │  No preview   
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 				// Idle, it closes at once.
 				{keys: "j<delete>", wantClosed: []string{
 					"file:///test", "file:///make", "file:///agent", "file:///vim",
 				}, want: `
-                                        
-▌⠋ build                                
-▌  working                              
-▌  ╢░░░░░________╟ 40%                  
-                                        
-                                        
-                                        
-                           No preview   
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+ ▌⠋ build               │               
+ ▌  working             │               
+ ▌  ╢░░░░________╟ 40%  │               
+                        │               
+                        │               
+                        │               
+                        │  No preview   
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 				{keys: "<delete>", wantConfirms: []string{
 					"Are you sure you want to close `build` in `1 home`? It is working.\n\n" +
 						"- working · build: Compiling — 40%",
@@ -1029,55 +1029,55 @@ func TestStatusView(t *testing.T) {
 					"Are you sure you want to close `build` in `1 home`? It is working.\n\n" +
 						"- working · build: Compiling — 40%",
 				}, want: `
-                                        
-▌⠋ build                                
-▌  working                              
-▌  ╢░░░░░________╟ 40%                  
-                                        
-                                        
-                                        
-                           No preview   
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                        │               
+ ▌⠋ build               │               
+ ▌  working             │               
+ ▌  ╢░░░░________╟ 40%  │               
+                        │               
+                        │               
+                        │               
+                        │  No preview   
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               
+                        │               `[1:]},
 				{do: func(f *statusViewFixture) { f.host.yes() }, want: `
-                                        
- No program reported a status           
-                                        
-                                        
-                                        
-                                        
-                                        
-                               No previe
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                                │       
+  No program reported a status  │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │No prev
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       `[1:]},
 				{keys: "<delete><backspace>", wantClosed: []string{
 					"file:///test", "file:///make", "file:///agent", "file:///vim", "file:///build",
 				}, want: `
-                                        
- No program reported a status           
-                                        
-                                        
-                                        
-                                        
-                                        
-                               No previe
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        
-                                        `[1:]},
+                                │       
+  No program reported a status  │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │No prev
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       
+                                │       `[1:]},
 			},
 		},
 	} {
@@ -1252,10 +1252,10 @@ func TestStatusViewPreview(t *testing.T) {
 
 	v := store.view()
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
-	const sideW = statusSidebarMin
+	const sideW = statusSidebarMin + statusDividerWidth
 	w, h := v.Dimensions()
-	assert.Equal(t, []int{sideW + statusPreviewWidth, statusPreviewHeight}, []int{w, h},
-		"a tab never sized asks for the default size")
+	assert.Equal(t, []int{sideW + statusPreviewWidth, max(statusPreviewHeight, statusMinHeight)}, []int{w, h},
+		"a tab never sized asks for the default size, and the view for no less than its least height")
 
 	const width, height = sideW + 30, 12
 	draw := func() []string {
@@ -1286,7 +1286,7 @@ func TestStatusViewPreview(t *testing.T) {
 	v.move(1)
 	assert.Equal(t, preview("t", 0, 5, 20), draw(), "a terminal outside of a tab is previewed in its window")
 	w, h = v.Dimensions()
-	assert.Equal(t, []int{sideW + 20, 12}, []int{w, h}, "the sidebar is taller than the terminal")
+	assert.Equal(t, []int{sideW + 20, statusMinHeight}, []int{w, h}, "the view keeps its least height over a short terminal")
 	v.move(1)
 	assert.Contains(t, strings.Join(draw(), "\n"), statusPreviewNone, "a terminal whose window is gone")
 	// Given less than the tab, the preview leaves out its top rows and
@@ -1309,7 +1309,8 @@ func TestStatusViewPreview(t *testing.T) {
 	resizedW, resizedH := boundTab.ContentSize()
 	require.NotEqual(t, []int{boundW, boundH}, []int{resizedW, resizedH})
 	w, h = v.Dimensions()
-	assert.Equal(t, []int{sideW + resizedW, resizedH}, []int{w, h}, "the view follows the size of the tab")
+	assert.Equal(t, []int{sideW + resizedW, max(resizedH, statusMinHeight)}, []int{w, h},
+		"the view follows the size of the tab")
 
 	assert.Zero(t, free.events, "the previewed tab receives no input")
 	assert.Zero(t, bound.events, "the previewed tab receives no input")
@@ -1336,9 +1337,9 @@ func TestStatusViewHiddenPreview(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	require.Equal(t, hidden.String(), v.sel.uri)
 
-	const sideW = statusSidebarMin
+	const sideW = statusSidebarMin + statusDividerWidth
 	w, h := v.Dimensions()
-	assert.Equal(t, []int{sideW + statusPreviewWidth, statusPreviewHeight}, []int{w, h},
+	assert.Equal(t, []int{sideW + statusPreviewWidth, max(statusPreviewHeight, statusMinHeight)}, []int{w, h},
 		"what is shown nowhere asks for the default size")
 	const width, height = sideW + 20, 6
 	v.Resize(width, height)
@@ -1390,16 +1391,16 @@ func TestStatusViewStyle(t *testing.T) {
 	}
 	require.Equal(t, []string{
 		"",
-		"▌! terminal",
-		"▌  blocked",
+		" ▌! terminal",
+		" ▌  blocked",
 		"",
-		" ✓ terminal",
-		"   done",
+		"  ✓ terminal",
+		"    done",
 		"",
-		" ⠋ terminal",
-		"   working",
-		"   ╢░░░░░░_______╟ 50%",
-	}, got, "the title and the message are left to the preview, past a row of padding")
+		"  ⠋ terminal",
+		"    working",
+		"    ╢░░░░░░______╟ 50%",
+	}, got, "the title and the message are left to the preview, past a row and a column of padding")
 
 	attrs := func(y, from, to int) []term.Attributes {
 		var ret []term.Attributes
@@ -1426,19 +1427,24 @@ func TestStatusViewStyle(t *testing.T) {
 		{name: "done", y: 4, icon: term.Attributes{Fg: term.ColorSilver}, label: term.Attributes{Fg: term.ColorGreen}, state: term.Attributes{Fg: term.ColorGreen}},
 		{name: "working", y: 7, icon: term.Attributes{Fg: term.ColorYellow}, state: term.Attributes{Fg: term.ColorYellow}},
 	} {
-		assert.Equal(t, tc.icon, cells[tc.y][1].Attributes(), "%s icon", tc.name)
+		assert.Equal(t, tc.icon, cells[tc.y][statusIconX].Attributes(), "%s icon", tc.name)
 		assert.Equal(t, repeat(tc.label, len("terminal")), attrs(tc.y, statusTextX, statusTextX+len("terminal")), "%s name", tc.name)
 		assert.Equal(t, repeat(tc.state, len(tc.name)), attrs(tc.y+1, statusTextX, statusTextX+len(tc.name)), "%s state", tc.name)
 	}
 	marker := term.Attributes{Fg: statusTestStyle().markerAttr.Fg, Bg: statusTestStyle().selectedAttr.Bg}
+	selEnd := statusSidebarMin - statusPadRight
 	for _, y := range []int{1, 2} {
-		assert.Equal(t, marker, cells[y][0].Attributes(),
+		assert.Equal(t, marker, cells[y][statusPadLeft].Attributes(),
 			"the marker at %d is styled as the marker of the focused tab, over the selection", y)
-		assert.Equal(t, repeat(statusTestStyle().selectedAttr, 5), attrs(y, statusSidebarMin-5, statusSidebarMin),
-			"the selection paints the whole width of row %d", y)
-		assert.Equal(t, term.Attributes{}, cells[y][statusSidebarMin].Attributes(),
-			"the selection stops at the sidebar, with no line beside it")
-		assert.Equal(t, rune(0), cells[y][statusSidebarMin].Ch)
+		assert.Equal(t, repeat(statusTestStyle().selectedAttr, 5), attrs(y, selEnd-5, selEnd),
+			"the selection paints row %d up to the padding", y)
+		assert.Equal(t, repeat(term.Attributes{}, statusPadLeft), attrs(y, 0, statusPadLeft),
+			"the left padding of row %d is not selected", y)
+		assert.Equal(t, repeat(term.Attributes{}, statusPadRight), attrs(y, selEnd, statusSidebarMin),
+			"the right padding of row %d is not selected", y)
+		assert.Equal(t, statusTestStyle().frame.VerticalLeft, cells[y][statusSidebarMin].Ch,
+			"a line stands between the sidebar and the preview")
+		assert.Equal(t, statusMutedAttr, cells[y][statusSidebarMin].Attributes())
 	}
 	assert.Equal(t, repeat(term.Attributes{}, statusSidebarMin), attrs(0, 0, statusSidebarMin), "the padding is not selected")
 	assert.Equal(t, repeat(term.Attributes{}, statusSidebarMin), attrs(3, 0, statusSidebarMin), "the gap is not selected")
@@ -1458,9 +1464,9 @@ func TestStatusViewSpinnerTurns(t *testing.T) {
 		v.Draw(w)
 		return w.RawCells()
 	}
-	// The program spins in the second column of its first row, below the
+	// The program spins where its icon is, in its first row, below the
 	// padding; nothing else moves.
-	spinning := []term.Coordinates{{X: 1, Y: 1}}
+	spinning := []term.Coordinates{{X: statusIconX, Y: statusPadTop}}
 	still := func(cells [][]term.Cell) [][]term.Cell {
 		for _, at := range spinning {
 			cells[at.Y][at.X] = term.Cell{}

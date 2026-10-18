@@ -705,14 +705,24 @@ const (
 	// sidebar, padding included.
 	statusSidebarMin = 24
 	statusSidebarMax = 40
-	// statusPadTop is the empty rows above the first program, and
+	// statusDividerWidth is the line between the programs and the
+	// preview.
+	statusDividerWidth = 1
+	// statusMinHeight is the least height the view asks for, for the
+	// inbox to keep its size as programs come and go.
+	statusMinHeight = 40
+	// statusPadTop is the empty rows above the first program,
+	// statusPadLeft the empty columns left of the marker, and
 	// statusPadRight the empty columns between the longest text of the
-	// sidebar and the preview.
+	// sidebar and the preview. The selection leaves the padding alone.
 	statusPadTop   = 1
+	statusPadLeft  = 1
 	statusPadRight = 2
-	// statusTextX is the column names start at in the sidebar, past the
-	// marker, the icon and a space.
-	statusTextX = 3
+	// statusIconX is the column icons are at in the sidebar, past the
+	// marker, and statusTextX the column names start at, past the icon
+	// and a space.
+	statusIconX = statusPadLeft + 1
+	statusTextX = statusIconX + 2
 	// statusGap is the empty rows between two programs.
 	statusGap = 1
 )
@@ -728,6 +738,8 @@ type statusInboxStyle struct {
 	// over the background of selectedAttr, which styles the rest of it.
 	marker                   rune
 	markerAttr, selectedAttr term.Attributes
+	// frame draws the line between the programs and the preview.
+	frame component.FrameUnionCharSet
 }
 
 func defaultStatusInboxStyle() statusInboxStyle {
@@ -735,6 +747,7 @@ func defaultStatusInboxStyle() statusInboxStyle {
 		marker:       '▌',
 		markerAttr:   browser.DefaultConfig().FocusTabHighlightAttr,
 		selectedAttr: term.Attributes{Bg: term.ColorGray},
+		frame:        component.DefaultFrameUnionCharSet(),
 	}
 }
 
@@ -907,7 +920,7 @@ func (v *statusView) entryHeights() []int {
 // programs and the gaps between them below statusPadTop.
 func (v *statusView) sidebarSize() (int, int) {
 	if len(v.entries) == 0 {
-		w := 1 + graphemecluster.StringWidth(statusViewEmpty) + statusPadRight
+		w := statusIconX + graphemecluster.StringWidth(statusViewEmpty) + statusPadRight
 		return min(max(w, statusSidebarMin), statusSidebarMax), statusPadTop + 1
 	}
 	w := 0
@@ -957,7 +970,7 @@ func (v *statusView) sizePreview() {
 	if !ok || p.fit == nil {
 		return
 	}
-	width := v.width - v.sidebarWidth()
+	width := v.width - v.sidebarWidth() - statusDividerWidth
 	if width <= 0 || v.height <= 0 {
 		return
 	}
@@ -988,9 +1001,17 @@ func (v *statusView) Draw(w term.Writer) {
 	if sideW >= v.width {
 		return
 	}
+	divider := term.NewCell(v.store.style.frame.VerticalLeft, 1, statusMutedAttr)
+	for y := range v.height {
+		w.SetCell(term.Coordinates{X: sideW, Y: y}, divider)
+	}
+	x := sideW + statusDividerWidth
+	if x >= v.width {
+		return
+	}
 	v.drawPreview(&component.VirtualWriter{
-		Writer: w, Offset: term.Coordinates{X: sideW}, Width: v.width - sideW, Height: v.height,
-	}, v.width-sideW, v.height)
+		Writer: w, Offset: term.Coordinates{X: x}, Width: v.width - x, Height: v.height,
+	}, v.width-x, v.height)
 }
 
 // drawSidebar draws the programs into w, which is width cells wide,
@@ -998,7 +1019,7 @@ func (v *statusView) Draw(w term.Writer) {
 func (v *statusView) drawSidebar(w term.Writer, width int) {
 	v.rows = slices.Repeat([]int{-1}, v.height)
 	if len(v.entries) == 0 {
-		statusText(w, 1, statusPadTop, statusViewEmpty, statusMutedAttr, width-statusPadRight)
+		statusText(w, statusIconX, statusPadTop, statusViewEmpty, statusMutedAttr, width-statusPadRight)
 		return
 	}
 	sel := v.resolve()
@@ -1006,6 +1027,7 @@ func (v *statusView) drawSidebar(w term.Writer, width int) {
 	heights := v.entryHeights()
 	v.top = statusScroll(v.top, sel, heights, v.height-statusPadTop)
 	y := statusPadTop
+	selEnd := width - statusPadRight
 	for i := v.top; i < len(heights); i++ {
 		if i > v.top {
 			y += statusGap
@@ -1017,7 +1039,7 @@ func (v *statusView) drawSidebar(w term.Writer, width int) {
 		if i == sel {
 			blank := term.NewCell(' ', 1, style.selectedAttr)
 			for dy := range rows {
-				for x := range width {
+				for x := statusPadLeft; x < selEnd; x++ {
 					w.SetCell(term.Coordinates{X: x, Y: y + dy}, blank)
 				}
 			}
@@ -1028,11 +1050,11 @@ func (v *statusView) drawSidebar(w term.Writer, width int) {
 			if i != sel {
 				continue
 			}
-			for x := range width {
+			for x := statusPadLeft; x < selEnd; x++ {
 				w.UnionAttributes(term.Coordinates{X: x, Y: y + dy}, style.selectedAttr)
 			}
-			statusText(w, 0, y+dy, string(style.marker),
-				term.AttributesUnion(style.markerAttr, term.Attributes{Bg: style.selectedAttr.Bg}), 1)
+			statusText(w, statusPadLeft, y+dy, string(style.marker),
+				term.AttributesUnion(style.markerAttr, term.Attributes{Bg: style.selectedAttr.Bg}), statusIconX)
 		}
 		y += heights[i]
 	}
@@ -1049,7 +1071,7 @@ func (v *statusView) drawEntry(w term.Writer, i, y, width int) {
 			icon = frame
 		}
 	}
-	statusText(w, 1, y, icon, e.iconAttr, statusTextX)
+	statusText(w, statusIconX, y, icon, e.iconAttr, statusTextX)
 	nameAttr := e.nameAttr
 	if i == v.hover {
 		nameAttr = term.AttributesUnion(statusBoldAttr, nameAttr)
@@ -1310,15 +1332,15 @@ func (v *statusView) Close() error {
 
 // Dimensions returns the size of the sidebar beside that of the
 // preview, which follows the size of what it shows as it changes, and
-// is at least minWidth wide.
+// is at least minWidth wide and statusMinHeight high.
 func (v *statusView) Dimensions() (int, int) {
 	sideW, sideH := v.sidebarSize()
 	w, h := v.previewSize()
-	width := sideW + w
+	width := sideW + statusDividerWidth + w
 	if v.minWidth != nil {
 		width = max(width, v.minWidth())
 	}
-	return width, max(sideH, h)
+	return width, max(sideH, h, statusMinHeight)
 }
 
 // statusTicker wakes the host at a fixed cadence and counts the frames
