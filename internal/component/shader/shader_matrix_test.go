@@ -25,6 +25,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestMatrix_Reveal(t *testing.T) {
+	testReveal(t, textStays, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultMatrixParams()
+		params.From = from
+		return shader.Matrix(params, defaultAttr)
+	})
+}
+
 func TestMatrix_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Matrix(shader.DefaultMatrixParams(), term.Attributes{}))
 }

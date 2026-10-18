@@ -231,8 +231,11 @@ config = {
         # Plays the intro of the built-in logo when Rune starts. Your own
         # wallpapers have no intro.
         "intro": True,
-        # Plays when a workspace finishes installing. The default
-        # is a quick burn sweep that reveals the new content.
+        # Plays when a workspace finishes opening.
+        # "shader" is any shader of :shaderrun. The reveals uncover the
+        # workspace from the screen it takes over: burn, beams,
+        # binaryPath, decrypt, expand, matrix, middleOut, pour, print,
+        # rain and slide.
         "open_workspace": {
             "enabled":  True,
             #"shader":   "burn",

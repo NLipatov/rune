@@ -60,12 +60,9 @@ func TestOpenShaderBurnsThePicturesOfTheLoadingScreenIntoTheNewOnes(t *testing.T
 	require.Positive(t, loading.Progress())
 	require.Less(t, loading.Progress(), 1.0)
 
-	open := openShader(defAttr)
-	reveal, ok := open.(shader.Reveal)
-	require.True(t, ok, "the open shader takes the screen it burns away")
-	reveal.SetInitialCells(term.CloneCells(oldCells))
-	reveal.SetInitialImages(oldImages)
-	reveal.SetInitialDesaturation(loading.Progress())
+	open := openShader(defAttr, shader.Snapshot{
+		Cells: oldCells, Images: oldImages, Desaturation: loading.Progress(),
+	})
 	total := int(openShaderDuration / (time.Second / openShaderFPS))
 	shade := func(frame int) []term.Image {
 		return shader.ShadeImages(open, frame, total, term.CloneCells(newCells), slices.Clone(newImages))

@@ -31,6 +31,14 @@ func TestRain_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Rain(shader.DefaultRainParams(), term.Attributes{}))
 }
 
+func TestRain_Reveal(t *testing.T) {
+	testReveal(t, textStays, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultRainParams()
+		params.From = from
+		return shader.Rain(params, defaultAttr)
+	})
+}
+
 func TestRain_EdgeCases(t *testing.T) {
 	testShaderEdgeCases(t, func(defaultAttr term.Attributes) shader.Shader {
 		return shader.Rain(shader.DefaultRainParams(), defaultAttr)

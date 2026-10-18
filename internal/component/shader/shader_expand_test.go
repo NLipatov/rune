@@ -27,6 +27,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestExpand_Reveal(t *testing.T) {
+	testReveal(t, textMoves, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultExpandParams()
+		params.From = from
+		return shader.Expand(params, defaultAttr)
+	})
+}
+
 func TestExpand_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Expand(shader.DefaultExpandParams(), term.Attributes{}))
 }

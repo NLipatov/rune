@@ -54,10 +54,9 @@ func fakeLoadingShader() func(term.Attributes) shader.Shader {
 
 func newTestShaderRunner(loading, open loadingShaderConfig) *shaderRunner {
 	r := new(shaderRunner)
-	openCfg := openShaderConfig{
-		shader:   open.shader,
-		fps:      open.fps,
-		duration: open.duration,
+	openCfg := openShaderConfig{fps: open.fps, duration: open.duration}
+	if open.shader != nil {
+		openCfg.shader = func(attr term.Attributes, _ shader.Snapshot) shader.Shader { return open.shader(attr) }
 	}
 	r.init(handler.Nop(), term.NopInterrupter(), term.Attributes{},
 		nopShutdownShaderConfig(), loading, openCfg,
@@ -163,7 +162,7 @@ func TestBuildNamedShaderRegistersEveryListedName(t *testing.T) {
 	defAttr := term.Attributes{}
 	fc := component.FrameCharSetDefault()
 	for _, name := range namedShaderNames() {
-		sh, ok := buildNamedShader(name, defAttr, fc, defaultShaderFPS)
+		sh, ok := buildNamedShader(name, defAttr, fc, shader.Snapshot{}, defaultShaderFPS)
 		assert.True(t, ok,
 			"buildNamedShader must register %q (listed by namedShaderNames)",
 			name)
@@ -213,7 +212,7 @@ func TestBuildNamedShaderPlaysTheFireAtItsPace(t *testing.T) {
 		}
 		for _, d := range []time.Duration{time.Second, 10 * time.Second, 5 * time.Minute} {
 			t.Run(fmt.Sprintf("%s/%s", tc.name, d), func(t *testing.T) {
-				s, ok := buildNamedShader(tc.name, attr, fc, fps)
+				s, ok := buildNamedShader(tc.name, attr, fc, shader.Snapshot{}, fps)
 				require.True(t, ok)
 				total := int(d / frame)
 				// Midway through the run, clear of its fades.
@@ -286,8 +285,10 @@ func TestShaderRunnerOpenShaderStartsOnThePicturesOnScreen(t *testing.T) {
 			fps: 1, duration: 10 * time.Second,
 		},
 		openShaderConfig{
-			shader: func(attr term.Attributes) shader.Shader {
-				return shader.Burn(shader.DefaultBurnParams(), attr)
+			shader: func(attr term.Attributes, from shader.Snapshot) shader.Shader {
+				params := shader.DefaultBurnParams()
+				params.From = from
+				return shader.Burn(params, attr)
 			},
 			fps: 1, duration: 10 * time.Second,
 		},
@@ -318,6 +319,74 @@ func TestShaderRunnerOpenShaderStartsOnThePicturesOnScreen(t *testing.T) {
 	want, got := shown.Images()[0], first.Images()[0]
 	assert.Equal(t, want.Visible(), got.Visible())
 	assert.Equal(t, want.Src.(*image.RGBA).Pix, got.Src.(*image.RGBA).Pix)
+}
+
+func TestShaderRunnerOpenShaderRevealsThePreviousScreen(t *testing.T) {
+	const cols, rows = 40, 12
+	for _, name := range []string{
+		"burn", "beams", "binaryPath", "decrypt", "expand", "matrix", "middleOut",
+		"pour", "print", "rain", "slide",
+	} {
+		t.Run(name, func(t *testing.T) {
+			screen := &swappable{Component: &filled{ch: 'O'}}
+			r := new(shaderRunner)
+			r.init(handler.NopFromComponent(screen), term.NopInterrupter(), term.Attributes{},
+				nopShutdownShaderConfig(),
+				loadingShaderConfig{
+					shader: func(attr term.Attributes) shader.Shader {
+						return shader.GrayFade(shader.DefaultGrayFadeParams(), attr)
+					},
+					fps: 1, duration: 10 * time.Second,
+				},
+				openShaderConfig{
+					shader: func(attr term.Attributes, from shader.Snapshot) shader.Shader {
+						s, ok := buildNamedShader(name, attr, component.FrameCharSetDefault(), from, 1)
+						require.True(t, ok)
+						return s
+					},
+					fps: 1, duration: 10 * time.Second,
+				},
+				component.FrameCharSetDefault())
+			t.Cleanup(func() { _ = r.shader.Close() })
+			r.Resize(cols, rows)
+			draw := func() [][]term.Cell {
+				buf := cell.NewBufferWriter(context.Background(), cols, rows)
+				r.Draw(buf)
+				return buf.RawCells()
+			}
+
+			r.startLoading()
+			draw()
+			r.captureOpenShaderCells()
+			screen.swap(&filled{ch: 'N'})
+			r.stopLoading()
+			old := 0
+			for _, row := range draw() {
+				for _, c := range row {
+					if c.Ch == 'O' {
+						old++
+					}
+				}
+			}
+			assert.GreaterOrEqual(t, old, cols*rows*3/4, "the first frame shows the screen the workspace took over")
+		})
+	}
+}
+
+// filled is a component every cell of which shows ch.
+type filled struct {
+	ch            rune
+	width, height int
+}
+
+func (f *filled) Resize(width, height int) { f.width, f.height = width, height }
+
+func (f *filled) Draw(w term.Writer) {
+	for y := range f.height {
+		for x := range f.width {
+			w.SetCell(term.Coordinates{X: x, Y: y}, term.NewCell(f.ch, 1, term.Attributes{Fg: term.ColorWhite}))
+		}
+	}
 }
 
 // swappable is a component whose content can be replaced, like the

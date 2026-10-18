@@ -25,7 +25,7 @@ import (
 // the bottom row of the canvas, left to right, its characters blocking
 // in through TypingSymbols from TypedColor to their own, and the rows
 // printed so far scroll up a row as the print head carries back for
-// the next one.
+// the next one, over [PrintParams.From].
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -33,7 +33,7 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "print" effect.
-func Print(params PrintParams, defaultAttr term.Attributes) Shader {
+func Print(params PrintParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultPrintParams()
 	params.HeadSymbol = checkSymbol("PrintParams.HeadSymbol", params.HeadSymbol, d.HeadSymbol)
 	params.HeadColor = orDefault(params.HeadColor, d.HeadColor)
@@ -42,7 +42,9 @@ func Print(params PrintParams, defaultAttr term.Attributes) Shader {
 	params.ReturnEasing = checkEasing("PrintParams.ReturnEasing", params.ReturnEasing, d.ReturnEasing)
 	params.ReturnSpeed = capPositive("PrintParams.ReturnSpeed", orDefault(params.ReturnSpeed, d.ReturnSpeed), 1e-3, 1e3)
 	params.PrintSpeed = capPositive("PrintParams.PrintSpeed", orDefault(params.PrintSpeed, d.PrintSpeed), 1e-3, 1e3)
-	return &printer{PrintParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &printer{PrintParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // PrintParams configures [Print].
@@ -64,6 +66,8 @@ type PrintParams struct {
 	// (range (0, ∞), capped to [1e-3, 1e3])
 	ReturnSpeed float64
 	PrintSpeed  float64
+	// From is the screen the printout scrolls up over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultPrintParams returns the terminaltexteffects defaults: a block
@@ -83,6 +87,7 @@ func DefaultPrintParams() PrintParams {
 type printer struct {
 	PrintParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 // printRow is the extent of a row to print and when it prints.
@@ -98,13 +103,17 @@ type printRow struct {
 const printTypeAnim = 0.02
 
 func (s *printer) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *printer) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *printer) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
 	plan := s.plan(glyphs, rows)
@@ -139,7 +148,10 @@ func (s *printer) Shade(frame, total int, cells [][]term.Cell) {
 			places[i].fg = fadeFg(float64(step)/float64(len(s.TypingSymbols)), s.TypedColor, g.cell.Fg, s.defaultAttr.Fg)
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	// The rows printed so far show bottom-current rows below their place.
+	// The rows printed so far show bottom-current rows below their place.
+	s.from.shift(bottom - current)
+	s.from.place(cells, glyphs, places)
 	// The head shows carrying back to the current row.
 	row := plan[current]
 	if current > 0 && t < row.typing {
@@ -147,6 +159,9 @@ func (s *printer) Shade(frame, total int, cells [][]term.Cell) {
 		p := s.ReturnEasing(window(t, row.start, row.typing-row.start))
 		putChar(cells, roundInt(lerp(from, float64(row.first), p)), bottom, s.HeadSymbol, s.HeadColor)
 	}
+	// The printout covers the backdrop a row higher each time the head
+	// carries back to a new row.
+	return func(_, y int) float64 { return plan[bottom-y].start }
 }
 
 // plan returns the extent and timing of every row: a row prints from

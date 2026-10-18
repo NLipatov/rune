@@ -78,7 +78,7 @@ type loadingShaderConfig struct {
 }
 
 type openShaderConfig struct {
-	shader   func(term.Attributes) shader.Shader
+	shader   func(term.Attributes, shader.Snapshot) shader.Shader
 	fps      int
 	duration time.Duration
 }
@@ -197,7 +197,7 @@ func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
 		}
 	}
 
-	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, r.fc, fps)
+	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, r.fc, shader.Snapshot{}, fps)
 	if !ok {
 		err = errors.New("expected one of the available shaders")
 		return
@@ -261,11 +261,13 @@ func namedShaderNames() []string {
 
 // buildNamedShader returns the shader registered under name with the
 // default parameters used by the :shaderrun showroom, wrapped in the
-// same cross-fade transitions when applicable, played at fps. The fires
-// play at the pace of their showroomCycle however long they play.
-// Returns ok=false when name does not match any known shader.
+// same cross-fade transitions when applicable, played at fps. The reveal
+// shaders start from from rather than a blank screen, or the screen
+// shaded for burn, when it has cells. The fires play at the pace of
+// their showroomCycle however long they play. Returns ok=false when name
+// does not match any known shader.
 func buildNamedShader(
-	name string, defAttr term.Attributes, fc component.FrameCharSet, fps int,
+	name string, defAttr term.Attributes, fc component.FrameCharSet, from shader.Snapshot, fps int,
 ) (shader.Shader, bool) {
 	const (
 		fadeInPerc  = 0.1
@@ -292,7 +294,9 @@ func buildNamedShader(
 	case "bomb":
 		return shader.Bomb(shader.DefaultBombParams(), defAttr), true
 	case "burn":
-		return shader.Burn(shader.DefaultBurnParams(), defAttr), true
+		params := shader.DefaultBurnParams()
+		params.From = from
+		return shader.Burn(params, defAttr), true
 	case "embers":
 		return wrapShaderCrossFadeInOut(
 			glslshader.Embers(glslshader.DefaultEmbersParams(), defAttr),
@@ -356,29 +360,49 @@ func buildNamedShader(
 	case "grayFade":
 		return shader.GrayFade(shader.DefaultGrayFadeParams(), defAttr), true
 	case "beams":
-		return shader.Beams(shader.DefaultBeamsParams(), defAttr), true
+		params := shader.DefaultBeamsParams()
+		params.From = from
+		return shader.Beams(params, defAttr), true
 	case "binaryPath":
-		return shader.BinaryPath(shader.DefaultBinaryPathParams(), defAttr), true
+		params := shader.DefaultBinaryPathParams()
+		params.From = from
+		return shader.BinaryPath(params, defAttr), true
 	case "crumble":
 		return shader.Crumble(shader.DefaultCrumbleParams(), defAttr), true
 	case "decrypt":
-		return shader.Decrypt(shader.DefaultDecryptParams(), defAttr), true
+		params := shader.DefaultDecryptParams()
+		params.From = from
+		return shader.Decrypt(params, defAttr), true
 	case "expand":
-		return shader.Expand(shader.DefaultExpandParams(), defAttr), true
+		params := shader.DefaultExpandParams()
+		params.From = from
+		return shader.Expand(params, defAttr), true
 	case "matrix":
-		return shader.Matrix(shader.DefaultMatrixParams(), defAttr), true
+		params := shader.DefaultMatrixParams()
+		params.From = from
+		return shader.Matrix(params, defAttr), true
 	case "middleOut":
-		return shader.MiddleOut(shader.DefaultMiddleOutParams(), defAttr), true
+		params := shader.DefaultMiddleOutParams()
+		params.From = from
+		return shader.MiddleOut(params, defAttr), true
 	case "pour":
-		return shader.Pour(shader.DefaultPourParams(), defAttr), true
+		params := shader.DefaultPourParams()
+		params.From = from
+		return shader.Pour(params, defAttr), true
 	case "print":
-		return shader.Print(shader.DefaultPrintParams(), defAttr), true
+		params := shader.DefaultPrintParams()
+		params.From = from
+		return shader.Print(params, defAttr), true
 	case "rain":
-		return shader.Rain(shader.DefaultRainParams(), defAttr), true
+		params := shader.DefaultRainParams()
+		params.From = from
+		return shader.Rain(params, defAttr), true
 	case "rings":
 		return shader.Rings(shader.DefaultRingsParams(), defAttr), true
 	case "slide":
-		return shader.Slide(shader.DefaultSlideParams(), defAttr), true
+		params := shader.DefaultSlideParams()
+		params.From = from
+		return shader.Slide(params, defAttr), true
 	case "spotlights":
 		return wrapShaderCrossFadeInOut(
 			shader.Spotlights(shader.DefaultSpotlightsParams(), defAttr),
@@ -493,7 +517,7 @@ func (r *shaderRunner) newScreensaver() shader.Shader {
 	cfg := r.screensaverCfg
 	name := cfg.shaders[r.screensaverNext]
 	r.screensaverNext = (r.screensaverNext + 1) % len(cfg.shaders)
-	s, _ := buildNamedShader(name, r.defAttr, r.fc, cfg.fps)
+	s, _ := buildNamedShader(name, r.defAttr, r.fc, shader.Snapshot{}, cfg.fps)
 	return cfg.play(s, showroomCycle(name))
 }
 
@@ -593,16 +617,11 @@ func (r *shaderRunner) stopLoading() {
 		r.cancel()
 		return
 	}
-	openShader := r.openShaderCfg.shader(r.defAttr)
-	if sh, ok := openShader.(shader.Reveal); ok {
-		if len(openShaderCells) > 0 {
-			sh.SetInitialCells(openShaderCells)
-			sh.SetInitialImages(openShaderImages)
-		}
-		if gf, ok := loadingShaderInst.(*shader.GrayFadeShader); ok {
-			sh.SetInitialDesaturation(gf.Progress())
-		}
+	from := shader.Snapshot{Cells: openShaderCells, Images: openShaderImages}
+	if gf, ok := loadingShaderInst.(*shader.GrayFadeShader); ok {
+		from.Desaturation = gf.Progress()
 	}
+	openShader := r.openShaderCfg.shader(r.defAttr, from)
 	duration := r.openShaderCfg.duration
 	if duration <= 0 {
 		duration = defaultOpenShaderDuration

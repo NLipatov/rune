@@ -28,11 +28,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/component/braille"
 	"unstable.build/rune/internal/component/shader"
+	"unstable.build/rune/internal/component/shader/shadertest"
 	"unstable.build/rune/internal/component/shader/shaderutils"
 )
 
@@ -416,7 +418,7 @@ type paramsCase[P any] struct {
 }
 
 // testParams runs a table of params of the shader newShader makes.
-func testParams[P any](t *testing.T, newShader func(P, term.Attributes) shader.Shader, tcases []paramsCase[P]) {
+func testParams[P any, S shader.Shader](t *testing.T, newShader func(P, term.Attributes) S, tcases []paramsCase[P]) {
 	for _, tc := range tcases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.sameAs == nil {
@@ -833,4 +835,265 @@ func pictureWallpaper(
 		Height: bounds.Dy(),
 		Fit:    term.ImageFitFill,
 	}
+}
+
+// revealAttr are the default attributes of the screens of testReveal.
+var revealAttr = term.Attributes{Fg: term.NewRGBColor(200, 200, 200), Bg: term.ColorBlack}
+
+// revealScreens returns a cols x rows snapshot of an old screen, every
+// cell of which is an 'O' in colors of its own, under a red picture, and
+// a live screen of text, blanks and a highlighted row, under a picture
+// of its own drawn by cellPicture, neither of which has a cell like the
+// other's.
+func revealScreens(cols, rows int) (old shader.Snapshot, live [][]term.Cell, liveImages []term.Image) {
+	old.Cells = make([][]term.Cell, rows)
+	live = make([][]term.Cell, rows)
+	for y := range rows {
+		old.Cells[y] = make([]term.Cell, cols)
+		live[y] = make([]term.Cell, cols)
+		for x := range cols {
+			old.Cells[y][x] = term.NewCell('O', 1, term.Attributes{
+				Fg: term.NewRGBColor(int32(200+x), 40, int32(10*y)),
+				Bg: term.NewRGBColor(20, 0, 0),
+			})
+			attr := revealAttr
+			if y == rows/2 {
+				attr.Bg = term.NewRGBColor(0, 0, 90)
+			}
+			ch := ' '
+			if (x+2*y)%3 != 0 {
+				ch = rune('a' + (x+y)%26)
+			}
+			live[y][x] = term.NewCell(ch, 1, attr)
+		}
+	}
+	old.Images = []term.Image{solidPicture(color.RGBA{R: 255, A: 255}, image.Rect(1, 1, cols-2, rows-1))}
+	liveImages = []term.Image{cellPicture(image.Rect(cols/3, 0, cols, rows))}
+	return old, live, liveImages
+}
+
+// cellPicturePixels is how many pixels a side of a cell of a picture
+// drawn by cellPicture spans.
+const cellPicturePixels = 4
+
+// cellPicture returns a placement over r of a picture that tells, in the
+// color it shows over each cell, which cell that is: see pictureCell.
+func cellPicture(r image.Rectangle) term.Image {
+	src := image.NewRGBA(image.Rect(0, 0, r.Dx()*cellPicturePixels, r.Dy()*cellPicturePixels))
+	for py := range src.Rect.Dy() {
+		for px := range src.Rect.Dx() {
+			x, y := r.Min.X+px/cellPicturePixels, r.Min.Y+py/cellPicturePixels
+			src.SetRGBA(px, py, color.RGBA{R: uint8(10 + 9*x), G: uint8(10 + 20*y), B: 255, A: 255})
+		}
+	}
+	return term.Image{
+		Src: src, ID: term.NewImageID(), Pos: term.Coordinates{X: r.Min.X, Y: r.Min.Y},
+		Width: r.Dx(), Height: r.Dy(),
+	}
+}
+
+// pictureCell returns the cell of the screen that the piece of picture
+// c, a color cellPicture draws, was drawn over, and false when c is not
+// one.
+func pictureCell(c color.RGBA) (x, y int, ok bool) {
+	return int(c.R-10) / 9, int(c.G-10) / 20, c.B == 255 && c.R >= 10 && c.G >= 10
+}
+
+// pixelsAt returns the color each of images shows in the middle of the
+// cell at x, y, for placements stretching all of their Src over their
+// cells.
+func pixelsAt(images []term.Image, x, y int) []color.RGBA {
+	var out []color.RGBA
+	for _, img := range images {
+		if !image.Pt(x, y).In(img.Visible()) {
+			continue
+		}
+		b := img.Src.Bounds()
+		px := b.Min.X + (2*(x-img.Pos.X)+1)*b.Dx()/(2*img.Width)
+		py := b.Min.Y + (2*(y-img.Pos.Y)+1)*b.Dy()/(2*img.Height)
+		out = append(out, img.Src.(*image.RGBA).RGBAAt(px, py))
+	}
+	return out
+}
+
+// Whether the text of a reveal moves about, for testReveal to check the
+// pictures over it go along.
+const (
+	textStays = false
+	textMoves = true
+)
+
+// testReveal checks the shaders newShader makes start from the snapshot
+// they are given rather than a blank screen and uncover the cells they
+// shade in its place, until the last frame shows the cells and pictures
+// shaded as they are. The snapshot's picture shows on the cells showing
+// it, and the pieces of the live one on the cells showing the text they
+// were over, wherever moves takes it. They shade every frame the same
+// whatever they shaded before, keep the snapshot as it was given and
+// take the edge cases in their stride. Without a snapshot, the pictures
+// go along with the text all the same.
+func testReveal(
+	t *testing.T, moves bool,
+	newShader func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader,
+) {
+	const cols, rows, total = 24, 10, 60
+	old, live, liveImages := revealScreens(cols, rows)
+	given := shader.Snapshot{Cells: cloneCells(old.Cells), Images: copyPictures(old.Images)}
+	sh := newShader(given, revealAttr)
+	given.Cells[0][0].Ch = 'X'
+	given.Images[0].Src.(*image.RGBA).Pix[0] = 0
+	red := color.RGBA{R: 255, A: 255}
+	// play checks every frame of sh and returns how many cells showed
+	// a piece of the live picture away from where it was drawn.
+	play := func(t *testing.T, sh shader.ImageShader, from shader.Snapshot) (moved int) {
+		for frame := range total {
+			cells := cloneCells(live)
+			images := sh.ShadeImages(frame, total, cells, copyPictures(liveImages))
+			if frame == total-1 {
+				require.Equal(t, live, cells, "the last frame shows the cells shaded")
+				require.Equal(t, liveImages, images, "the last frame shows the pictures shaded")
+			}
+			moved += assertRevealPictures(t, frame, from, live, liveImages[0].Visible(), cells, images)
+		}
+		return moved
+	}
+
+	t.Run("uncovers the snapshot", func(t *testing.T) {
+		partly := false
+		for frame := range total {
+			cells := cloneCells(live)
+			sh.ShadeImages(frame, total, cells, nil)
+			oldShown := 0
+			for y := range rows {
+				for x := range cols {
+					if cells[y][x] == old.Cells[y][x] {
+						oldShown++
+					}
+				}
+			}
+			if frame == 0 {
+				require.GreaterOrEqual(t, oldShown, cols*rows*3/4, "the first frame shows the snapshot")
+				require.NotEqual(t, 'X', cells[0][0].Ch, "the shader keeps a copy of the snapshot")
+			}
+			partly = partly || oldShown > 0 && oldShown < cols*rows/2
+		}
+		assert.True(t, partly, "no frame uncovered the snapshot partly")
+	})
+
+	t.Run("pictures", func(t *testing.T) {
+		moved := play(t, sh, old)
+		if moves {
+			assert.Positive(t, moved, "the live picture never went along with the text")
+		}
+	})
+
+	t.Run("shows a copy of the snapshot", func(t *testing.T) {
+		images := sh.ShadeImages(0, total, cloneCells(live), nil)
+		for _, img := range images {
+			assert.NotEqual(t, old.Images[0].ID, img.ID)
+			assert.Equal(t, red, img.Src.(*image.RGBA).RGBAAt(0, 0))
+		}
+	})
+
+	t.Run("desaturates the snapshot", func(t *testing.T) {
+		gray := newShader(shader.Snapshot{Cells: old.Cells, Images: old.Images, Desaturation: 1}, revealAttr)
+		cells := cloneCells(live)
+		images := gray.ShadeImages(0, total, cells, nil)
+		for y := range rows {
+			for x := range cols {
+				want := old.Cells[y][x]
+				want.Fg = shaderutils.DesaturateColor(want.Fg, 1, revealAttr.Fg)
+				if cells[y][x].Ch == 'O' {
+					require.Equal(t, want, cells[y][x], "cell %d,%d", x, y)
+				}
+			}
+		}
+		require.NotEmpty(t, images)
+		assert.Equal(t, color.RGBA{R: 76, G: 76, B: 76, A: 255}, images[0].Src.(*image.RGBA).RGBAAt(0, 0))
+		assert.Equal(t, red, old.Images[0].Src.(*image.RGBA).RGBAAt(0, 0), "the snapshot given is left as is")
+	})
+
+	t.Run("pure", func(t *testing.T) {
+		build := func() shader.Shader { return newShader(old, revealAttr) }
+		shadertest.AssertOrderIndependent(t, build, live, 12)
+	})
+
+	t.Run("without a snapshot", func(t *testing.T) {
+		blank := newShader(shader.Snapshot{}, revealAttr)
+		for frame := range total {
+			cells := cloneCells(live)
+			blank.ShadeImages(frame, total, cells, copyPictures(liveImages))
+			require.Equal(t, shadeCopy(blank, frame, total, live), cells, "frame %d", frame)
+		}
+		moved := play(t, blank, shader.Snapshot{})
+		if moves {
+			assert.Positive(t, moved, "the live picture never went along with the text")
+		}
+	})
+
+	edge := shader.Snapshot{Cells: [][]term.Cell{
+		append(edgeWide('世'), edgeRow("ab")...),
+		append(edgeRow("c"), append(edgeWide('界'), edgeGap())...),
+		edgeRow("x"),
+	}}
+	testShaderEdgeCases(t, func(defaultAttr term.Attributes) shader.Shader { return newShader(edge, defaultAttr) })
+}
+
+// assertRevealPictures checks the pictures images place over cells, a
+// frame of a reveal of live, under a cellPicture over liveArea, from
+// old, under a red picture. The cells showing the snapshot show its
+// picture, and the others at most a piece of the live picture, the one
+// drawn over the text they show, wherever it was; the text of live in
+// its place and within liveArea shows its piece. It returns how many
+// cells show a piece drawn over another cell.
+func assertRevealPictures(
+	t *testing.T, frame int, old shader.Snapshot, live [][]term.Cell, liveArea image.Rectangle,
+	cells [][]term.Cell, images []term.Image,
+) (moved int) {
+	t.Helper()
+	sameText := func(a, b term.Cell) bool { return a.Ch == b.Ch && a.Width == b.Width && a.Bg == b.Bg }
+	for y, row := range cells {
+		for x, c := range row {
+			got := pixelsAt(images, x, y)
+			if inCanvas(old.Cells, x, y) && c == old.Cells[y][x] {
+				var want []color.RGBA
+				if image.Pt(x, y).In(old.Images[0].Visible()) {
+					want = []color.RGBA{{R: 255, A: 255}}
+				}
+				require.Equal(t, want, got, "frame %d cell %d,%d shows the snapshot", frame, x, y)
+				continue
+			}
+			require.LessOrEqual(t, len(got), 1, "frame %d cell %d,%d shows pictures over each other", frame, x, y)
+			if len(got) == 0 {
+				text := c.Ch != ' ' || c.Bg != revealAttr.Bg
+				require.False(t, text && c == live[y][x] && image.Pt(x, y).In(liveArea),
+					"frame %d cell %d,%d shows its text without its piece of picture", frame, x, y)
+				continue
+			}
+			sx, sy, ok := pictureCell(got[0])
+			require.True(t, ok, "frame %d cell %d,%d shows the snapshot's picture over %q", frame, x, y, c.Ch)
+			require.True(t, sameText(c, live[sy][sx]),
+				"frame %d cell %d,%d shows %q under the piece of picture of %d,%d, over %q",
+				frame, x, y, c.Ch, sx, sy, live[sy][sx].Ch)
+			if sx != x || sy != y {
+				moved++
+			}
+		}
+	}
+	return moved
+}
+
+// inCanvas tells whether x, y addresses a cell of cells.
+func inCanvas(cells [][]term.Cell, x, y int) bool {
+	return y >= 0 && y < len(cells) && x >= 0 && x < len(cells[y])
+}
+
+// copyPictures returns a copy of images with pixels of their own.
+func copyPictures(images []term.Image) []term.Image {
+	out := slices.Clone(images)
+	for i, img := range out {
+		src := img.Src.(*image.RGBA)
+		out[i].Src = &image.RGBA{Pix: slices.Clone(src.Pix), Stride: src.Stride, Rect: src.Rect}
+	}
+	return out
 }

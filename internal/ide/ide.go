@@ -727,13 +727,14 @@ func (i *IDE) init(
 	}
 	// Apply rune.star overrides for the open-workspace shader, if
 	// any. The shader override uses the showroom defaults exposed by
-	// :shaderrun; duration replaces the runtime-provided lifetime.
+	// :shaderrun, revealing the screen the workspace takes over;
+	// duration replaces the runtime-provided lifetime.
 	if name, ok := i.ideConfig.animationsOpenWorkspaceShader(); ok {
 		fc := i.ideConfig.windowFrameCharset()
 		// shader.New plays it at the default fps when none is set.
 		fps := cmp.Or(openShaderCfg.fps, defaultShaderFPS)
-		openShaderCfg.shader = func(defAttr term.Attributes) shader.Shader {
-			s, _ := buildNamedShader(name, defAttr, fc, fps)
+		openShaderCfg.shader = func(defAttr term.Attributes, from shader.Snapshot) shader.Shader {
+			s, _ := buildNamedShader(name, defAttr, fc, from, fps)
 			return s
 		}
 	}

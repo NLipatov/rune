@@ -27,6 +27,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestMiddleOut_Reveal(t *testing.T) {
+	testReveal(t, textMoves, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultMiddleOutParams()
+		params.From = from
+		return shader.MiddleOut(params, defaultAttr)
+	})
+}
+
 func TestMiddleOut_Suite(t *testing.T) {
 	for _, horizontal := range []bool{false, true} {
 		params := shader.DefaultMiddleOutParams()

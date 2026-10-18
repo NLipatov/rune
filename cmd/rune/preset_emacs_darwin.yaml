@@ -266,6 +266,10 @@ command:
 # `active_content_tab` plays over tabs with work in progress, such as an agent
 # turn, and `active_workspace_tab` over the workspace tabs that own them. Their
 # shaders: blaze, burn, inferno, pulse, shine.
+#
+# `open_workspace` plays any shader of :shaderrun. The reveals uncover the
+# workspace from the screen it takes over: burn, beams, binaryPath, decrypt,
+# expand, matrix, middleOut, pour, print, rain and slide.
 # ---------------------------------------------------------------------------
 # animations:
 #   intro: true

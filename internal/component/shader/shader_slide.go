@@ -40,7 +40,8 @@ const (
 // Slide slides the text in line by line: each line's characters enter
 // from an edge one after the other, farthest first, and glide to their
 // place with an easing, their color warming from StartColor to their
-// own.
+// own. The first of each line wipes [SlideParams.From] away as it
+// glides in.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -48,7 +49,7 @@ const (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "slide" effect.
-func Slide(params SlideParams, defaultAttr term.Attributes) Shader {
+func Slide(params SlideParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultSlideParams()
 	if params.Grouping > SlideDiagonals {
 		invalidParam("SlideParams.Grouping", params.Grouping, "a SlideGrouping")
@@ -57,7 +58,9 @@ func Slide(params SlideParams, defaultAttr term.Attributes) Shader {
 	params.Easing = checkEasing("SlideParams.Easing", params.Easing, d.Easing)
 	params.StartColor = orDefault(params.StartColor, d.StartColor)
 	params.SlideDuration = checkDuration("SlideParams.SlideDuration", orDefault(params.SlideDuration, d.SlideDuration))
-	return &slide{SlideParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &slide{SlideParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // SlideParams configures [Slide].
@@ -80,6 +83,8 @@ type SlideParams struct {
 	// to cross the whole canvas; the lines are let in over the rest.
 	// (range (0, 1))
 	SlideDuration float64
+	// From is the screen the text slides in over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultSlideParams returns the terminaltexteffects defaults: rows
@@ -98,21 +103,23 @@ func DefaultSlideParams() SlideParams {
 type slide struct {
 	SlideParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *slide) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *slide) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *slide) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
-	if len(glyphs) == 0 {
-		return
-	}
 	// fromFar tells whether a line enters from the far edge: the right,
 	// the bottom, or above the top-right corner.
 	fromFar := func(group int) bool {
@@ -121,46 +128,50 @@ func (s *slide) Shade(frame, total int, cells [][]term.Cell) {
 		}
 		return s.ReverseDirection
 	}
-	groupOf := func(g glyph) int {
+	groupOf := func(x, y int) int {
 		switch s.Grouping {
 		case SlideColumns:
-			return g.x
+			return x
 		case SlideDiagonals:
-			return g.x + g.y
+			return x + y
 		default:
-			return g.y
+			return y
 		}
 	}
-	// startOf is where a line's characters enter from.
-	startOf := func(g glyph) (x, y float64) {
-		far := fromFar(groupOf(g))
+	// startOf is where the character of a line at x, y enters from.
+	startOf := func(x, y int) (sx, sy float64) {
+		far := fromFar(groupOf(x, y))
 		switch s.Grouping {
 		case SlideColumns:
 			if far {
-				return float64(g.x), float64(rows)
+				return float64(x), float64(rows)
 			}
-			return float64(g.x), -1
+			return float64(x), -1
 		case SlideDiagonals:
 			if far {
-				return float64(g.x + g.y + 1), -1
+				return float64(x + y + 1), -1
 			}
-			return float64(g.x + g.y - rows), float64(rows)
+			return float64(x + y - rows), float64(rows)
 		default:
 			if far {
-				return float64(cols), float64(g.y)
+				return float64(cols), float64(y)
 			}
-			return -1, float64(g.y)
+			return -1, float64(y)
 		}
+	}
+	// travel is how far the character of a line at x, y glides.
+	travel := func(x, y int) float64 {
+		sx, sy := startOf(x, y)
+		return cellDistance(sx, sy, float64(x), float64(y))
 	}
 	// Characters enter farthest from the edge first. Ranking within a
 	// line by the distance to its start does that for every grouping.
 	ranks := ranksBy(glyphs, func(g glyph) (int, int) {
-		sx, sy := startOf(g)
-		return groupOf(g), -roundInt(cellDistance(sx, sy, float64(g.x), float64(g.y)) * 16)
+		return groupOf(g.x, g.y), -roundInt(travel(g.x, g.y) * 16)
 	})
 	groupSizes := make(map[int]int)
 	for _, g := range glyphs {
-		groupSizes[groupOf(g)]++
+		groupSizes[groupOf(g.x, g.y)]++
 	}
 	groupIDs := make([]int, 0, len(groupSizes))
 	for id := range groupSizes {
@@ -189,21 +200,20 @@ func (s *slide) Shade(frame, total int, cells [][]term.Cell) {
 	// travel farther than the canvas is wide or tall.
 	span := 0.0
 	for _, g := range glyphs {
-		sx, sy := startOf(g)
-		span = max(span, cellDistance(sx, sy, float64(g.x), float64(g.y)))
+		span = max(span, travel(g.x, g.y))
 	}
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
-		id := groupOf(g)
+		id := groupOf(g.x, g.y)
 		index := ranks[i] - indexBase[id]
 		start := float64(groupOrdinal[id]*s.Gap+index) * stepT
 		if t < start {
 			places[i] = placement{hidden: true}
 			continue
 		}
-		sx, sy := startOf(g)
+		sx, sy := startOf(g.x, g.y)
 		// Rounding must not push the last character in past the end.
-		dur := math.Min(s.SlideDuration*cellDistance(sx, sy, float64(g.x), float64(g.y))/span, 1-start)
+		dur := math.Min(s.SlideDuration*travel(g.x, g.y)/span, 1-start)
 		p := window(t, start, dur)
 		e := s.Easing(p)
 		places[i] = placement{
@@ -212,5 +222,21 @@ func (s *slide) Shade(frame, total int, cells [][]term.Cell) {
 			fg: fadeFg(p, s.StartColor, g.cell.Fg, s.defaultAttr.Fg),
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
+	// The first character of a line wipes the backdrop away as it glides
+	// in, and a line without any as the next one does. The farthest
+	// glide is from a corner.
+	reach := span
+	for _, c := range [][2]int{{0, 0}, {cols - 1, 0}, {0, rows - 1}, {cols - 1, rows - 1}} {
+		reach = max(reach, travel(c[0], c[1]))
+	}
+	lines := float64(groupOf(cols-1, rows-1) + 1)
+	return func(x, y int) float64 {
+		id := groupOf(x, y)
+		start := (1 - s.SlideDuration) * float64(id) / lines
+		if len(groupIDs) > 0 {
+			start = min(float64(sort.SearchInts(groupIDs, id)*s.Gap)*stepT, 1-s.SlideDuration)
+		}
+		return start + s.SlideDuration*travel(x, y)/reach
+	}
 }

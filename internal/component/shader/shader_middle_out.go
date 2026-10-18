@@ -24,7 +24,8 @@ import (
 // MiddleOut grows the text out of the center of the canvas in two
 // moves: every character first spreads from the center along the middle
 // row (or column, when Horizontal), then rises or sinks to its place,
-// its color warming from StartColor to its own during the second move.
+// its color warming from StartColor to its own during the second move,
+// which uncovers [MiddleOutParams.From] from the middle line out.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -32,14 +33,16 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "middleout" effect.
-func MiddleOut(params MiddleOutParams, defaultAttr term.Attributes) Shader {
+func MiddleOut(params MiddleOutParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultMiddleOutParams()
 	params.StartColor = orDefault(params.StartColor, d.StartColor)
 	params.CenterEasing = checkEasing("MiddleOutParams.CenterEasing", params.CenterEasing, d.CenterEasing)
 	params.FullEasing = checkEasing("MiddleOutParams.FullEasing", params.FullEasing, d.FullEasing)
 	params.CenterDuration = checkDuration("MiddleOutParams.CenterDuration",
 		orDefault(params.CenterDuration, d.CenterDuration))
-	return &middleOut{MiddleOutParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &middleOut{MiddleOutParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // MiddleOutParams configures [MiddleOut].
@@ -56,6 +59,8 @@ type MiddleOutParams struct {
 	// CenterDuration is the fraction of the animation the first move
 	// takes; the second takes the rest. (range (0, 1))
 	CenterDuration float64
+	// From is the screen the text grows out over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultMiddleOutParams returns the terminaltexteffects defaults: a
@@ -72,16 +77,21 @@ func DefaultMiddleOutParams() MiddleOutParams {
 type middleOut struct {
 	MiddleOutParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *middleOut) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *middleOut) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *middleOut) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
 	cx, cy := float64(cols-1)/2, float64(rows-1)/2
@@ -89,24 +99,33 @@ func (s *middleOut) Shade(frame, total int, cells [][]term.Cell) {
 	if s.Horizontal {
 		firstSpan, secondSpan = secondSpan, firstSpan
 	}
+	// middle is the point of the middle line a character at gx, gy
+	// reaches after the first move.
+	middle := func(gx, gy float64) (mx, my float64) {
+		if s.Horizontal {
+			return cx, gy
+		}
+		return gx, cy
+	}
+	// second is how long the second move to gx, gy takes.
+	second := func(gx, gy float64) float64 {
+		dur := 1 - s.CenterDuration
+		if secondSpan > 0 {
+			mx, my := middle(gx, gy)
+			dur *= cellDistance(mx, my, gx, gy) / secondSpan
+		}
+		return dur
+	}
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
 		gx, gy := float64(g.x), float64(g.y)
-		// The middle line point is reached after the first move.
-		mx, my := gx, cy
-		if s.Horizontal {
-			mx, my = cx, gy
-		}
+		mx, my := middle(gx, gy)
 		dur := s.CenterDuration
 		if firstSpan > 0 {
 			dur *= cellDistance(cx, cy, mx, my) / firstSpan
 		}
 		p1 := s.CenterEasing(window(t, 0, dur))
-		dur = 1 - s.CenterDuration
-		if secondSpan > 0 {
-			dur *= cellDistance(mx, my, gx, gy) / secondSpan
-		}
-		p2 := window(t, s.CenterDuration, dur)
+		p2 := window(t, s.CenterDuration, second(gx, gy))
 		e2 := s.FullEasing(p2)
 		x := lerp(lerp(cx, mx, p1), gx, e2)
 		y := lerp(lerp(cy, my, p1), gy, e2)
@@ -116,5 +135,10 @@ func (s *middleOut) Shade(frame, total int, cells [][]term.Cell) {
 			fg: fadeFg(p2, s.StartColor, g.cell.Fg, s.defaultAttr.Fg),
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
+	// The backdrop gives way from the middle line out as the second move
+	// settles the characters.
+	return func(x, y int) float64 {
+		return s.CenterDuration + second(float64(x), float64(y))
+	}
 }

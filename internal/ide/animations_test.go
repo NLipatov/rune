@@ -17,6 +17,7 @@
 package ide
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -409,6 +410,27 @@ config = {
 	assert.True(t, ok)
 	assert.Equal(t, 1500*time.Millisecond, dur)
 	assert.Empty(t, c.errors)
+}
+
+func TestAnimationsOpenWorkspaceShaderTakesTheReveals(t *testing.T) {
+	for _, name := range []string{
+		"burn", "beams", "binaryPath", "decrypt", "expand", "matrix", "middleOut",
+		"pour", "print", "rain", "slide",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newAnimConfig(t, fmt.Sprintf(`
+config = {
+    "animations": {
+        "open_workspace": {"shader": %q},
+    },
+}
+`, name))
+			got, ok := c.animationsOpenWorkspaceShader()
+			assert.True(t, ok)
+			assert.Equal(t, name, got)
+			assert.Empty(t, c.errors)
+		})
+	}
 }
 
 func TestAnimationsOpenWorkspaceShaderUnknown(t *testing.T) {
@@ -857,7 +879,7 @@ config = {
 	dir := t.TempDir()
 
 	sentinelCalled := false
-	sentinel := func(term.Attributes) shader.Shader {
+	sentinel := func(term.Attributes, shader.Snapshot) shader.Shader {
 		sentinelCalled = true
 		return shader.Nop()
 	}
@@ -875,13 +897,58 @@ config = {
 	require.NotNil(t, i.root.openShaderCfg.shader,
 		"open shader must be configured")
 
-	_ = i.root.openShaderCfg.shader(term.Attributes{})
+	_ = i.root.openShaderCfg.shader(term.Attributes{}, shader.Snapshot{})
 	assert.False(t, sentinelCalled,
 		"rune.star override must replace the WithOpenShader factory; "+
 			"the sentinel from WithOpenShader was invoked instead")
 
 	assert.Equal(t, time.Second, i.root.openShaderCfg.duration,
 		"open shader duration override must be applied")
+}
+
+func TestIDEOpenShaderConfigRevealsTheScreenTakenOver(t *testing.T) {
+	configFile, _ := makeTestFiles(t)
+	require.NoError(t, os.WriteFile(configFile.Name(), []byte(""), 0666))
+	starlarkSrc := `
+config = {
+    "animations": {
+        "open_workspace": {"shader": "rain"},
+    },
+}
+`
+	dir := t.TempDir()
+	i := new(IDE)
+	require.NoError(t, i.init(".", configFile.Name(), dir, pkgtrust.NewStore(dir, nil), newTestStorage(t, dir),
+		WithPublishEvent(nopPublishEvent),
+		WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+		WithLocker(new(sync.Mutex)),
+		WithDefaultConfigStarlark(starlarkSrc, true, true),
+		WithOpenShader(func(term.Attributes, shader.Snapshot) shader.Shader { return shader.Nop() }, 60, time.Second),
+	))
+	t.Cleanup(func() { _ = i.closeResources() })
+
+	cells := func(ch rune) [][]term.Cell {
+		out := make([][]term.Cell, 4)
+		for y := range out {
+			out[y] = make([]term.Cell, 10)
+			for x := range out[y] {
+				out[y][x] = term.NewCell(ch, 1, term.Attributes{Fg: term.ColorWhite})
+			}
+		}
+		return out
+	}
+	open := i.root.openShaderCfg.shader(term.Attributes{}, shader.Snapshot{Cells: cells('O')})
+	first := cells('N')
+	open.Shade(0, 30, first)
+	old := 0
+	for _, row := range first {
+		for _, c := range row {
+			if c.Ch == 'O' {
+				old++
+			}
+		}
+	}
+	assert.GreaterOrEqual(t, old, 30, "the rain starts from the screen it takes over")
 }
 
 func TestIDEScreensaverConfigArmsTheIdleTimer(t *testing.T) {

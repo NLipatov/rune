@@ -25,6 +25,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestBeams_Reveal(t *testing.T) {
+	testReveal(t, textStays, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultBeamsParams()
+		params.From = from
+		return shader.Beams(params, defaultAttr)
+	})
+}
+
 func TestBeams_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Beams(shader.DefaultBeamsParams(), term.Attributes{}))
 }

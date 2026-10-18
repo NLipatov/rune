@@ -24,7 +24,8 @@ import (
 // Expand bursts the text out of the center of the canvas: every
 // character starts there and travels to its place at one shared speed,
 // so the nearer ones settle first, while its color warms from
-// StartColor to its own along the way.
+// StartColor to its own along the way. [ExpandParams.From] gives way
+// from the center out as they settle.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -32,13 +33,15 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "expand" effect.
-func Expand(params ExpandParams, defaultAttr term.Attributes) Shader {
+func Expand(params ExpandParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultExpandParams()
 	params.StartColor = orDefault(params.StartColor, d.StartColor)
 	params.Easing = checkEasing("ExpandParams.Easing", params.Easing, d.Easing)
 	params.TravelDuration = checkFloat("ExpandParams.TravelDuration",
 		orDefault(params.TravelDuration, d.TravelDuration), 0, 1, true, false)
-	return &expand{ExpandParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &expand{ExpandParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // ExpandParams configures [Expand].
@@ -51,6 +54,8 @@ type ExpandParams struct {
 	// character spends traveling; nearer ones scale it by their
 	// distance. (range (0, 1])
 	TravelDuration float64
+	// From is the screen the text bursts out over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultExpandParams returns the terminaltexteffects defaults: the
@@ -67,27 +72,35 @@ func DefaultExpandParams() ExpandParams {
 type expand struct {
 	ExpandParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *expand) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *expand) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *expand) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
 	cx, cy := float64(cols-1)/2, float64(rows-1)/2
 	maxDist := cellDistance(0, 0, cx, cy)
+	// arrival is when a character settles at x, y.
+	arrival := func(x, y int) float64 {
+		if maxDist == 0 {
+			return s.TravelDuration
+		}
+		return s.TravelDuration * cellDistance(cx, cy, float64(x), float64(y)) / maxDist
+	}
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
-		dur := s.TravelDuration
-		if maxDist > 0 {
-			dur *= cellDistance(cx, cy, float64(g.x), float64(g.y)) / maxDist
-		}
-		p := window(t, 0, dur)
+		p := window(t, 0, arrival(g.x, g.y))
 		e := s.Easing(p)
 		places[i] = placement{
 			x:  roundInt(lerp(cx, float64(g.x), e)),
@@ -95,5 +108,6 @@ func (s *expand) Shade(frame, total int, cells [][]term.Cell) {
 			fg: fadeFg(p, s.StartColor, g.cell.Fg, s.defaultAttr.Fg),
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
+	return arrival
 }

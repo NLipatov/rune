@@ -17,7 +17,10 @@
 package shader
 
 import (
+	"image"
+
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/component/shader/shaderutils"
 )
 
 // Shader abstracts the ability to apply shader-like effects
@@ -39,22 +42,44 @@ type ImageShader interface {
 	ShadeImages(frame, total int, in [][]term.Cell, images []term.Image) []term.Image
 }
 
-// Reveal is an [ImageShader] that starts on a snapshot of the screen it
-// takes over, rather than on the first cells it shades, and uncovers the
-// cells it shades in its place.
-type Reveal interface {
-	ImageShader
-	// SetInitialCells sets the snapshot. The slice is retained as-is, so
-	// callers that may mutate it should pass a clone.
-	SetInitialCells(cells [][]term.Cell)
-	// SetInitialImages sets the placements drawn over the snapshot.
-	// Their pixels are copied, since a writer only keeps those until its
-	// next frame.
-	SetInitialImages(images []term.Image)
-	// SetInitialDesaturation desaturates the snapshot and its placements
-	// toward gray by amount, clamped to [0, 1]. It applies to what the
-	// setters above have set so far.
-	SetInitialDesaturation(amount float64)
+// Snapshot is a screen as it showed: its cells and the pictures drawn
+// over them. Reveal shaders, such as [Burn] and [Rain], take one in
+// their params to start from instead of a blank screen, and uncover the
+// cells they shade in its place. They copy it when they are made, so it
+// may change afterwards.
+type Snapshot struct {
+	Cells [][]term.Cell
+	// Images are the placements drawn over Cells.
+	Images []term.Image
+	// Desaturation fades the colors of the snapshot and its pictures
+	// toward gray by this amount, so that a reveal picks up where a
+	// [GrayFade] left off. (range [0, 1], clamped)
+	Desaturation float64
+}
+
+// copied returns a copy of s, with its desaturation applied, for a
+// shader to keep. defaultFg stands for the default foreground.
+func (s Snapshot) copied(defaultFg term.Color) Snapshot {
+	out := Snapshot{Cells: cloneCellMatrix(s.Cells), Images: copyImages(s.Images)}
+	amount := min(s.Desaturation, 1)
+	if !(amount > 0) {
+		return out
+	}
+	for _, row := range out.Cells {
+		for x, c := range row {
+			row[x].Fg = shaderutils.DesaturateColor(c.Fg, amount, defaultFg)
+		}
+	}
+	// copyImages shares a copy among the placements of a picture.
+	desaturated := make(map[*image.RGBA]bool, len(out.Images))
+	for _, img := range out.Images {
+		pixels := img.Src.(*image.RGBA)
+		if !desaturated[pixels] {
+			desaturatePixels(pixels, amount)
+			desaturated[pixels] = true
+		}
+	}
+	return out
 }
 
 // ShadeImages shades in with s, and returns the placements to draw over

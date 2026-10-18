@@ -27,7 +27,8 @@ import (
 // from outside the canvas along a path of orthogonal legs to its place,
 // where the digits collapse into the character, flashing bright and
 // settling dim, until a final diagonal wipe brings the text to its own
-// colors.
+// colors. The text is delivered over [BinaryPathParams.From], which the
+// wipe sweeps away.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -35,7 +36,7 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "binarypath" effect.
-func BinaryPath(params BinaryPathParams, defaultAttr term.Attributes) Shader {
+func BinaryPath(params BinaryPathParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultBinaryPathParams()
 	params.BinaryColors = orDefaults(params.BinaryColors, d.BinaryColors)
 	params.CollapseColor = orDefault(params.CollapseColor, d.CollapseColor)
@@ -44,7 +45,9 @@ func BinaryPath(params BinaryPathParams, defaultAttr term.Attributes) Shader {
 		orDefault(params.ActiveGroups, d.ActiveGroups), 0, 1, true, false)
 	params.TravelDuration = checkDuration("BinaryPathParams.TravelDuration", orDefault(params.TravelDuration, d.TravelDuration))
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &binaryPath{BinaryPathParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &binaryPath{BinaryPathParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // BinaryPathParams configures [BinaryPath].
@@ -65,6 +68,8 @@ type BinaryPathParams struct {
 	// Seed picks the paths, their order and the digit colors. Defaults to
 	// a fixed value if zero.
 	Seed int64
+	// From is the screen the digits travel over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultBinaryPathParams returns the terminaltexteffects defaults:
@@ -89,6 +94,7 @@ func DefaultBinaryPathParams() BinaryPathParams {
 type binaryPath struct {
 	BinaryPathParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 // Steps, in cells travelled per digit, that the collapse and the wipe
@@ -107,18 +113,19 @@ type binaryRoute struct {
 }
 
 func (s *binaryPath) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *binaryPath) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *binaryPath) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
-	if len(glyphs) == 0 {
-		return
-	}
 	lanes := max(1, int(s.ActiveGroups*float64(len(glyphs))))
 	ranks := shuffledRanks(s.Seed, 2, glyphs)
 	order := make([]int, len(glyphs))
@@ -148,11 +155,13 @@ func (s *binaryPath) Shade(frame, total int, cells [][]term.Cell) {
 	wipeSteps := float64((rows+cols-1+1)/2 + binaryBrightenSteps)
 	wipe := window(t, s.TravelDuration, 1-s.TravelDuration) * wipeSteps
 
+	delivered := make(map[[2]int]float64, len(glyphs))
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
 		fg := resolveFg(g.cell.Fg, s.defaultAttr.Fg)
 		dim := shaderutils.AdjustBrightness(fg, s.DimBrightness, s.defaultAttr.Fg)
 		done := startAt[i] + float64(len(digits[i])-1+routes[i].length)
+		delivered[[2]int{g.x, g.y}] = s.TravelDuration * (done + 1) / travelEnd
 		if step < done+1 {
 			places[i] = placement{hidden: true}
 			continue
@@ -165,7 +174,7 @@ func (s *binaryPath) Shade(frame, total int, cells [][]term.Cell) {
 			places[i].fg = fadeFg(brighten, dim, g.cell.Fg, s.defaultAttr.Fg)
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
 	for i, g := range glyphs {
 		done := startAt[i] + float64(len(digits[i])-1+routes[i].length)
 		if step < startAt[i] || step >= done+1 {
@@ -180,6 +189,14 @@ func (s *binaryPath) Shade(frame, total int, cells [][]term.Cell) {
 			fg := s.BinaryColors[pick3(s.Seed, g.x, g.y, 200+d, len(s.BinaryColors))]
 			putChar(cells, x, y, digit, fg)
 		}
+	}
+	// The characters show over the backdrop as they are delivered, and
+	// the wipe sweeps away what is left of it.
+	return func(x, y int) float64 {
+		if at, ok := delivered[[2]int{x, y}]; ok {
+			return at
+		}
+		return s.TravelDuration + (1-s.TravelDuration)*float64((cols-1-x+y)/2)/wipeSteps
 	}
 }
 

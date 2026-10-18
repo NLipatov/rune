@@ -378,13 +378,16 @@ func WithLoadingShader(
 
 // WithOpenShader configures the IDE to play the given Shader
 // animation when a workspace finishes loading. Has no effect if no
-// loading shader is configured via [WithLoadingShader].
+// loading shader is configured via [WithLoadingShader]. shaderFn is
+// given the screen the workspace takes over, desaturated as far as a
+// [shader.GrayFade] loading shader got, for a reveal to start from; it
+// has no cells when there was nothing on screen to take.
 //
 // duration is the lifetime of the underlying [shader.Component]; the
 // open shader runs for this long after the loading shader finishes.
 // Passing duration <= 0 uses an internal default.
 func WithOpenShader(
-	shaderFn func(term.Attributes) shader.Shader,
+	shaderFn func(term.Attributes, shader.Snapshot) shader.Shader,
 	fps int,
 	duration time.Duration,
 ) Option {
@@ -569,7 +572,7 @@ type options struct {
 	loadingShaderFn        func(term.Attributes) shader.Shader
 	loadingShaderFPS       int
 	loadingShaderDuration  time.Duration
-	openShaderFn           func(term.Attributes) shader.Shader
+	openShaderFn           func(term.Attributes, shader.Snapshot) shader.Shader
 	openShaderFPS          int
 	openShaderDuration     time.Duration
 	starlarkTutorials      map[string]string

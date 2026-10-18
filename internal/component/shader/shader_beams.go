@@ -27,7 +27,8 @@ import (
 // in a random order and direction: each beam leaves a glowing trail of
 // RowSymbols or ColumnSymbols colored by BeamGradient, and reveals the
 // text behind it dimmed. Once the beams are done, a diagonal wipe from
-// the top-left corner brightens the text back to its own colors.
+// the top-left corner brightens the text back to its own colors. The
+// beams sweep [BeamsParams.From] away as they cross it.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -35,7 +36,7 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "beams" effect.
-func Beams(params BeamsParams, defaultAttr term.Attributes) Shader {
+func Beams(params BeamsParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultBeamsParams()
 	params.RowSymbols = checkSymbols("BeamsParams.RowSymbols", params.RowSymbols, d.RowSymbols)
 	params.ColumnSymbols = checkSymbols("BeamsParams.ColumnSymbols", params.ColumnSymbols, d.ColumnSymbols)
@@ -51,7 +52,9 @@ func Beams(params BeamsParams, defaultAttr term.Attributes) Shader {
 	params.ColumnSweep = min(checkFloat("BeamsParams.ColumnSweep",
 		orDefault(params.ColumnSweep, d.ColumnSweep), 0, 1, true, false), params.BeamsDuration)
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &beams{BeamsParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &beams{BeamsParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // BeamsParams configures [Beams].
@@ -82,6 +85,8 @@ type BeamsParams struct {
 	// Seed picks the beams' order, direction and speed. Defaults to a
 	// fixed value if zero.
 	Seed int64
+	// From is the screen the beams start from instead of a blank one.
+	From Snapshot
 }
 
 // DefaultBeamsParams returns the terminaltexteffects defaults.
@@ -106,6 +111,7 @@ func DefaultBeamsParams() BeamsParams {
 type beams struct {
 	BeamsParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 // beam is a sweep along one row or column.
@@ -115,13 +121,17 @@ type beam struct {
 }
 
 func (s *beams) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *beams) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *beams) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	rowBeams, colBeams := s.schedule(rows, cols)
 	// hitTime is when the beam reaches the cell at index i along it.
@@ -172,6 +182,10 @@ func (s *beams) Shade(frame, total int, cells [][]term.Cell) {
 				paintFg(cells, x, y, fadeFg(bright, dim, row[x].Fg, s.defaultAttr.Fg))
 			}
 		}
+	}
+	// The first beam over a cell sweeps the backdrop away.
+	return func(x, y int) float64 {
+		return min(hitTime(rowBeams[y], x, cols), hitTime(colBeams[x], y, rows))
 	}
 }
 

@@ -42,7 +42,8 @@ const (
 // Pour pours the text in from one edge of the canvas: the characters
 // stream in a steady trickle, line by line from the far side, snaking
 // back and forth, each falling to its place with an easing and its
-// color warming from StartColor to its own.
+// color warming from StartColor to its own. They fall in front of
+// [PourParams.From], which gives way line by line as they reach it.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -51,7 +52,7 @@ const (
 // [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "pour" effect.
-func Pour(params PourParams, defaultAttr term.Attributes) Shader {
+func Pour(params PourParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultPourParams()
 	if params.Direction > PourRight {
 		invalidParam("PourParams.Direction", params.Direction, "a PourDirection")
@@ -61,7 +62,9 @@ func Pour(params PourParams, defaultAttr term.Attributes) Shader {
 	params.FallDuration = checkDuration("PourParams.FallDuration", orDefault(params.FallDuration, d.FallDuration))
 	checkFloat("PourParams.SpeedJitter", params.SpeedJitter, 0, 1, false, true)
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &pour{PourParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &pour{PourParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // PourParams configures [Pour].
@@ -82,6 +85,8 @@ type PourParams struct {
 	SpeedJitter float64
 	// Seed picks the jitter. Defaults to a fixed value if zero.
 	Seed int64
+	// From is the screen the text pours in over instead of a blank one.
+	From Snapshot
 }
 
 // DefaultPourParams returns the terminaltexteffects defaults: pouring
@@ -100,20 +105,40 @@ func DefaultPourParams() PourParams {
 type pour struct {
 	PourParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *pour) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *pour) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *pour) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
-	if len(glyphs) == 0 {
-		return
+	// line returns the line of the cell at x, y, counted from the far
+	// side, and how far a character falls to it out of span.
+	lines := rows
+	line := func(x, y int) (group int, dist, span float64) {
+		switch s.Direction {
+		case PourDown:
+			return rows - 1 - y, float64(y), float64(rows - 1)
+		case PourUp:
+			return y, float64(rows - 1 - y), float64(rows - 1)
+		case PourLeft:
+			return x, float64(cols - 1 - x), float64(cols - 1)
+		default:
+			return cols - 1 - x, float64(x), float64(cols - 1)
+		}
+	}
+	if s.Direction == PourLeft || s.Direction == PourRight {
+		lines = cols
 	}
 	// Lines pour from the far side, snaking: every other line streams
 	// in reversed.
@@ -135,26 +160,50 @@ func (s *pour) Shade(frame, total int, cells [][]term.Cell) {
 		return group, index
 	})
 	trickle := 1 - s.FallDuration
+	// fall is how long a character takes to fall dist out of span.
+	fall := func(dist, span float64) float64 {
+		if span > 0 {
+			return s.FallDuration * dist / span
+		}
+		return s.FallDuration
+	}
+	// reached is when the pour reaches each line: when the character
+	// that starts first in it would land unhurried, or sooner if one of
+	// its characters does.
+	inLine := make([]int, lines)
+	for _, g := range glyphs {
+		group, _, _ := line(g.x, g.y)
+		inLine[group]++
+	}
+	reached := make([]float64, lines)
+	before := 0
+	for group := range reached {
+		start := trickle * float64(group) / float64(lines)
+		if len(glyphs) > 0 {
+			start = trickle * float64(before) / float64(len(glyphs))
+		}
+		before += inLine[group]
+		// The lines are counted from the far side, so the farthest line
+		// is the one the characters fall to first.
+		dist, span := float64(lines-1-group), float64(lines-1)
+		reached[group] = start + fall(dist, span)
+	}
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
 		start := trickle * float64(ranks[i]) / float64(len(glyphs))
-		var sx, sy, dist, span float64
+		sx, sy := float64(g.x), 0.0
 		switch s.Direction {
-		case PourDown:
-			sx, sy, dist, span = float64(g.x), 0, float64(g.y), float64(rows-1)
 		case PourUp:
-			sx, sy, dist, span = float64(g.x), float64(rows-1), float64(rows-1-g.y), float64(rows-1)
+			sy = float64(rows - 1)
 		case PourLeft:
-			sx, sy, dist, span = float64(cols-1), float64(g.y), float64(cols-1-g.x), float64(cols-1)
-		default:
-			sx, sy, dist, span = 0, float64(g.y), float64(g.x), float64(cols-1)
+			sx, sy = float64(cols-1), float64(g.y)
+		case PourRight:
+			sx, sy = 0, float64(g.y)
 		}
-		dur := s.FallDuration
-		if span > 0 {
-			dur *= dist / span
-		}
+		group, dist, span := line(g.x, g.y)
 		// A slowed fall must still land by the last frame.
-		dur = math.Min(dur*(1+s.SpeedJitter*(2*unit3(s.Seed, g.x, g.y, 1)-1)), 1-start)
+		dur := math.Min(fall(dist, span)*(1+s.SpeedJitter*(2*unit3(s.Seed, g.x, g.y, 1)-1)), 1-start)
+		reached[group] = min(reached[group], start+dur)
 		if t < start {
 			places[i] = placement{hidden: true}
 			continue
@@ -167,5 +216,9 @@ func (s *pour) Shade(frame, total int, cells [][]term.Cell) {
 			fg: fadeFg(p, s.StartColor, g.cell.Fg, s.defaultAttr.Fg),
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
+	return func(x, y int) float64 {
+		group, _, _ := line(x, y)
+		return reached[group]
+	}
 }

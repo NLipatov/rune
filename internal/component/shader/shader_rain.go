@@ -26,7 +26,9 @@ import (
 // Rain rains the text down from the top edge: the characters drop in
 // row by row from the top, in a random order within each row, as
 // raindrops of random symbol and color that accelerate to their place
-// and fade into the character they carry.
+// and fade into the character they carry. They fall in front of
+// [RainParams.From], which the rain washes away row by row as it
+// reaches them.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -35,7 +37,7 @@ import (
 // [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "rain" effect.
-func Rain(params RainParams, defaultAttr term.Attributes) Shader {
+func Rain(params RainParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultRainParams()
 	params.RainColors = orDefaults(params.RainColors, d.RainColors)
 	params.RainSymbols = checkSymbols("RainParams.RainSymbols", params.RainSymbols, d.RainSymbols)
@@ -45,7 +47,9 @@ func Rain(params RainParams, defaultAttr term.Attributes) Shader {
 	checkPhases("RainParams.FallDuration+FadeDuration", params.FallDuration+params.FadeDuration)
 	checkFloat("RainParams.SpeedJitter", params.SpeedJitter, 0, 1, false, true)
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &rain{RainParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &rain{RainParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // RainParams configures [Rain].
@@ -69,6 +73,8 @@ type RainParams struct {
 	// Seed picks the raindrops' symbols, colors, order and jitter.
 	// Defaults to a fixed value if zero.
 	Seed int64
+	// From is the screen the rain starts from instead of a blank one.
+	From Snapshot
 }
 
 // DefaultRainParams returns the terminaltexteffects defaults: blue
@@ -97,36 +103,53 @@ func DefaultRainParams() RainParams {
 type rain struct {
 	RainParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *rain) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *rain) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *rain) shade(t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
-	if len(glyphs) == 0 {
-		return
-	}
 	ranks := ranksBy(glyphs, func(g glyph) (int, int) {
 		return g.y, int(hash3(s.Seed, g.x, g.y, 1) >> 1)
 	})
 	trickle := 1 - s.FallDuration - s.FadeDuration
+	// reached is when the rain reaches each row: when the drop that starts
+	// first in it would land unhurried, or sooner if one of its drops does.
+	reached := make([]float64, rows)
+	above := 0
+	for y := range reached {
+		start := trickle * float64(y) / float64(rows)
+		if len(glyphs) > 0 {
+			start = trickle * float64(above) / float64(len(glyphs))
+		}
+		reached[y] = start + s.FallDuration*float64(y)/float64(max(1, rows-1))
+		for above < len(glyphs) && glyphs[above].y == y {
+			above++
+		}
+	}
 	places := make([]placement, len(glyphs))
 	for i, g := range glyphs {
 		start := trickle * float64(ranks[i]) / float64(len(glyphs))
-		if t < start {
-			places[i] = placement{hidden: true}
-			continue
-		}
 		dur := s.FallDuration * float64(g.y) / float64(max(1, rows-1))
 		dur *= 1 + s.SpeedJitter*(2*unit3(s.Seed, g.x, g.y, 2)-1)
 		// A slow drop still has to land and fade in by the end.
 		dur = math.Min(dur, 1-s.FadeDuration-start)
+		reached[g.y] = min(reached[g.y], start+dur)
+		if t < start {
+			places[i] = placement{hidden: true}
+			continue
+		}
 		p := window(t, start, dur)
 		drop := s.RainColors[pick3(s.Seed, g.x, g.y, 3, len(s.RainColors))]
 		if p < 1 {
@@ -144,5 +167,6 @@ func (s *rain) Shade(frame, total int, cells [][]term.Cell) {
 			fg: fadeFg(fade, drop, g.cell.Fg, s.defaultAttr.Fg),
 		}
 	}
-	place(cells, glyphs, places, s.defaultAttr.Bg)
+	s.from.place(cells, glyphs, places)
+	return func(_, y int) float64 { return reached[y] }
 }

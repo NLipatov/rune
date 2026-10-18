@@ -17,6 +17,8 @@
 package shader
 
 import (
+	"sort"
+
 	"github.com/unstablebuild/rune-go-sdk/term"
 )
 
@@ -24,7 +26,8 @@ import (
 // reading order, each one blocking in through TypingSymbols, then
 // decrypts it: every character cycles quickly through CipherSymbols,
 // slows down for a while of its own, and is discovered in
-// DiscoverColor before settling into its own color.
+// DiscoverColor before settling into its own color. The typing
+// overwrites [DecryptParams.From] as it goes.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -32,7 +35,7 @@ import (
 // panic with an error wrapping [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "decrypt" effect.
-func Decrypt(params DecryptParams, defaultAttr term.Attributes) Shader {
+func Decrypt(params DecryptParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultDecryptParams()
 	params.CiphertextColors = orDefaults(params.CiphertextColors, d.CiphertextColors)
 	params.CipherSymbols = checkSymbols("DecryptParams.CipherSymbols", params.CipherSymbols, d.CipherSymbols)
@@ -47,7 +50,9 @@ func Decrypt(params DecryptParams, defaultAttr term.Attributes) Shader {
 	params.SymbolPeriod = max(checkFloat("DecryptParams.SymbolPeriod",
 		orDefault(params.SymbolPeriod, d.SymbolPeriod), 0, 1, true, false), 1e-6)
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &decrypt{DecryptParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &decrypt{DecryptParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // DecryptParams configures [Decrypt].
@@ -75,6 +80,8 @@ type DecryptParams struct {
 	SymbolPeriod float64
 	// Seed picks the ciphertext. Defaults to a fixed value if zero.
 	Seed int64
+	// From is the screen the typing starts from instead of a blank one.
+	From Snapshot
 }
 
 // DefaultDecryptParams returns the terminaltexteffects defaults: green
@@ -107,17 +114,23 @@ func DefaultDecryptParams() DecryptParams {
 type decrypt struct {
 	DecryptParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 func (s *decrypt) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *decrypt) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images, s.shade)
+}
+
+func (s *decrypt) shade(t float64, cells [][]term.Cell) uncover {
+	rows, cols := canvasSize(cells)
+	if rows == 0 || cols == 0 {
+		return nil
 	}
 	glyphs := collectContent(cells, s.defaultAttr.Bg)
-	if len(glyphs) == 0 {
-		return
-	}
 	typeAnim := min(s.TypingDuration*0.3, 0.03)
 	typing := s.TypingDuration - typeAnim
 	fastStart := s.TypingDuration
@@ -158,5 +171,14 @@ func (s *decrypt) Shade(frame, total int, cells [][]term.Cell) {
 			p := window(t, slowStart+slow, s.DiscoverDuration)
 			paintFg(cells, g.x, g.y, fadeFg(p, s.DiscoverColor, g.cell.Fg, s.defaultAttr.Fg))
 		}
+	}
+	// The typing overwrites the backdrop in reading order.
+	return func(x, y int) float64 {
+		at := y*cols + x
+		if len(glyphs) == 0 {
+			return typing * float64(at) / float64(rows*cols)
+		}
+		next := sort.Search(len(glyphs), func(i int) bool { return glyphs[i].y*cols+glyphs[i].x >= at })
+		return typing * float64(next) / float64(len(glyphs))
 	}
 }

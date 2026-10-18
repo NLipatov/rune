@@ -27,6 +27,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestPour_Reveal(t *testing.T) {
+	testReveal(t, textMoves, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultPourParams()
+		params.From = from
+		return shader.Pour(params, defaultAttr)
+	})
+}
+
 func TestPour_Suite(t *testing.T) {
 	for _, dir := range []shader.PourDirection{shader.PourDown, shader.PourUp, shader.PourLeft, shader.PourRight} {
 		params := shader.DefaultPourParams()

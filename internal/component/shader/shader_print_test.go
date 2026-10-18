@@ -17,18 +17,70 @@
 package shader_test
 
 import (
+	"image"
 	"testing"
 
 	"unstable.build/rune/internal/component/shader/shaderutils"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/component/braille"
 	"unstable.build/rune/internal/component/shader"
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestPrint_Reveal(t *testing.T) {
+	testReveal(t, textMoves, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultPrintParams()
+		params.From = from
+		return shader.Print(params, defaultAttr)
+	})
+}
+
 func TestPrint_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Print(shader.DefaultPrintParams(), term.Attributes{}))
+}
+
+func TestPrint_ThePictureScrollsWithTheRows(t *testing.T) {
+	const cols, rows, total = 24, 10, 60
+	_, text, textImages := revealScreens(cols, rows)
+	// A wallpaper's cells are all alike under its picture.
+	wallpaper := make([][]term.Cell, rows)
+	for y := range wallpaper {
+		wallpaper[y] = make([]term.Cell, cols)
+		for x := range wallpaper[y] {
+			wallpaper[y][x] = term.NewCell(braille.Blank, 1, term.Attributes{Bg: wallpaperBg})
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		cells  [][]term.Cell
+		images []term.Image
+	}{
+		{"text", text, textImages},
+		{"wallpaper", wallpaper, []term.Image{cellPicture(image.Rect(0, 0, cols, rows))}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sh := shader.Print(shader.DefaultPrintParams(), revealAttr)
+			scrolled := false
+			for frame := range total {
+				images := sh.ShadeImages(frame, total, cloneCells(tc.cells), copyPictures(tc.images))
+				shifts := map[image.Point]bool{}
+				for y := range rows {
+					for x := range cols {
+						for _, c := range pixelsAt(images, x, y) {
+							sx, sy, _ := pictureCell(c)
+							shifts[image.Pt(x-sx, y-sy)] = true
+						}
+					}
+				}
+				require.LessOrEqual(t, len(shifts), 1, "frame %d tears the picture apart: %v", frame, shifts)
+				scrolled = scrolled || len(shifts) == 1 && !shifts[image.Point{}]
+			}
+			assert.True(t, scrolled, "the picture never scrolled")
+		})
+	}
 }
 
 func TestPrint_EdgeCases(t *testing.T) {

@@ -23,10 +23,10 @@ import (
 
 // Matrix rains streaks of RainSymbols down the columns of the canvas,
 // each led by a HighlightColor head and trailing RainGradient colors,
-// over a blank screen. The rain then fills every column from the top,
-// and the filled canvas resolves cell by cell in a random order into
-// the text, each character flashing HighlightColor before settling
-// into its own color.
+// over [MatrixParams.From], or a blank screen without it. The rain then
+// fills every column from the top, covering it, and the filled canvas
+// resolves cell by cell in a random order into the text, each character
+// flashing HighlightColor before settling into its own color.
 //
 // The last frame of the animation matches the input exactly.
 //
@@ -35,7 +35,7 @@ import (
 // [ErrInvalidParams].
 //
 // Inspired by terminaltexteffects' "matrix" effect.
-func Matrix(params MatrixParams, defaultAttr term.Attributes) Shader {
+func Matrix(params MatrixParams, defaultAttr term.Attributes) ImageShader {
 	d := DefaultMatrixParams()
 	params.HighlightColor = orDefault(params.HighlightColor, d.HighlightColor)
 	params.RainGradient = orDefaults(params.RainGradient, d.RainGradient)
@@ -51,7 +51,9 @@ func Matrix(params MatrixParams, defaultAttr term.Attributes) Shader {
 	checkFloat("MatrixParams.SymbolSwapChance", params.SymbolSwapChance, 0, 1, false, false)
 	checkFloat("MatrixParams.ColorSwapChance", params.ColorSwapChance, 0, 1, false, false)
 	params.Seed = orDefault(params.Seed, d.Seed)
-	return &matrix{MatrixParams: params, defaultAttr: defaultAttr}
+	from := newBackdrop(params.From, defaultAttr)
+	params.From = Snapshot{}
+	return &matrix{MatrixParams: params, defaultAttr: defaultAttr, from: from}
 }
 
 // MatrixParams configures [Matrix].
@@ -84,6 +86,8 @@ type MatrixParams struct {
 	// Seed picks the streaks, the glyphs and the resolve order.
 	// Defaults to a fixed value if zero.
 	Seed int64
+	// From is the screen the rain falls on instead of a blank one.
+	From Snapshot
 }
 
 // DefaultMatrixParams returns the terminaltexteffects defaults: a pale
@@ -110,6 +114,7 @@ func DefaultMatrixParams() MatrixParams {
 type matrix struct {
 	MatrixParams
 	defaultAttr term.Attributes
+	from        backdrop
 }
 
 // streak is a run of rain down a column.
@@ -131,26 +136,25 @@ func (k streak) coversRow(t float64, y int) (covers, head bool) {
 }
 
 func (s *matrix) Shade(frame, total int, cells [][]term.Cell) {
-	t, ok := progress(frame, total)
-	if !ok {
-		return
-	}
+	s.ShadeImages(frame, total, cells, nil)
+}
+
+func (s *matrix) ShadeImages(frame, total int, cells [][]term.Cell, images []term.Image) []term.Image {
+	return s.from.reveal(frame, total, cells, images,
+		func(t float64, cells [][]term.Cell) uncover { return s.shade(frame, t, cells) })
+}
+
+func (s *matrix) shade(frame int, t float64, cells [][]term.Cell) uncover {
 	rows, cols := canvasSize(cells)
 	if rows == 0 || cols == 0 {
-		return
+		return nil
 	}
 	fillStart := s.RainDuration
 	resolveStart := fillStart + s.FillDuration
 	resolveDur := 1 - resolveStart
 	for x := range cols {
 		rain, raining := s.rainStreak(t, x, rows)
-		fill := streak{
-			start:  fillStart + unit3(s.Seed, x, 0, 50)*s.FillDuration*0.3,
-			step:   s.FillDuration * 0.6 / float64(rows),
-			length: rows,
-			index:  -1,
-			holds:  true,
-		}
+		fill := s.fill(x, rows)
 		for y := range rows {
 			if x >= len(cells[y]) {
 				continue
@@ -186,6 +190,23 @@ func (s *matrix) Shade(frame, total int, cells [][]term.Cell) {
 			}
 			putChar(cells, x, y, s.rainSymbol(frame, x, y, which.index), s.rainColor(frame, x, y, which.index, head))
 		}
+	}
+	// The fill covers the backdrop as it reaches it.
+	return func(x, y int) float64 {
+		fill := s.fill(x, rows)
+		return fill.start + fill.step*float64(y)
+	}
+}
+
+// fill returns the streak that fills column x of a canvas of rows from
+// the top once the rain is over.
+func (s *matrix) fill(x, rows int) streak {
+	return streak{
+		start:  s.RainDuration + unit3(s.Seed, x, 0, 50)*s.FillDuration*0.3,
+		step:   s.FillDuration * 0.6 / float64(rows),
+		length: rows,
+		index:  -1,
+		holds:  true,
 	}
 }
 

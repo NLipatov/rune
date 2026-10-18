@@ -351,15 +351,10 @@ func TestBurn_RevealsLiveCellsAfterBurnPasses(t *testing.T) {
 	params.IgniteBatchMin = 1
 	params.IgniteBatchMax = 1
 	params.SmokeChance = 0
+	params.From = shader.Snapshot{Cells: filledCells(5, 1, 'O')}
 	sh := shader.Burn(params, term.Attributes{})
 
 	const total = 20
-	initial := makeCharCells(5, 1)
-	for x := range initial[0] {
-		initial[0][x].Ch = 'O'
-	}
-	sh.Shade(0, total, initial)
-
 	live := makeCharCells(5, 1)
 	for x := range live[0] {
 		live[0][x].Ch = 'N'
@@ -488,9 +483,8 @@ func TestBurn_BurnsThePicturesAwayAndRevealsTheLiveOnes(t *testing.T) {
 	oldCells, liveCells := filledCells(cols, rows, 'O'), filledCells(cols, rows, 'N')
 	params := shader.DefaultBurnParams()
 	params.SmokeChance = 0
+	params.From = shader.Snapshot{Cells: oldCells, Images: []term.Image{old}}
 	sh := shader.Burn(params, term.Attributes{})
-	sh.SetInitialCells(cloneCells(oldCells))
-	sh.SetInitialImages([]term.Image{old})
 
 	mixed := false
 	for frame := range total + 2 {
@@ -534,9 +528,8 @@ func TestBurn_RisingCharactersPassBehindThePictures(t *testing.T) {
 	oldCells, liveCells := filledCells(cols, rows, 'O'), filledCells(cols, rows, 'N')
 	params := shader.DefaultBurnParams()
 	params.SmokeChance = 1
+	params.From = shader.Snapshot{Cells: oldCells, Images: []term.Image{old}}
 	sh := shader.Burn(params, term.Attributes{})
-	sh.SetInitialCells(cloneCells(oldCells))
-	sh.SetInitialImages([]term.Image{old})
 
 	rising := 0
 	for frame := range total + 1 {
@@ -560,40 +553,90 @@ func TestBurn_RisingCharactersPassBehindThePictures(t *testing.T) {
 	assert.Positive(t, rising, "no character rose")
 }
 
-func TestBurn_CapturesThePicturesWithTheCells(t *testing.T) {
+func TestBurn_CopiesTheSnapshot(t *testing.T) {
 	const cols, rows, total = 12, 6, 30
-	red, blue := color.RGBA{R: 255, A: 255}, color.RGBA{B: 255, A: 255}
+	red := color.RGBA{R: 255, A: 255}
 	old := solidPicture(red, image.Rect(0, 0, cols, rows))
-	live := solidPicture(blue, image.Rect(0, 0, cols, rows))
-	sh := shader.Burn(shader.DefaultBurnParams(), term.Attributes{})
-
-	first := sh.ShadeImages(0, total, filledCells(cols, rows, 'O'), []term.Image{old})
-	require.Len(t, first, 1)
-	assert.Equal(t, []color.RGBA{red}, picturesAt(first, 0, 0))
+	oldCells := filledCells(cols, rows, 'O')
+	params := shader.DefaultBurnParams()
+	params.From = shader.Snapshot{Cells: oldCells, Images: []term.Image{old}}
+	sh := shader.Burn(params, term.Attributes{})
 	// The writer the picture was drawn into is done with its pixels.
 	old.Src.(*image.RGBA).Pix[0] = 0
+	oldCells[0][0].Ch = 'X'
 
 	cells := filledCells(cols, rows, 'N')
-	images := sh.ShadeImages(total/3, total, cells, []term.Image{live})
-	snapshot := 0
-	for y := range rows {
-		for x := range cols {
-			if cells[y][x].Ch == 'O' && cells[y][x].Fg == term.ColorWhite {
-				snapshot++
-				require.Equal(t, []color.RGBA{red}, picturesAt(images, x, y), "cell %d,%d", x, y)
+	images := sh.ShadeImages(0, total, cells, nil)
+	assert.Equal(t, filledCells(cols, rows, 'O'), cells)
+	assert.Equal(t, []color.RGBA{red}, picturesAt(images, 0, 0))
+}
+
+func TestBurn_WithoutASnapshotCrossesTheCellsShaded(t *testing.T) {
+	const cols, rows, total = 12, 6, 30
+	params := shader.DefaultBurnParams()
+	params.SmokeChance = 0
+	sh := shader.Burn(params, term.Attributes{})
+	live := []term.Image{solidPicture(color.RGBA{B: 255, A: 255}, image.Rect(0, 0, cols, rows))}
+	burnt := false
+	for frame := range total {
+		cells := filledCells(cols, rows, 'N')
+		images := sh.ShadeImages(frame, total, cells, live)
+		for y := range rows {
+			for x := range cols {
+				if cells[y][x].Ch == 'N' {
+					require.Len(t, picturesAt(images, x, y), 1, "frame %d cell %d,%d", frame, x, y)
+					continue
+				}
+				burnt = true
+				require.Contains(t, params.BurnSymbols, cells[y][x].Ch, "frame %d cell %d,%d", frame, x, y)
 			}
 		}
 	}
-	assert.Positive(t, snapshot, "the burn has crossed every cell")
+	assert.True(t, burnt, "the wave never crossed the cells")
+}
+
+func TestBurn_FrameZeroPaintsTheSnapshot(t *testing.T) {
+	// Otherwise the live workspace flashes for one frame at the handover
+	// before the burn wave begins.
+	params := shader.DefaultBurnParams()
+	params.FixedOrigin = true
+	params.From = shader.Snapshot{Cells: filledCells(4, 2, 'O')}
+	sh := shader.Burn(params, term.Attributes{})
+
+	live := filledCells(4, 2, 'N')
+	sh.Shade(0, 30, live)
+	assert.Equal(t, filledCells(4, 2, 'O'), live)
+}
+
+func TestBurn_DesaturatesTheSnapshot(t *testing.T) {
+	// That is what carries the loading shader's progress into the open
+	// shader: at frame 0 the snapshot must match the gray fade's end.
+	snapshot := makeCharCells(2, 1)
+	snapshot[0][0].Fg = term.NewRGBColor(255, 0, 0)
+	snapshot[0][1].Fg = term.NewRGBColor(0, 255, 0)
+	params := shader.DefaultBurnParams()
+	params.From = shader.Snapshot{Cells: snapshot, Desaturation: 1}
+	sh := shader.Burn(params, term.Attributes{})
+
+	live := makeCharCells(2, 1)
+	sh.Shade(0, 30, live)
+
+	lr, lg, lb := live[0][0].Fg.RGB()
+	rr, rg, rb := live[0][1].Fg.RGB()
+	assert.Equal(t, lr, lg)
+	assert.Equal(t, lr, lb)
+	assert.Equal(t, rr, rg)
+	assert.Equal(t, rr, rb)
+	assert.NotEqual(t, lr, rr, "distinct source colors should remain distinct grays")
+	assert.Equal(t, term.NewRGBColor(255, 0, 0), snapshot[0][0].Fg, "the snapshot given is left as is")
 }
 
 func TestBurn_DesaturatesTheSnapshotsPictures(t *testing.T) {
 	red := color.RGBA{R: 200, G: 100, B: 50, A: 255}
 	old := solidPicture(red, image.Rect(0, 0, 4, 2))
-	sh := shader.Burn(shader.DefaultBurnParams(), term.Attributes{})
-	sh.SetInitialCells(filledCells(4, 2, 'O'))
-	sh.SetInitialImages([]term.Image{old, old})
-	sh.SetInitialDesaturation(1)
+	params := shader.DefaultBurnParams()
+	params.From = shader.Snapshot{Cells: filledCells(4, 2, 'O'), Images: []term.Image{old, old}, Desaturation: 1}
+	sh := shader.Burn(params, term.Attributes{})
 
 	images := sh.ShadeImages(0, 30, filledCells(4, 2, 'N'), nil)
 	require.Len(t, images, 2)

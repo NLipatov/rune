@@ -25,6 +25,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestDecrypt_Reveal(t *testing.T) {
+	testReveal(t, textStays, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultDecryptParams()
+		params.From = from
+		return shader.Decrypt(params, defaultAttr)
+	})
+}
+
 func TestDecrypt_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.Decrypt(shader.DefaultDecryptParams(), term.Attributes{}))
 }

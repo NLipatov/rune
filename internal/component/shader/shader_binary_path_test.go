@@ -26,6 +26,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shaderutils"
 )
 
+func TestBinaryPath_Reveal(t *testing.T) {
+	testReveal(t, textStays, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultBinaryPathParams()
+		params.From = from
+		return shader.BinaryPath(params, defaultAttr)
+	})
+}
+
 func TestBinaryPath_Suite(t *testing.T) {
 	shadertest.TestShader(t, shader.BinaryPath(shader.DefaultBinaryPathParams(), term.Attributes{}))
 }

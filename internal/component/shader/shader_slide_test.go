@@ -28,6 +28,14 @@ import (
 	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
+func TestSlide_Reveal(t *testing.T) {
+	testReveal(t, textMoves, func(from shader.Snapshot, defaultAttr term.Attributes) shader.ImageShader {
+		params := shader.DefaultSlideParams()
+		params.From = from
+		return shader.Slide(params, defaultAttr)
+	})
+}
+
 func TestSlide_Suite(t *testing.T) {
 	for _, grouping := range []shader.SlideGrouping{shader.SlideRows, shader.SlideColumns, shader.SlideDiagonals} {
 		for _, merge := range []bool{false, true} {
