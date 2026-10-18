@@ -50,12 +50,17 @@ const (
 	// shineIntensity keeps the shine from washing text out to white, for
 	// the same reason pulseIntensity is lowered.
 	shineIntensity = 0.3
+	// blazeLoops and infernoLoops are how many loops one cycle of each
+	// fire spans, which at DefaultLoop keeps the pace it was tuned to.
+	blazeLoops   = 26
+	infernoLoops = 83
+	// BlazeCycle is how long one cycle of the blaze fire lasts at the
+	// pace it was tuned to, for those that play it for a set time rather
+	// than while work runs.
+	BlazeCycle = blazeLoops * DefaultLoop
+	// InfernoCycle is BlazeCycle for the inferno fire.
+	InfernoCycle = infernoLoops * DefaultLoop
 )
-
-// loopFrames is one visual loop at the given cadence.
-func loopFrames(fps int, loop time.Duration) int {
-	return int(float64(fps) * loop.Seconds())
-}
 
 // Params tunes the effects New builds, each under its own name; an
 // effect only reads its own. Zero values keep the catalog's own tuning,
@@ -173,25 +178,21 @@ func Names() []string {
 }
 
 // New resolves a name from Names into an effect that keeps painting
-// for as long as the work runs, either by looping its animation every
-// loop or by running its own clock. It reports false for unknown names.
+// for as long as the work runs, repeating seamlessly every loop or, for
+// the fire, every few dozen loops. It reports false for unknown names.
 func New(
-	name string, defAttr term.Attributes, p Params, fps int, loop time.Duration,
+	name string, defAttr term.Attributes, p Params, loop time.Duration,
 ) (shader.Shader, bool) {
-	fpsf := float64(fps)
 	var inner shader.Shader
-	// An effect that runs its clock off the frame index alone rather
-	// than against total is already continuous, and Loop would replay
-	// the whole Duration inside one loop window and run it thousands of
-	// times too fast.
-	var continuous bool
+	// span is how many loops one cycle of the effect lasts.
+	span := 1
 	switch name {
 	case "blaze":
 		blazeParams := glslshader.DefaultBlazeParams()
 		blazeParams.PaintForeground = !p.Blaze.AnimateBackground
 		blazeParams.Color = p.Blaze.Color
 		blazeParams.SwapRedBlue = p.Blaze.SwapRedBlue
-		inner, continuous = glslshader.Blaze(blazeParams, fpsf), true
+		inner, span = glslshader.Blaze(blazeParams), blazeLoops
 	case "burn":
 		burnParams := shader.DefaultBurnParams()
 		burnParams.PaintForeground = !p.Burn.AnimateBackground
@@ -212,15 +213,14 @@ func New(
 		infernoParams.PaintForeground = !p.Inferno.AnimateBackground
 		infernoParams.Color = p.Inferno.Color
 		infernoParams.SwapRedBlue = p.Inferno.SwapRedBlue
-		inner, continuous = glslshader.Inferno(infernoParams, fpsf), true
+		inner, span = glslshader.Inferno(infernoParams), infernoLoops
 	case "pulse":
 		params := shader.DefaultPulseParams()
-		params.PeriodFrames = loopFrames(fps, loop)
 		params.Intensity = fractionOr(p.Pulse.Intensity, pulseIntensity)
 		if p.Pulse.Color != term.ColorDefault {
 			params.Color = p.Pulse.Color
 		}
-		inner, continuous = shader.Pulse(params, defAttr), true
+		inner = shader.Pulse(params, defAttr)
 	case "shine":
 		shineParams := glslshader.DefaultShineParams()
 		shineParams.BandWidth = fractionOr(p.Shine.BandWidth, shineBandWidth)
@@ -233,10 +233,7 @@ func New(
 	default:
 		return nil, false
 	}
-	if continuous {
-		return inner, true
-	}
-	return timeshader.Loop(inner, int(Duration/loop)), true
+	return timeshader.Loop(inner, max(1, int(Duration/(loop*time.Duration(span))))), true
 }
 
 // fractionOr returns v, or def when v is not in (0, 1].

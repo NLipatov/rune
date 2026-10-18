@@ -2592,11 +2592,11 @@ func (c *Component) drawDragVeil(w term.Writer) bool {
 	labelSpan := writeCenteredLabel(cells, pos, width, height, label,
 		c.config.DropTargetLabelAttr)
 	shader.Virtual(shader.Pulse(shader.PulseParams{
-		Color:        c.config.DropTargetAttr.Fg,
-		PeriodFrames: dragVeilPeriodFrame,
-		Intensity:    dragVeilIntensity,
+		Color:     c.config.DropTargetAttr.Fg,
+		Pulses:    1,
+		Intensity: dragVeilIntensity,
 	}, c.config.DropTargetAttr), pos, width, height).
-		Shade(int(c.drag.frame.Load()), 0, cells)
+		Shade(int(c.drag.frame.Load()%dragVeilPeriodFrame), dragVeilPeriodFrame, cells)
 
 	for y, row := range cells {
 		for x, cl := range row {

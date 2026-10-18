@@ -17,6 +17,7 @@
 package ide
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -728,10 +729,11 @@ func (i *IDE) init(
 	// any. The shader override uses the showroom defaults exposed by
 	// :shaderrun; duration replaces the runtime-provided lifetime.
 	if name, ok := i.ideConfig.animationsOpenWorkspaceShader(); ok {
-		fps := openShaderCfg.fps
 		fc := i.ideConfig.windowFrameCharset()
+		// shader.New plays it at the default fps when none is set.
+		fps := cmp.Or(openShaderCfg.fps, defaultShaderFPS)
 		openShaderCfg.shader = func(defAttr term.Attributes) shader.Shader {
-			s, _ := buildNamedShader(name, defAttr, fps, fc)
+			s, _ := buildNamedShader(name, defAttr, fc, fps)
 			return s
 		}
 	}

@@ -324,8 +324,9 @@ take the same keys:
 - `enabled`: set to `false` to turn the effect off.
 - `shader`: one of `blaze`, `burn`, `inferno`, `pulse` or `shine`.
 - `fps`: how many times per second the effect redraws.
-- `loop`: how long one loop of `burn`, `pulse` or `shine` lasts, such as
-  `"2400ms"`. The other shaders move at their own pace.
+- `loop`: how long one loop of the effect lasts, such as `"2400ms"`. The
+  flames of `blaze` and `inferno` take a few dozen loops to come round, so a
+  shorter loop makes the fire faster.
 
 Settings that only apply to one shader go under a key named after it, and are
 only used while that shader is selected. All of them are optional:
@@ -375,7 +376,10 @@ workspace still shows through.
   plays just that one. Empty by default, which means there is no screensaver.
 - `idle_timeout`: how long Rune waits without input before it starts, such as
   `"10m"` (the default).
-- `duration`: how long one pass lasts. Defaults to `"1m"`.
+- `duration`: how long one pass lasts. Defaults to `"1m"`. The fires, `blaze`
+  and `inferno`, keep their own pace, so a pass of one lasts as many whole
+  cycles of the fire as it takes to cover `duration`: about 31s each for
+  `blaze` and 100s for `inferno`.
 - `time_shader`: how a pass plays the shader's animation:
   - `loop` (the default): from start to end.
   - `ping_pong`: to the end and back.

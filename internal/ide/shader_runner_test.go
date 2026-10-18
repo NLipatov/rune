@@ -18,9 +18,11 @@ package ide
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -161,12 +163,71 @@ func TestBuildNamedShaderRegistersEveryListedName(t *testing.T) {
 	defAttr := term.Attributes{}
 	fc := component.FrameCharSetDefault()
 	for _, name := range namedShaderNames() {
-		sh, ok := buildNamedShader(name, defAttr, 30, fc)
+		sh, ok := buildNamedShader(name, defAttr, fc, defaultShaderFPS)
 		assert.True(t, ok,
 			"buildNamedShader must register %q (listed by namedShaderNames)",
 			name)
 		assert.NotNil(t, sh,
 			"buildNamedShader(%q) must return a non-nil Shader", name)
+	}
+}
+
+func TestBuildNamedShaderPlaysTheFireAtItsPace(t *testing.T) {
+	const fps = defaultShaderFPS
+	frame := time.Second / fps
+	attr := term.Attributes{Fg: term.ColorWhite}
+	fc := component.FrameCharSetDefault()
+	shade := func(s shader.Shader, frame, total int) [][]term.Cell {
+		out := makeScreensaverCanvas()
+		s.Shade(frame, total, out)
+		return out
+	}
+	blazeBlue, infernoBlue := glslshader.DefaultBlazeParams(), glslshader.DefaultInfernoParams()
+	blazeBlue.SwapRedBlue, infernoBlue.SwapRedBlue = true, true
+	for _, tc := range []struct {
+		name  string
+		bare  shader.Shader
+		cycle time.Duration
+	}{
+		{"blaze", glslshader.Blaze(glslshader.DefaultBlazeParams()), shaderloop.BlazeCycle},
+		{"blazeBlue", glslshader.Blaze(blazeBlue), shaderloop.BlazeCycle},
+		{"inferno", glslshader.Inferno(glslshader.DefaultInfernoParams()), shaderloop.InfernoCycle},
+		{"infernoBlue", glslshader.Inferno(infernoBlue), shaderloop.InfernoCycle},
+	} {
+		// The fire's cycle a frame at a time, at the pace it was tuned to.
+		cycle := make([][][]term.Cell, int(tc.cycle/frame))
+		for k := range cycle {
+			cycle[k] = shade(tc.bare, k, len(cycle))
+		}
+		// at returns the frames of the cycle that look like frame of a
+		// run, which neighbouring frames may when the fire barely moves.
+		at := func(s shader.Shader, frame, total int) []int {
+			got := shade(s, frame, total)
+			var ks []int
+			for k, c := range cycle {
+				if assert.ObjectsAreEqual(c, got) {
+					ks = append(ks, k)
+				}
+			}
+			return ks
+		}
+		for _, d := range []time.Duration{time.Second, 10 * time.Second, 5 * time.Minute} {
+			t.Run(fmt.Sprintf("%s/%s", tc.name, d), func(t *testing.T) {
+				s, ok := buildNamedShader(tc.name, attr, fc, fps)
+				require.True(t, ok)
+				total := int(d / frame)
+				// Midway through the run, clear of its fades.
+				mid := total / 2
+				start := at(s, mid, total)
+				require.NotEmpty(t, start, "frame %d of the run is a frame of the fire's cycle", mid)
+				for _, step := range []int{1, 2, total / 4} {
+					later := at(s, mid+step, total)
+					assert.True(t, slices.ContainsFunc(start, func(k int) bool {
+						return slices.Contains(later, (k+step)%len(cycle))
+					}), "%d frames later the fire is %d frames of its cycle further", step, step)
+				}
+			})
+		}
 	}
 }
 
@@ -419,7 +480,7 @@ func TestScreensaverConfigPlaysPassesThroughTheTimeShader(t *testing.T) {
 		t.Run(tc.timeShader, func(t *testing.T) {
 			cfg := screensaverConfig{duration: time.Second, fps: fps, timeShader: tc.timeShader}
 			rec := new(frameRecorder)
-			s := cfg.play(rec)
+			s := cfg.play(rec, 0)
 			var got []float64
 			for _, frame := range frames {
 				s.Shade(frame, total, nil)
@@ -431,11 +492,56 @@ func TestScreensaverConfigPlaysPassesThroughTheTimeShader(t *testing.T) {
 	}
 }
 
+func TestScreensaverConfigPlaysAFireWholeCyclesAPass(t *testing.T) {
+	const fps = 10
+	const cycle = 4 * time.Second
+	total := int(shaderloop.Duration / (time.Second / fps))
+	for _, tc := range []struct {
+		name     string
+		duration time.Duration
+		// want is how far through its pass the fire is at each frame.
+		want map[int]float64
+	}{
+		{
+			name:     "a pass shorter than the cycle lasts the cycle",
+			duration: time.Second,
+			want:     map[int]float64{0: 0, 10: 0.25, 20: 0.5, 39: 0.975, 40: 0, 60: 0.5},
+		},
+		{
+			name:     "a pass longer than the cycle lasts whole cycles",
+			duration: 10 * time.Second,
+			want:     map[int]float64{0: 0, 60: 0.5, 119: 119.0 / 120, 120: 0, 180: 0.5},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := screensaverConfig{duration: tc.duration, fps: fps, timeShader: "loop"}
+			rec := new(frameRecorder)
+			s := cfg.play(rec, cycle)
+			for frame, want := range tc.want {
+				s.Shade(frame, total, nil)
+				assert.InDelta(t, want, float64(rec.frame)/float64(rec.total), 0.001, "frame %d", frame)
+			}
+		})
+	}
+}
+
 // frameRecorder records the frame and total it last shaded.
 type frameRecorder struct{ frame, total int }
 
 func (r *frameRecorder) Shade(frame, total int, _ [][]term.Cell) {
 	r.frame, r.total = frame, total
+}
+
+// makeScreensaverCanvas returns a small canvas of text.
+func makeScreensaverCanvas() [][]term.Cell {
+	out := make([][]term.Cell, 4)
+	for y := range out {
+		out[y] = make([]term.Cell, 10)
+		for x := range out[y] {
+			out[y][x] = term.NewCell(rune('a'+x+y), 1, term.Attributes{Fg: term.ColorWhite})
+		}
+	}
+	return out
 }
 
 func TestShaderRunnerScreensaverWaitsForThePlayingShader(t *testing.T) {

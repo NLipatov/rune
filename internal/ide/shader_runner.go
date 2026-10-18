@@ -111,11 +111,19 @@ var screensaverTimeShaders = map[string]func(shader.Shader) shader.Shader{
 
 // play returns s played through the time shader one pass of duration at
 // a time, over and over for the shaderloop.Duration a screensaver lasts.
-// Each pass sees the whole of the frames and total it is given.
-func (c screensaverConfig) play(s shader.Shader) shader.Shader {
+// Each pass sees the whole of the frames and total it is given. A pass
+// of a shader that plays at its own pace, a cycle of the given length at
+// a time, as the fires do, lasts the fewest whole cycles that cover
+// duration, so that its passes join seamlessly.
+func (c screensaverConfig) play(s shader.Shader, cycle time.Duration) shader.Shader {
 	frame := time.Second / time.Duration(c.fps)
 	total := int(shaderloop.Duration / frame)
-	passes := max(1, total/max(1, int(c.duration/frame)))
+	pass := max(1, int(c.duration/frame))
+	if cycle > 0 {
+		cycles := max(1, int((c.duration+cycle-1)/cycle))
+		pass = max(1, int(time.Duration(cycles)*cycle/frame))
+	}
+	passes := max(1, total/pass)
 	return timeshader.Loop(screensaverTimeShaders[c.timeShader](s), passes)
 }
 
@@ -189,7 +197,7 @@ func (r *shaderRunner) HandleCommand(ctx context.Context, cmd textapi.Command) (
 		}
 	}
 
-	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, fps, r.fc)
+	s, ok := buildNamedShader(cmd.Args[0], r.defAttr, r.fc, fps)
 	if !ok {
 		err = errors.New("expected one of the available shaders")
 		return
@@ -253,21 +261,23 @@ func namedShaderNames() []string {
 
 // buildNamedShader returns the shader registered under name with the
 // default parameters used by the :shaderrun showroom, wrapped in the
-// same cross-fade transitions when applicable. fps is only consumed by
-// the GLSL animated shaders. Returns ok=false when name does not match
-// any known shader.
+// same cross-fade transitions when applicable, played at fps. The fires
+// play at the pace of their showroomCycle however long they play.
+// Returns ok=false when name does not match any known shader.
 func buildNamedShader(
-	name string, defAttr term.Attributes,
-	fps int, fc component.FrameCharSet,
+	name string, defAttr term.Attributes, fc component.FrameCharSet, fps int,
 ) (shader.Shader, bool) {
 	const (
 		fadeInPerc  = 0.1
 		fadeOutPerc = 0.1
 	)
+	paced := func(s shader.Shader) shader.Shader {
+		return timeshader.Period(s, max(1, int(showroomCycle(name)*time.Duration(fps)/time.Second)))
+	}
 	switch name {
 	case "blaze":
 		return wrapShaderCrossFadeInOut(
-			glslshader.Blaze(glslshader.DefaultBlazeParams(), float64(fps)),
+			paced(glslshader.Blaze(glslshader.DefaultBlazeParams())),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
@@ -275,7 +285,7 @@ func buildNamedShader(
 		params := glslshader.DefaultBlazeParams()
 		params.SwapRedBlue = true
 		return wrapShaderCrossFadeInOut(
-			glslshader.Blaze(params, float64(fps)),
+			paced(glslshader.Blaze(params)),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
@@ -285,25 +295,25 @@ func buildNamedShader(
 		return shader.Burn(shader.DefaultBurnParams(), defAttr), true
 	case "embers":
 		return wrapShaderCrossFadeInOut(
-			glslshader.Embers(glslshader.DefaultEmbersParams(), defAttr, float64(fps)),
+			glslshader.Embers(glslshader.DefaultEmbersParams(), defAttr),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
 	case "incendium":
 		return wrapShaderCrossFadeInOut(
-			glslshader.Incendium(glslshader.DefaultIncendiumParams(), defAttr, float64(fps)),
+			glslshader.Incendium(glslshader.DefaultIncendiumParams(), defAttr),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
 	case "flames":
 		return wrapShaderCrossFadeInOut(
-			glslshader.Flames(glslshader.DefaultFlamesParams(), defAttr, float64(fps)),
+			glslshader.Flames(glslshader.DefaultFlamesParams(), defAttr),
 			0.0, fadeOutPerc,
 			defAttr,
 		), true
 	case "inferno":
 		return wrapShaderCrossFadeInOut(
-			glslshader.Inferno(glslshader.DefaultInfernoParams(), float64(fps)),
+			paced(glslshader.Inferno(glslshader.DefaultInfernoParams())),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
@@ -311,7 +321,7 @@ func buildNamedShader(
 		params := glslshader.DefaultInfernoParams()
 		params.SwapRedBlue = true
 		return wrapShaderCrossFadeInOut(
-			glslshader.Inferno(params, float64(fps)),
+			paced(glslshader.Inferno(params)),
 			fadeInPerc, fadeOutPerc,
 			defAttr,
 		), true
@@ -387,6 +397,20 @@ func buildNamedShader(
 		return shader.VHSTape(shader.DefaultVHSTapeParams(), defAttr), true
 	}
 	return nil, false
+}
+
+// showroomCycle returns how long a cycle of the shader named name lasts
+// at the pace it was tuned to, for the fires, which play a whole cycle a
+// run however long the run is: played for less than a cycle they would
+// rush through all of it. It returns 0 for the others.
+func showroomCycle(name string) time.Duration {
+	switch name {
+	case "blaze", "blazeBlue":
+		return shaderloop.BlazeCycle
+	case "inferno", "infernoBlue":
+		return shaderloop.InfernoCycle
+	}
+	return 0
 }
 
 func (r *shaderRunner) init(
@@ -469,8 +493,8 @@ func (r *shaderRunner) newScreensaver() shader.Shader {
 	cfg := r.screensaverCfg
 	name := cfg.shaders[r.screensaverNext]
 	r.screensaverNext = (r.screensaverNext + 1) % len(cfg.shaders)
-	s, _ := buildNamedShader(name, r.defAttr, cfg.fps, r.fc)
-	return cfg.play(s)
+	s, _ := buildNamedShader(name, r.defAttr, r.fc, cfg.fps)
+	return cfg.play(s, showroomCycle(name))
 }
 
 // Handle satisfies tui.Handler. Input stops the screensaver and puts off

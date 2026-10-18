@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/component/shader/glslshader"
+	"unstable.build/rune/internal/component/shader/shadertest"
 )
 
 var testAttr = term.Attributes{Fg: term.ColorSilver, Bg: term.ColorGray}
@@ -34,11 +35,16 @@ var testAttr = term.Attributes{Fg: term.ColorSilver, Bg: term.ColorGray}
 // total is the frame budget shader.Component runs these effects against.
 var total = int(Duration / (time.Second / DefaultFPS))
 
+// loopFrames is one visual loop at the given cadence.
+func loopFrames(fps int, loop time.Duration) int {
+	return int(float64(fps) * loop.Seconds())
+}
+
 func TestNamesAllResolve(t *testing.T) {
 	require.NotEmpty(t, Names())
 	for _, name := range Names() {
 		t.Run(name, func(t *testing.T) {
-			sh, ok := New(name, term.Attributes{}, Params{}, DefaultFPS, DefaultLoop)
+			sh, ok := New(name, term.Attributes{}, Params{}, DefaultLoop)
 			assert.True(t, ok)
 			assert.NotNil(t, sh)
 		})
@@ -50,7 +56,7 @@ func TestRejectsUnknownNames(t *testing.T) {
 		"", "radarFrame", "incendium", "embers", "flames", "risingChars",
 		"fade", "grayFade",
 	} {
-		_, ok := New(name, term.Attributes{}, Params{}, DefaultFPS, DefaultLoop)
+		_, ok := New(name, term.Attributes{}, Params{}, DefaultLoop)
 		assert.False(t, ok, name)
 		assert.False(t, slices.Contains(Names(), name), name)
 	}
@@ -100,7 +106,7 @@ func TestNamesAllAnimate(t *testing.T) {
 	snapshot := rowSnapshot(8)
 	for _, name := range Names() {
 		t.Run(name, func(t *testing.T) {
-			sh, ok := New(name, testAttr, Params{}, DefaultFPS, DefaultLoop)
+			sh, ok := New(name, testAttr, Params{}, DefaultLoop)
 			require.True(t, ok)
 			seen := make(map[string]struct{})
 			// Effects that open on a still phase need most of the loop
@@ -122,35 +128,65 @@ func TestNamesAllAnimate(t *testing.T) {
 	}
 }
 
-func TestTimeContinuousShadersIgnoreTotal(t *testing.T) {
-	// Past one loop window, so a Loop wrapper would fold the frame
-	// against a different framesPerLoop for each budget.
-	frame := loopFrames(DefaultFPS, DefaultLoop) + 4
+func TestFireDoesNotRepeatEachLoop(t *testing.T) {
+	frames := loopFrames(DefaultFPS, DefaultLoop)
 	snapshot := rowSnapshot(8)
 	for _, name := range []string{"blaze", "inferno"} {
 		t.Run(name, func(t *testing.T) {
-			var got []string
-			for _, budget := range []int{total, 2 * total} {
-				sh, ok := New(name, testAttr, Params{}, DefaultFPS, DefaultLoop)
-				require.True(t, ok)
-				cells := cloneCells(snapshot)
-				sh.Shade(frame, budget, cells)
-				got = append(got, cellsSignature(cells))
+			sh, ok := New(name, testAttr, Params{}, DefaultLoop)
+			require.True(t, ok)
+			for _, frame := range []int{4, 4 + frames/2} {
+				first, next := cloneCells(snapshot), cloneCells(snapshot)
+				sh.Shade(frame, total, first)
+				sh.Shade(frame+frames, total, next)
+				assert.NotEqual(t, cellsSignature(first), cellsSignature(next),
+					"the fire must not jump back to frame %d a loop later", frame)
 			}
-			assert.Equal(t, got[0], got[1],
-				"effect is time-continuous and must not be wrapped in Loop")
+		})
+	}
+}
+
+func TestLoopsAreSeamless(t *testing.T) {
+	for _, name := range Names() {
+		t.Run(name, func(t *testing.T) {
+			sh, ok := New(name, testAttr, Params{}, DefaultLoop)
+			require.True(t, ok)
+			shade := func(frame int) string {
+				cells := rowSnapshot(8)
+				sh.Shade(frame, total, cells)
+				return cellsSignature(cells)
+			}
+			start := []string{shade(0), shade(1), shade(2)}
+			var before [][]term.Cell
+			prev := rowSnapshot(8)
+			sh.Shade(0, total, prev)
+			for frame := 1; frame < 4000; frame++ {
+				cur := rowSnapshot(8)
+				sh.Shade(frame, total, cur)
+				if frame > 2 && cellsSignature(cur) == start[0] &&
+					shade(frame+1) == start[1] && shade(frame+2) == start[2] {
+					next := rowSnapshot(8)
+					sh.Shade(frame+1, total, next)
+					near := max(shadertest.Distance(before, prev), shadertest.Distance(cur, next))
+					assert.LessOrEqual(t, 2*shadertest.Distance(prev, cur), 3*near,
+						"the step back to the start, at frame %d, stands out from the steps either side of it", frame)
+					return
+				}
+				before, prev = prev, cur
+			}
+			assert.Fail(t, "the effect never repeats")
 		})
 	}
 }
 
 func TestPulseIsSubtle(t *testing.T) {
 	navy := term.NewRGBColor(0, 0, 128)
-	sh, ok := New("pulse", term.Attributes{}, Params{}, DefaultFPS, DefaultLoop)
+	sh, ok := New("pulse", term.Attributes{}, Params{}, DefaultLoop)
 	require.True(t, ok)
 
 	cells := [][]term.Cell{{{Ch: 'x', Width: 1, Fg: navy, Bg: navy}}}
 	peak := loopFrames(DefaultFPS, DefaultLoop) / 2
-	sh.Shade(peak, 1, cells)
+	sh.Shade(peak, total, cells)
 
 	r, _, b := cells[0][0].Bg.RGB()
 	assert.Greater(t, r, int32(0), "the pulse must still be visible")
@@ -176,7 +212,7 @@ func TestColorReplacesBlendTarget(t *testing.T) {
 			}},
 		} {
 			t.Run(name+"/"+tc.desc, func(t *testing.T) {
-				sh, ok := New(name, term.Attributes{}, tuning(name, tc.color, 0, 0), DefaultFPS, DefaultLoop)
+				sh, ok := New(name, term.Attributes{}, tuning(name, tc.color, 0, 0), DefaultLoop)
 				require.True(t, ok)
 				glinted := 0
 				for frame := range loopFrames(DefaultFPS, DefaultLoop) {
@@ -218,7 +254,7 @@ func sweepGreen(t *testing.T, name string, intensity, bandWidth float64) (peak i
 	t.Helper()
 	black := term.NewRGBColor(0, 0, 0)
 	p := tuning(name, term.NewRGBColor(0, 255, 0), intensity, bandWidth)
-	sh, ok := New(name, term.Attributes{}, p, DefaultFPS, DefaultLoop)
+	sh, ok := New(name, term.Attributes{}, p, DefaultLoop)
 	require.True(t, ok)
 	frames := loopFrames(DefaultFPS, DefaultLoop)
 	count := 0
@@ -273,7 +309,7 @@ func TestParamsBandWidth(t *testing.T) {
 // row on every frame and handing it to visit.
 func shadeLoop(t *testing.T, name string, p Params, row []term.Cell, visit func(frame int, row []term.Cell)) {
 	t.Helper()
-	sh, ok := New(name, testAttr, p, DefaultFPS, DefaultLoop)
+	sh, ok := New(name, testAttr, p, DefaultLoop)
 	require.True(t, ok)
 	for frame := range loopFrames(DefaultFPS, DefaultLoop) {
 		cells := [][]term.Cell{slices.Clone(row)}
@@ -515,7 +551,7 @@ func TestLoopChangesLoopedEffects(t *testing.T) {
 	snapshot := rowSnapshot(8)
 	var got []string
 	for _, loop := range []time.Duration{DefaultLoop, 10 * DefaultLoop} {
-		sh, ok := New("shine", term.Attributes{}, Params{}, DefaultFPS, loop)
+		sh, ok := New("shine", term.Attributes{}, Params{}, loop)
 		require.True(t, ok)
 		cells := cloneCells(snapshot)
 		sh.Shade(4, total, cells)

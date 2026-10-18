@@ -394,7 +394,7 @@ how much of the window is already in use before you send anything.
 | `status_bar.gauge_width` | integer | `18` | Cell width of each gauge. |
 | `status_bar.shader` | string | none | Effect drawn over the bar while a turn runs. `blaze`, `burn`, `inferno` and `shine` recolor only the text, leaving background colors and glyphs such as the `█▓▒░` fade as the layout drew them. `pulse` gently brightens the whole bar. Leave it unset or empty to keep the bar still. |
 | `status_bar.shader_fps` | integer | `30` | Cadence the effect is redrawn at. Lower it to spend less time animating the bar. |
-| `status_bar.shader_loop` | duration | `1200ms` | How long one visual loop of the effect lasts, written as a Go duration such as `2s` or `1200ms`. For `pulse` it is the length of one pulse. `blaze` and `inferno` animate in real time and ignore this key; lowering `shader_fps` makes them choppier, not slower. |
+| `status_bar.shader_loop` | duration | `1200ms` | How long one visual loop of the effect lasts, written as a Go duration such as `2s` or `1200ms`. For `pulse` it is the length of one pulse. The flames of `blaze` and `inferno` take a few dozen loops to come round, so a shorter loop makes the fire faster. Lowering `shader_fps` makes any effect choppier, not slower. |
 
 ### Layout
 

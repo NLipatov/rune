@@ -102,7 +102,7 @@ func (s *shadedBar) setRunning(running bool, interrupter term.Interrupter) bool 
 		if loop <= 0 {
 			loop = DefaultStatusBarShaderLoop
 		}
-		sh, ok := shaderloop.New(s.name, s.defAttr, shaderloop.Params{}, fps, loop)
+		sh, ok := shaderloop.New(s.name, s.defAttr, shaderloop.Params{}, loop)
 		if !ok {
 			s.mu.Unlock()
 			return false
