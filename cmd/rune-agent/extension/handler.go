@@ -731,17 +731,22 @@ func newCommandEventHandler(
 	return ret, nil
 }
 
-// newLinkClickHandler returns a dialogue link handler that shows http,
-// https and file links through o, so they open as a meta-click on them
-// in Rune does. It leaves every other link to the dialogue.
+// newLinkClickHandler shows http, https and file links through o, resolving
+// scheme-less file paths against cwd. Fragment-only links, network references
+// and other schemes are left to the dialogue.
 func newLinkClickHandler(
 	mu sync.Locker,
+	cwd workspaceapi.URI,
 	o browserapi.ResourceOpener,
 	noti browserapi.Notifications,
 ) func(*url.URL) bool {
 	return func(link *url.URL) bool {
 		switch link.Scheme {
 		case "http", "https", "file":
+		case "":
+			if link.Path == "" || link.Host != "" || link.User != nil {
+				return false
+			}
 		default:
 			return false
 		}
@@ -750,7 +755,7 @@ func newLinkClickHandler(
 		// so a panic still hands mu back to the dialogue's deferred Unlock.
 		mu.Unlock()
 		defer mu.Lock()
-		uri, err := workspaceapi.ParseURI(link.String())
+		uri, err := dialogueLinkURI(cwd, link)
 		if err == nil {
 			err = o.Show(uri)
 		}
@@ -761,11 +766,25 @@ func newLinkClickHandler(
 	}
 }
 
+func dialogueLinkURI(cwd workspaceapi.URI, link *url.URL) (workspaceapi.URI, error) {
+	if link.Scheme == "" {
+		base, err := url.Parse(cwd.String())
+		if err != nil {
+			return workspaceapi.URI{}, err
+		}
+		// The workspace URI denotes a directory even without a trailing slash.
+		base.Path = strings.TrimSuffix(base.Path, "/") + "/"
+		base.RawPath = ""
+		link = base.ResolveReference(link)
+	}
+	return workspaceapi.ParseURI(link.String())
+}
+
 // dialogueConfig returns the config for a dialogue whose handler is given
 // mu, which the dialogue holds while it calls OnLinkClick.
 func (h *aiEditorHandler) dialogueConfig(mu sync.Locker) dialoguetui.ComponentConfig {
 	cfg := h.cfg
-	cfg.OnLinkClick = newLinkClickHandler(mu, h.o, h.n)
+	cfg.OnLinkClick = newLinkClickHandler(mu, h.cwd, h.o, h.n)
 	return cfg
 }
 

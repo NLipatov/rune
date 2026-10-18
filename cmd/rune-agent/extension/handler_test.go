@@ -1642,6 +1642,7 @@ func TestHandlerWebBrowser(t *testing.T) {
 func TestExtensionDialogueLinkClick(t *testing.T) {
 	tests := []struct {
 		name        string
+		cwd         string
 		link        string
 		showErr     error
 		wantHandled bool
@@ -1666,6 +1667,66 @@ func TestExtensionDialogueLinkClick(t *testing.T) {
 			wantCalls:   []string{"show file:///tmp/main.go"},
 		},
 		{
+			name:        "relative path uses workspace directory",
+			link:        "deploy/reports/README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///workspace/project/deploy/reports/README.md"},
+		},
+		{
+			name:        "workspace with trailing slash",
+			cwd:         "file:///workspace/project/",
+			link:        "./docs/../README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///workspace/project/README.md"},
+		},
+		{
+			name:        "parent directory",
+			link:        "../README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///workspace/README.md"},
+		},
+		{
+			name:        "absolute path keeps filesystem root",
+			link:        "/tmp/README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///tmp/README.md"},
+		},
+		{
+			name:        "escaped path query and fragment are preserved",
+			cwd:         "file:///workspace/my%20project",
+			link:        "docs/a%20b%23c%2520.md?view=raw#section",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///workspace/my%20project/docs/a%20b%23c%2520.md?view=raw#section"},
+		},
+		{
+			name:        "relative path retains ssh authority",
+			cwd:         "ssh://alice@example.com:2222/work/project",
+			link:        "deploy/reports/README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show ssh://alice@example.com:2222/work/project/deploy/reports/README.md"},
+		},
+		{
+			name:        "absolute path remains on remote filesystem",
+			cwd:         "ssh://alice@example.com:2222/work/project",
+			link:        "/tmp/README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show ssh://alice@example.com:2222/tmp/README.md"},
+		},
+		{
+			name:        "relative path retains rune workspace",
+			cwd:         "rune://server/work/project",
+			link:        "README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show rune://server/work/project/README.md"},
+		},
+		{
+			name:        "explicit file link remains local in remote workspace",
+			cwd:         "ssh://alice@example.com/work/project",
+			link:        "file:///tmp/README.md",
+			wantHandled: true,
+			wantCalls:   []string{"show file:///tmp/README.md"},
+		},
+		{
 			name:        "failed show notifies",
 			link:        "https://example.com/repo",
 			showErr:     errors.New("no system browser configured"),
@@ -1676,16 +1737,25 @@ func TestExtensionDialogueLinkClick(t *testing.T) {
 			},
 		},
 		{name: "anchor is declined", link: "#section"},
-		{name: "relative path is declined", link: "internal/ide/ex.go"},
+		{name: "empty link is declined", link: ""},
+		{name: "query without path is declined", link: "?view=raw"},
+		{name: "network reference is declined", link: "//example.com/README.md"},
 		{name: "mailto is declined", link: "mailto:a@example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lock := &dialogueLock{}
 			io := &linkClickIO{lock: lock, showErr: tt.showErr}
-			h := &aiEditorHandler{o: io, n: io}
+			cwd := tt.cwd
+			if cwd == "" {
+				cwd = "file:///workspace/project"
+			}
+			uri, err := workspaceapi.ParseURI(cwd)
+			require.NoError(t, err)
+			h := &aiEditorHandler{o: io, n: io, cwd: uri}
 			link, err := url.Parse(tt.link)
 			require.NoError(t, err)
+			original := *link
 
 			// The dialogue holds its lock while it calls OnLinkClick.
 			lock.Lock()
@@ -1694,6 +1764,7 @@ func TestExtensionDialogueLinkClick(t *testing.T) {
 
 			assert.Equal(t, tt.wantHandled, handled)
 			assert.Equal(t, tt.wantCalls, io.calls)
+			assert.Equal(t, original, *link, "the caller's URL must not be mutated")
 		})
 	}
 }
@@ -1764,6 +1835,7 @@ func TestDialogueLinkClickLock(t *testing.T) {
 	)
 	tests := []struct {
 		name      string
+		cwd       string
 		link      string
 		showErr   error
 		panics    bool
@@ -1773,6 +1845,28 @@ func TestDialogueLinkClickLock(t *testing.T) {
 			name:      "show runs unlocked",
 			link:      link,
 			wantCalls: []string{"show " + link},
+		},
+		{
+			name:      "relative runbook link from assistant response",
+			cwd:       "file:///Users/ernestrc/src/ox-api",
+			link:      "deploy/reports/README.md",
+			wantCalls: []string{"show file:///Users/ernestrc/src/ox-api/deploy/reports/README.md"},
+		},
+		{
+			name:    "failed relative link notifies unlocked",
+			cwd:     "file:///workspace/project",
+			link:    "missing.md",
+			showErr: errors.New("host refused"),
+			wantCalls: []string{
+				"show file:///workspace/project/missing.md",
+				"open missing.md: host refused",
+			},
+		},
+		{
+			name:      "remote runbook link",
+			cwd:       "ssh://alice@example.com:2222/work/project",
+			link:      "deploy/reports/README.md",
+			wantCalls: []string{"show ssh://alice@example.com:2222/work/project/deploy/reports/README.md"},
 		},
 		{
 			name:      "failed show notifies unlocked",
@@ -1800,14 +1894,19 @@ func TestDialogueLinkClickLock(t *testing.T) {
 				panics:  tt.panics,
 			}
 			h := &aiEditorHandler{o: io, n: io}
+			if tt.cwd != "" {
+				var err error
+				h.cwd, err = workspaceapi.ParseURI(tt.cwd)
+				require.NoError(t, err)
+			}
 			comp := h.newDialogueComponent(lock)
 			dh, tx, _ := dialoguetui.Handler(context.Background(), lock, comp, term.NopInterrupter())
 			defer close(tx)
 			dh.Resize(width, height)
-			comp.AddSendMessageMarkdown("[Rune](" + tt.link + ")")
+			comp.AddReceiveMessage("See [the rollout runbook](" + tt.link + ").")
 			w := term.NewStringWriter(width, height)
 			dh.Draw(w)
-			pos, ok := cellOf(w, width, "Rune")
+			pos, ok := cellOf(w, width, "the rollout runbook")
 			require.True(t, ok, "link drawn")
 
 			click := func() {
