@@ -35,6 +35,10 @@ type hostCall struct {
 type mockHost struct {
 	calls []hostCall
 	fail  map[string]error
+	// graphics is what RenderGraphics returns.
+	graphics Graphics
+	// output is what InvokeCommand returns.
+	output string
 }
 
 func (m *mockHost) record(name string, args ...any) error {
@@ -69,8 +73,8 @@ func (m *mockHost) ExpectCommand(name string, repl bool, timeout time.Duration) 
 	return m.record("expect_command", name, repl, timeout)
 }
 
-func (m *mockHost) InvokeCommand(name string, args []string, repl bool, timeout time.Duration) error {
-	return m.record("invoke_command", name, args, repl, timeout)
+func (m *mockHost) InvokeCommand(name string, args []string, repl bool, timeout time.Duration) (string, error) {
+	return m.output, m.record("invoke_command", name, args, repl, timeout)
 }
 
 func (m *mockHost) ExpectResourceOpener(scheme string, timeout time.Duration) error {
@@ -101,6 +105,11 @@ func (m *mockHost) ExpectWindow(method string, timeout time.Duration) (string, e
 func (m *mockHost) RenderWindow(handle string, width, height int) (string, error) {
 	err := m.record("render", handle, width, height)
 	return "", err
+}
+
+func (m *mockHost) RenderGraphics(handle string, width, height int, cellWidth, cellHeight float64) (Graphics, error) {
+	err := m.record("render_graphics", handle, width, height, cellWidth, cellHeight)
+	return m.graphics, err
 }
 
 func (m *mockHost) SendKey(handle, keys string) (bool, bool, error) {
@@ -222,6 +231,20 @@ func TestSpecRunInvokeByName(t *testing.T) {
 		host.calls[0].args)
 }
 
+func TestSpecRunREPLCommandOutput(t *testing.T) {
+	t.Parallel()
+
+	src := `
+out = invoke_repl_command("shell", args = ["ls"])
+if out != "README.md":
+    fail("output: " + out)
+if invoke_command("hello") != None:
+    fail("commands have no output")
+`
+	host := &mockHost{output: "README.md"}
+	require.NoError(t, runSpec(t, src, host))
+}
+
 func TestSpecRunResourceOpener(t *testing.T) {
 	t.Parallel()
 
@@ -236,6 +259,37 @@ open_resource(o, uri = "fake://host/b", timeout = "2s")
 		{name: "expect_resource_opener", args: []any{"fake", 3 * time.Second}},
 		{name: "open_resource", args: []any{"fake", "fake://host/a", 7 * time.Second}},
 		{name: "open_resource", args: []any{"fake", "fake://host/b", 2 * time.Second}},
+	}, host.calls)
+}
+
+func TestSpecRunRenderGraphics(t *testing.T) {
+	t.Parallel()
+
+	src := `
+w = expect_window(method = "browser.WindowManager/Split")
+out = render_graphics(w, width = 120, height = 40, cell_width = 9, cell_height = 17.5)
+if "fallback" not in out["text"]:
+    fail("text: " + out["text"])
+if len(out["images"]) != 1:
+    fail("images: %s" % out["images"])
+img = out["images"][0]
+if (img["x"], img["y"], img["width"], img["height"]) != (2, 3, 40, 20):
+    fail("cells: %s" % img)
+if (img["pixel_width"], img["pixel_height"], img["colors"]) != (360, 350, 42):
+    fail("pixels: %s" % img)
+render_graphics(w)
+`
+	host := &mockHost{graphics: Graphics{
+		Text: "fallback",
+		Images: []PlacedImage{{
+			X: 2, Y: 3, Width: 40, Height: 20, PixelWidth: 360, PixelHeight: 350, Colors: 42,
+		}},
+	}}
+	require.NoError(t, runSpec(t, src, host))
+	assert.Equal(t, []hostCall{
+		{name: "expect_window", args: []any{"browser.WindowManager/Split", 7 * time.Second}},
+		{name: "render_graphics", args: []any{"browser.WindowManager/Split", 120, 40, 9.0, 17.5}},
+		{name: "render_graphics", args: []any{"browser.WindowManager/Split", 80, 24, 10.0, 20.0}},
 	}, host.calls)
 }
 

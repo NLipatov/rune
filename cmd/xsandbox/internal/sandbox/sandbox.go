@@ -295,23 +295,23 @@ func (s *sandbox) ExpectCommand(name string, repl bool, timeout time.Duration) e
 // InvokeCommand satisfies spec.Host.
 func (s *sandbox) InvokeCommand(
 	name string, args []string, repl bool, timeout time.Duration,
-) error {
+) (string, error) {
 	expName := fmt.Sprintf("invoke_command %s %v", name, args)
 	if repl {
 		expName = fmt.Sprintf("invoke_repl_command %s %v", name, args)
 	}
 	if err := s.ensureLaunched(); err != nil {
-		return err
+		return "", err
 	}
 	start := time.Now()
-	err := s.invoke(name, args, repl, timeout)
-	return s.finishExpectation(expName, start, err)
+	out, err := s.invoke(name, args, repl, timeout)
+	return out, s.finishExpectation(expName, start, err)
 }
 
-func (s *sandbox) invoke(name string, args []string, repl bool, timeout time.Duration) error {
+func (s *sandbox) invoke(name string, args []string, repl bool, timeout time.Duration) (string, error) {
 	h, ok := s.editor.lookup(name, repl)
 	if !ok {
-		return fmt.Errorf("command %q is not registered (registered: %v)",
+		return "", fmt.Errorf("command %q is not registered (registered: %v)",
 			name, s.editor.registeredNames(repl))
 	}
 	ctx, cancel := context.WithTimeout(s.waitCtx, timeout)
@@ -328,39 +328,51 @@ func (s *sandbox) invoke(name string, args []string, repl bool, timeout time.Dur
 	})
 	s.locker.Unlock()
 	if err != nil {
-		return fmt.Errorf("dispatch command %q: %w", name, err)
+		return "", fmt.Errorf("dispatch command %q: %w", name, err)
 	}
 	if !waiter.Claimed {
-		return nil
+		return "", nil
 	}
 	select {
 	case err := <-waiter.Ch:
 		if err != nil {
-			return fmt.Errorf("command %q failed: %w", name, err)
+			return "", fmt.Errorf("command %q failed: %w", name, err)
 		}
-		return nil
+		return "", nil
 	case <-ctx.Done():
-		return fmt.Errorf("command %q did not complete: %w", name, ctx.Err())
+		return "", fmt.Errorf("command %q did not complete: %w", name, ctx.Err())
 	}
 }
 
+// replOutputWidth is the width REPL output is rendered at, which is the
+// width the extension lays it out at.
+const replOutputWidth = 80
+
+// invokeREPL runs a REPL command and returns its output, rendered as a
+// console shows it.
 func (s *sandbox) invokeREPL(
 	ctx context.Context, h textapi.REPLHandler, name string, args []string,
-) error {
+) (string, error) {
 	iter, err := h.HandleCommand(ctx, repl.Command{Name: name, Args: args}, nopProgress{})
 	if err != nil {
-		return fmt.Errorf("dispatch repl command %q: %w", name, err)
+		return "", fmt.Errorf("dispatch repl command %q: %w", name, err)
 	}
 	if iter == nil {
-		return nil
+		return "", nil
 	}
+	defer func() { _ = iter.Close() }()
+	var out []string
 	for {
-		_, ok := iter.Next(ctx)
+		c, ok := iter.Next(ctx)
 		if !ok {
 			break
 		}
+		out = append(out, renderResponsive(c, replOutputWidth))
 	}
-	return ctx.Err()
+	if err := iter.Err(); err != nil {
+		return strings.Join(out, "\n"), fmt.Errorf("repl command %q failed: %w", name, err)
+	}
+	return strings.Join(out, "\n"), ctx.Err()
 }
 
 // ExpectResourceOpener satisfies spec.Host.
@@ -489,6 +501,16 @@ func (s *sandbox) RenderWindow(_ string, width, height int) (string, error) {
 		return "", err
 	}
 	return s.browser.render(width, height), nil
+}
+
+// RenderGraphics satisfies spec.Host.
+func (s *sandbox) RenderGraphics(
+	_ string, width, height int, cellWidth, cellHeight float64,
+) (spec.Graphics, error) {
+	if err := s.ensureLaunched(); err != nil {
+		return spec.Graphics{}, err
+	}
+	return s.browser.renderGraphics(width, height, cellWidth, cellHeight), nil
 }
 
 // SendKey satisfies spec.Host.

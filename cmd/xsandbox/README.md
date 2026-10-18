@@ -105,7 +105,8 @@ o = expect_resource_opener("chat")   # resource opener for chat:// arrived
 
 # -- actions (host -> extension) --------------------------------------
 invoke_command(h, args = ["world"])  # dispatch and wait for completion
-invoke_repl_command(r, args = [])
+out = invoke_repl_command(r, args = [])  # its output, rendered 80 columns wide;
+                                     # fails if the output ends in an error
 open_resource(o, "chat://host/1")    # ask for the content and show it
 publish_event("open", uri = "file:///tmp/x", content = "...")
 
@@ -122,6 +123,12 @@ if "count=0" not in out:                   # assert with `in` / fail()
     fail("unexpected render:\n" + out)
 res = send_key(w, "<space>")               # tokens per handlertest grammar
 out = render(w)                            # re-render to observe the change
+# render_graphics draws in frames of cell_width x cell_height pixel cells,
+# which lets handlers place images, and returns the grid and the images.
+g = render_graphics(w, width = 120, height = 40, cell_width = 9, cell_height = 18)
+# g["text"] is the grid; each of g["images"] has the cells it covers (x, y,
+# width, height), the size of its pixels (pixel_width, pixel_height) and
+# how many distinct colors a sample of them holds (colors).
 
 # -- synchronization ---------------------------------------------------
 wait_idle("1s")                       # no RPC activity for 1s

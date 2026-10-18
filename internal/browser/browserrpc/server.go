@@ -110,7 +110,7 @@ func (s *Server) Split(srv browserrpc.WindowManager_SplitServer) error {
 			client = thandlerrpc.NewSyncClientStream(s.serverCtx, srv,
 				func() *browserrpc.SplitWindowMessage {
 					return new(browserrpc.SplitWindowMessage)
-				})
+				}, thandlerrpc.WithGraphics(s.graphics))
 		} else {
 			client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 				func() *browserrpc.SplitWindowMessage {
@@ -164,7 +164,7 @@ func (s *Server) Bar(srv browserrpc.WindowManager_BarServer) error {
 		client = thandlerrpc.NewSyncClientStream(s.serverCtx, srv,
 			func() *browserrpc.SplitWindowMessage {
 				return new(browserrpc.SplitWindowMessage)
-			})
+			}, thandlerrpc.WithGraphics(s.graphics))
 	} else {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.BarMessage {
@@ -393,7 +393,7 @@ func (s *Server) Floating(srv browserrpc.WindowManager_FloatingServer) error {
 		client = thandlerrpc.NewSyncClientStream(s.serverCtx, srv,
 			func() *browserrpc.SplitWindowMessage {
 				return new(browserrpc.SplitWindowMessage)
-			})
+			}, thandlerrpc.WithGraphics(s.graphics))
 	} else {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.FloatingWindowMessage {
@@ -456,7 +456,7 @@ func (s *Server) Tab(srv browserrpc.WindowManager_TabServer) error {
 		client = thandlerrpc.NewSyncClientStream(s.serverCtx, srv,
 			func() *browserrpc.SplitWindowMessage {
 				return new(browserrpc.SplitWindowMessage)
-			})
+			}, thandlerrpc.WithGraphics(s.graphics))
 	} else {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.TabMessage {
@@ -502,7 +502,7 @@ func (s *Server) SetContent(srv browserrpc.WindowManager_SetContentServer) error
 			client = thandlerrpc.NewSyncClientStream(s.serverCtx, srv,
 				func() *browserrpc.SplitWindowMessage {
 					return new(browserrpc.SplitWindowMessage)
-				})
+				}, thandlerrpc.WithGraphics(s.graphics))
 		} else {
 			client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 				func() *browserrpc.WindowSetContentMessage {

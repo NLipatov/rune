@@ -338,71 +338,79 @@ func TestClientServerIntegrationImages(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			mock := browsertest.NewMockBrowser(ctrl)
-			published := make(chan term.Event, 64)
-			mock.EXPECT().PublishEvent(gomock.Any()).DoAndReturn(func(ev term.Event) error {
-				published <- ev
-				return nil
-			}).AnyTimes()
-			var server *Server
-			server, client, cleanup := newClientServerIntegrationWith(t, mock, thandlerrpc.GraphicsConfig{ArenaRoot: t.TempDir()})
-			defer cleanup()
-
-			ext := handlerrpctest.NewRasterHandler()
-			installed := make(chan tui.Handler, 1)
-			done := make(chan error, 1)
-			go debug.CapturePanicReport(func() {
-				done <- tt.install(mock, ctrl, client, ext, installed)
-			})
-			var host tui.Handler
-			select {
-			case host = <-installed:
-			case <-time.After(5 * time.Second):
-				t.Fatal("the handler was not installed")
-			}
-			// The UI calls host handlers under the browser's lock.
-			locked := func(f func()) {
-				server.browser.Lock()
-				defer server.browser.Unlock()
-				f()
-			}
-			// The install response is only sent with the next message to the handler.
-			require.Eventually(t, func() bool {
-				locked(func() { host.Resize(4, 2) })
-				select {
-				case err := <-done:
-					require.NoError(t, err)
-					return true
-				default:
-					return false
+		for _, syncMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s sync=%t", tt.name, syncMode), func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				mock := browsertest.NewMockBrowser(ctrl)
+				published := make(chan term.Event, 64)
+				mock.EXPECT().PublishEvent(gomock.Any()).DoAndReturn(func(ev term.Event) error {
+					published <- ev
+					return nil
+				}).AnyTimes()
+				server, client, cleanup := newClientServerIntegrationWith(t, mock,
+					thandlerrpc.GraphicsConfig{ArenaRoot: t.TempDir()})
+				if syncMode {
+					server.SetSyncMode()
 				}
-			}, 5*time.Second, 10*time.Millisecond)
+				defer cleanup()
 
-			sized := func(ctx context.Context) context.Context {
-				return term.ContextWithCellPixelSize(ctx, 8.5, 17.25)
-			}
-			locked(func() { host.Draw(&handlerrpctest.ImageRecorder{Ctx: sized(context.Background())}) })
-			var frame context.Context
-			for frame == nil {
+				ext := handlerrpctest.NewRasterHandler()
+				installed := make(chan tui.Handler, 1)
+				done := make(chan error, 1)
+				go debug.CapturePanicReport(func() {
+					done <- tt.install(mock, ctrl, client, ext, installed)
+				})
+				var host tui.Handler
 				select {
-				case ev := <-published:
-					if ev.Type == term.EventInterrupt && ev.Raw != nil {
-						frame = term.ContextWithPayload(context.Background(), ev.Raw)
-					}
+				case host = <-installed:
 				case <-time.After(5 * time.Second):
-					t.Fatal("the extension's frame did not arrive")
+					t.Fatal("the handler was not installed")
 				}
-			}
-			w := &handlerrpctest.ImageRecorder{Ctx: sized(frame)}
-			locked(func() { host.Draw(w) })
-			require.Len(t, w.Images, 1)
-			assert.Equal(t, ext.Raster().Pix, w.Images[0].Pix)
-			assert.Equal(t, []bool{true}, ext.Shown())
-			assert.Equal(t, []handlerrpctest.CellPixelSize{{Width: 8.5, Height: 17.25}},
-				ext.CellPixelSizes(), "the extension must draw with the frame's cell size")
-		})
+				// The UI calls host handlers under the browser's lock.
+				locked := func(f func()) {
+					server.browser.Lock()
+					defer server.browser.Unlock()
+					f()
+				}
+				// The install response is only sent with the next message to the handler.
+				require.Eventually(t, func() bool {
+					locked(func() { host.Resize(4, 2) })
+					select {
+					case err := <-done:
+						require.NoError(t, err)
+						return true
+					default:
+						return false
+					}
+				}, 5*time.Second, 10*time.Millisecond)
+
+				sized := func(ctx context.Context) context.Context {
+					return term.ContextWithCellPixelSize(ctx, 8.5, 17.25)
+				}
+				w := &handlerrpctest.ImageRecorder{Ctx: sized(context.Background())}
+				locked(func() { host.Draw(w) })
+				// An asynchronous handler draws the frame the extension sent
+				// once it is told it arrived.
+				for !syncMode && len(w.Images) == 0 {
+					select {
+					case ev := <-published:
+						if ev.Type == term.EventInterrupt && ev.Raw != nil {
+							w = &handlerrpctest.ImageRecorder{
+								Ctx: sized(term.ContextWithPayload(context.Background(), ev.Raw)),
+							}
+							locked(func() { host.Draw(w) })
+						}
+					case <-time.After(5 * time.Second):
+						t.Fatal("the extension's frame did not arrive")
+					}
+				}
+				require.Len(t, w.Images, 1)
+				assert.Equal(t, ext.Raster().Pix, w.Images[0].Pix)
+				assert.Equal(t, []bool{true}, ext.Shown())
+				assert.Equal(t, []handlerrpctest.CellPixelSize{{Width: 8.5, Height: 17.25}},
+					ext.CellPixelSizes(), "the extension must draw with the frame's cell size")
+			})
+		}
 	}
 }
 

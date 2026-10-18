@@ -391,7 +391,7 @@ func (s *Server) OpenResource(srv textrpc.Editor_OpenResourceServer) error {
 	}
 	var client openResourceClient
 	if s.syncMode {
-		client = thandlerrpc.NewSyncClientStream(s.ctx, srv, newT)
+		client = thandlerrpc.NewSyncClientStream(s.ctx, srv, newT, thandlerrpc.WithGraphics(s.graphics))
 	} else {
 		client = thandlerrpc.NewClientStream(s.ctx, srv, newT, s.publish,
 			thandlerrpc.WithGraphics(s.graphics))

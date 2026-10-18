@@ -61,8 +61,10 @@ type Host interface {
 	// ExpectCommand blocks until the named (REPL) command is registered.
 	ExpectCommand(name string, repl bool, timeout time.Duration) error
 	// InvokeCommand dispatches a registered command to the extension
-	// and waits for its completion.
-	InvokeCommand(name string, args []string, repl bool, timeout time.Duration) error
+	// and waits for its completion. A REPL command's output is returned
+	// rendered as a string, and fails the command when it ends in an
+	// error.
+	InvokeCommand(name string, args []string, repl bool, timeout time.Duration) (string, error)
 	// ExpectResourceOpener blocks until a resource opener is registered
 	// for scheme.
 	ExpectResourceOpener(scheme string, timeout time.Duration) error
@@ -82,10 +84,33 @@ type Host interface {
 	// RenderWindow resizes the headless browser to width x height,
 	// draws it, and returns the composited output as a string.
 	RenderWindow(handle string, width, height int) (string, error)
+	// RenderGraphics draws the headless browser as RenderWindow does, in
+	// frames of cellWidth x cellHeight pixel cells, which lets handlers
+	// place images, and returns the cells and the images placed.
+	RenderGraphics(handle string, width, height int, cellWidth, cellHeight float64) (Graphics, error)
 	// SendKey delivers a handlertest-style key sequence to the focused
 	// installed handler and returns whether the last event was handled
 	// and whether it requested exit.
 	SendKey(handle, keys string) (handled, quit bool, err error)
+}
+
+// Graphics is what a render with images drew.
+type Graphics struct {
+	// Text is the rendered grid, as RenderWindow returns it.
+	Text string
+	// Images are the images placed over the cells, in order.
+	Images []PlacedImage
+}
+
+// PlacedImage is an image placed over the cells.
+type PlacedImage struct {
+	// X, Y, Width and Height are the cells it covers.
+	X, Y, Width, Height int
+	// PixelWidth and PixelHeight are the size of its pixels.
+	PixelWidth, PixelHeight int
+	// Colors is how many distinct colors a sample of its pixels holds,
+	// which tells a picture from a blank raster.
+	Colors int
 }
 
 // Options configure spec evaluation.
@@ -159,6 +184,7 @@ func (e *environment) builtins() starlark.StringDict {
 		"assert_no_unexpected_rpcs": starlark.NewBuiltin("assert_no_unexpected_rpcs", e.assertNoUnexpectedRPCs),
 		"expect_window":             starlark.NewBuiltin("expect_window", e.expectWindow),
 		"render":                    starlark.NewBuiltin("render", e.render),
+		"render_graphics":           starlark.NewBuiltin("render_graphics", e.renderGraphics),
 		"send_key":                  starlark.NewBuiltin("send_key", e.sendKey),
 		"present":                   starlark.NewBuiltin("present", predicateBuiltin("present", false)),
 		"contains":                  starlark.NewBuiltin("contains", predicateBuiltin("contains", true)),
@@ -391,7 +417,14 @@ func (e *environment) invokeCommandKind(
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", b.Name(), err)
 	}
-	return starlark.None, e.host.InvokeCommand(name, argv, repl, d)
+	out, err := e.host.InvokeCommand(name, argv, repl, d)
+	if err != nil {
+		return nil, err
+	}
+	if !repl {
+		return starlark.None, nil
+	}
+	return starlark.String(out), nil
 }
 
 func commandName(v starlark.Value, repl bool) (string, error) {
@@ -537,6 +570,48 @@ func (e *environment) render(
 		return nil, err
 	}
 	return starlark.String(out), nil
+}
+
+func (e *environment) renderGraphics(
+	_ *starlark.Thread, b *starlark.Builtin,
+	args starlark.Tuple, kwargs []starlark.Tuple,
+) (starlark.Value, error) {
+	var win starlark.Value
+	width, height := 80, 24
+	var cellWidthV, cellHeightV starlark.Value = starlark.Float(10), starlark.Float(20)
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs,
+		"window", &win, "width?", &width, "height?", &height,
+		"cell_width?", &cellWidthV, "cell_height?", &cellHeightV); err != nil {
+		return nil, err
+	}
+	cellWidth, okWidth := starlark.AsFloat(cellWidthV)
+	cellHeight, okHeight := starlark.AsFloat(cellHeightV)
+	if !okWidth || !okHeight || !(cellWidth > 0 && cellHeight > 0) {
+		return nil, fmt.Errorf("%s: cell_width and cell_height must be positive", b.Name())
+	}
+	handle, err := windowHandleID(win)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", b.Name(), err)
+	}
+	out, err := e.host.RenderGraphics(handle, width, height, cellWidth, cellHeight)
+	if err != nil {
+		return nil, err
+	}
+	images := make([]starlark.Value, 0, len(out.Images))
+	for _, img := range out.Images {
+		d := starlark.NewDict(7)
+		for k, v := range map[string]int{
+			"x": img.X, "y": img.Y, "width": img.Width, "height": img.Height,
+			"pixel_width": img.PixelWidth, "pixel_height": img.PixelHeight, "colors": img.Colors,
+		} {
+			_ = d.SetKey(starlark.String(k), starlark.MakeInt(v))
+		}
+		images = append(images, d)
+	}
+	ret := starlark.NewDict(2)
+	_ = ret.SetKey(starlark.String("text"), starlark.String(out.Text))
+	_ = ret.SetKey(starlark.String("images"), starlark.NewList(images))
+	return ret, nil
 }
 
 func (e *environment) sendKey(

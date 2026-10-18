@@ -492,8 +492,7 @@ func (s *ClientStream[T]) receiveMessages() (ret error) {
 		s.images.close()
 	}()
 
-	var streamed []*handlerrpc.ImageUpload
-	var streamedBytes uint64
+	var streamed streamedUploads
 	for {
 		recvMsg := s.newT()
 		err := s.stream.RecvMsg(recvMsg)
@@ -515,21 +514,10 @@ func (s *ClientStream[T]) receiveMessages() (ret error) {
 				ret = fmt.Errorf("receive draw message: missing data")
 			}
 			if draw.GetMore() {
-				for _, up := range draw.GetUploads() {
-					streamedBytes += uint64(len(up.GetData()))
-					// Bound what an extension can make the host buffer; the upload then
-					// fails its checks.
-					if streamedBytes > s.images.maxBytes() {
-						up.Data = nil
-					}
-				}
-				streamed = append(streamed, draw.GetUploads()...)
+				streamed.add(draw, s.images.maxBytes())
 				continue
 			}
-			if len(streamed) > 0 {
-				draw.Uploads = append(streamed, draw.GetUploads()...)
-				streamed, streamedBytes = nil, 0
-			}
+			streamed.attach(draw)
 			s.processDraw(draw)
 		case handlerrpc.MessageType_Cursor:
 			cursor := recvMsg.GetCursor()

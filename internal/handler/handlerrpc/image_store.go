@@ -88,6 +88,35 @@ type pixelSize struct {
 	width, height float64
 }
 
+// streamedUploads holds the records of the responses marked more until
+// the response they come with.
+type streamedUploads struct {
+	records []*handlerrpc.ImageUpload
+	bytes   uint64
+}
+
+// add keeps the records of resp, a response marked more. Past maxBytes
+// their pixels are dropped, which fails the checks of their upload, so
+// that an extension cannot make the host buffer more.
+func (u *streamedUploads) add(resp *handlerrpc.DrawStreamResponse, maxBytes uint64) {
+	for _, up := range resp.GetUploads() {
+		u.bytes += uint64(len(up.GetData()))
+		if u.bytes > maxBytes {
+			up.Data = nil
+		}
+	}
+	u.records = append(u.records, resp.GetUploads()...)
+}
+
+// attach puts the records kept before the uploads of resp, the response
+// they come with.
+func (u *streamedUploads) attach(resp *handlerrpc.DrawStreamResponse) {
+	if len(u.records) > 0 {
+		resp.Uploads = append(u.records, resp.GetUploads()...)
+	}
+	u.records, u.bytes = nil, 0
+}
+
 func pixelSizeOf(ctx context.Context) pixelSize {
 	width, height, _ := term.CellPixelSizeFromContext(ctx)
 	return pixelSize{width: width, height: height}
