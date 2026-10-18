@@ -778,8 +778,17 @@ func TestAnimationsScreensaver(t *testing.T) {
 		want:   withShaders(defaults, "rain"),
 		errors: []string{"animations.screensaver.shaders"},
 	}, {
-		name:   "shaders that are not a list",
-		src:    `config = {"animations": {"screensaver": {"shaders": "rain"}}}`,
+		name: "a single shader need not be in a list",
+		src:  `config = {"animations": {"screensaver": {"shaders": "rain"}}}`,
+		want: withShaders(defaults, "rain"),
+	}, {
+		name:   "an unknown single shader is skipped",
+		src:    `config = {"animations": {"screensaver": {"shaders": "nope"}}}`,
+		want:   defaults,
+		errors: []string{"animations.screensaver.shaders"},
+	}, {
+		name:   "shaders that are neither a list nor a string",
+		src:    `config = {"animations": {"screensaver": {"shaders": 1}}}`,
 		want:   defaults,
 		errors: []string{"animations.screensaver.shaders"},
 	}, {

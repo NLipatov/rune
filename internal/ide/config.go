@@ -1420,10 +1420,11 @@ func (c ideConfig) animationsOpenWorkspaceDuration() (time.Duration, bool) {
 
 // screensaver returns the screensaver configured under
 // animations.screensaver, which has no shaders when it is disabled.
-// Shaders that are unknown or not strings are recorded as soft errors
-// and skipped, and an idle_timeout, duration, fps or time_shader that is
-// malformed, not positive or unknown is recorded and falls back to its
-// default.
+// shaders is a list of names, or a single name standing for a list of
+// one. Shaders that are unknown or not strings are recorded as soft
+// errors and skipped, and an idle_timeout, duration, fps or time_shader
+// that is malformed, not positive or unknown is recorded and falls back
+// to its default.
 func (c ideConfig) screensaver() screensaverConfig {
 	ret := screensaverConfig{
 		idleTimeout: defaultScreensaverIdleTimeout,
@@ -1485,11 +1486,16 @@ func (c ideConfig) screensaver() screensaverConfig {
 	}
 
 	vals, err := cfg.GetSlice("shaders")
-	if err != nil {
-		if err != config.ErrNotFound {
-			c.errors[prefix+"shaders"] = fmt.Errorf("expected list of shader names: %w", err)
-		}
+	if err == config.ErrNotFound {
 		return ret
+	}
+	if err != nil {
+		name, serr := cfg.GetString("shaders")
+		if serr != nil {
+			c.errors[prefix+"shaders"] = fmt.Errorf("expected a shader name or a list of them: %w", err)
+			return ret
+		}
+		vals = []any{name}
 	}
 	names := namedShaderNames()
 	var errs error

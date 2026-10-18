@@ -371,8 +371,8 @@ input stops it. Each shader decides what it draws, including whether your
 workspace still shows through.
 
 - `shaders`: the shaders to play, by the names `:shaderrun` completes, such as
-  `matrix`, `rain` or `inferno`. Empty by default, which means there is no
-  screensaver.
+  `matrix`, `rain` or `inferno`. A single name, such as `shaders: inferno`,
+  plays just that one. Empty by default, which means there is no screensaver.
 - `idle_timeout`: how long Rune waits without input before it starts, such as
   `"10m"` (the default).
 - `duration`: how long one pass lasts. Defaults to `"1m"`.
