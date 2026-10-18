@@ -3,7 +3,6 @@ module unstable.build/rune
 go 1.27.2
 
 require (
-	codeberg.org/readeck/go-readability/v2 v2.1.1
 	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/ProtonMail/go-crypto v1.3.0
 	github.com/PuerkitoBio/goquery v1.9.2
@@ -61,7 +60,6 @@ require (
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.45.0
 	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/text v0.43.0
@@ -86,7 +84,6 @@ require (
 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
-	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.33 // indirect
@@ -133,11 +130,9 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/go4org/hashtriemap v0.0.0-20251130024219-545ba229f689 // indirect
 	github.com/go4org/plan9netshell v0.0.0-20250324183649-788daa080737 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
-	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -237,6 +232,7 @@ require (
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

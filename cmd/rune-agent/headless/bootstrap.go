@@ -48,7 +48,7 @@ type session struct {
 //
 // Everything the interactive extension installs for the sake of a user
 // interface — terminal, notifications, editor, window manager,
-// interrupter, command registration, MCP, hooks, skills, web_fetch and
+// interrupter, command registration, MCP, hooks, skills, web_browser and
 // subagents — is deliberately absent so a headless run has no side
 // effects on the live session and behaves deterministically.
 func bootstrap(

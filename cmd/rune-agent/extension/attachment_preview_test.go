@@ -163,13 +163,13 @@ func TestToolCallPreviewMarkdown(t *testing.T) {
 		},
 		{
 			name:    "summary markdown is literal",
-			details: dialoguetui.ToolCallDetails{Name: "web_fetch", Summary: "# not a heading\n**not bold** <b>x</b>\n- not a list\n[not](a link)"},
-			want:    "# web_fetch\n\n" + block("text", "# not a heading\n**not bold** <b>x</b>\n- not a list\n[not](a link)") + waiting,
+			details: dialoguetui.ToolCallDetails{Name: "web_browser", Summary: "# not a heading\n**not bold** <b>x</b>\n- not a list\n[not](a link)"},
+			want:    "# web_browser\n\n" + block("text", "# not a heading\n**not bold** <b>x</b>\n- not a list\n[not](a link)") + waiting,
 		},
 		{
 			name:    "summary fence outgrows the fences it contains",
-			details: dialoguetui.ToolCallDetails{Name: "web_fetch", Summary: "a ```` b ````` c"},
-			want:    "# web_fetch\n\n``````text\na ```` b ````` c\n``````\n\n" + waiting,
+			details: dialoguetui.ToolCallDetails{Name: "web_browser", Summary: "a ```` b ````` c"},
+			want:    "# web_browser\n\n``````text\na ```` b ````` c\n``````\n\n" + waiting,
 		},
 		{
 			name:    "malformed arguments are shown verbatim",
@@ -184,9 +184,9 @@ func TestToolCallPreviewMarkdown(t *testing.T) {
 		},
 		{
 			name:    "arguments are not HTML escaped",
-			details: dialoguetui.ToolCallDetails{Name: "web_fetch", Args: `{"url":"https://x.dev/?a=<b>&c"}`},
-			want: "# web_fetch\n\n## Arguments\n\n" +
-				block("json", "{\n  \"url\": \"https://x.dev/?a=<b>&c\"\n}") + waiting,
+			details: dialoguetui.ToolCallDetails{Name: "web_browser", Args: `{"command":["open","https://x.dev/?a=<b>&c"]}`},
+			want: "# web_browser\n\n## Arguments\n\n" +
+				block("json", "{\n  \"command\": [\n    \"open\",\n    \"https://x.dev/?a=<b>&c\"\n  ]\n}") + waiting,
 		},
 		{
 			name:    "text output is literal",
@@ -195,8 +195,8 @@ func TestToolCallPreviewMarkdown(t *testing.T) {
 		},
 		{
 			name:    "JSON output is highlighted as JSON",
-			details: dialoguetui.ToolCallDetails{Name: "web_fetch", Output: `{"result":true}`, Done: true},
-			want:    "# web_fetch\n\n## Result\n\n" + block("json", `{"result":true}`),
+			details: dialoguetui.ToolCallDetails{Name: "web_browser", Output: `{"result":true}`, Done: true},
+			want:    "# web_browser\n\n## Result\n\n" + block("json", `{"result":true}`),
 		},
 		{
 			name:    "output fence outgrows the fences it contains",

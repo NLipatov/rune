@@ -277,9 +277,6 @@ func TestSummary(t *testing.T) {
 		{"bash empty description returns command", newBash(ex, dirURI(dir), configedit.NopConfig()), `{"command":"go test ./...","description":""}`, "go test ./..."},
 		{"bash no description returns command", newBash(ex, dirURI(dir), configedit.NopConfig()), `{"command":"go test ./..."}`, "go test ./..."},
 		{"bash invalid json", newBash(ex, dirURI(dir), configedit.NopConfig()), `bad`, ""},
-		// web_fetch
-		{"web_fetch", NewWebFetch(&stubFetcher{}), `{"url":"https://example.com"}`, "https://example.com"},
-		{"web_fetch invalid json", NewWebFetch(&stubFetcher{}), `bad`, ""},
 		// agent
 		{"agent with description", NewAgentTool(spawner, nil, nil, nil), `{"description":"search code","prompt":"find tests"}`, "search code"},
 		{"agent without description short prompt", NewAgentTool(spawner, nil, nil, nil), `{"prompt":"short task"}`, "short task"},

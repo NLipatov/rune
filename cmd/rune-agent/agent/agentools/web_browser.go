@@ -55,6 +55,11 @@ const (
 	webBrowserLaunchArgs = "--disable-blink-features=AutomationControlled"
 )
 
+const (
+	untrustedOpen  = "<<<UNTRUSTED_CONTENT>>>"
+	untrustedClose = "<<<END_UNTRUSTED_CONTENT>>>"
+)
+
 // webBrowserCommands are the agent-browser commands that only act on the
 // session's own pages. Commands that read or write local files, install
 // software, reach other browsers or sessions, or run other agents are
@@ -167,8 +172,7 @@ screenshots.
 Use it to search the web: open
 https://www.google.com/search?q=<url-encoded query>, then read or
 snapshot the results and open the promising ones. Also use it for pages
-that need JavaScript or interaction. To read the text of a known URL,
-web_fetch is cheaper.
+that need JavaScript or interaction.
 
 If a cookie consent dialog covers the page, snapshot -i and click its
 reject or accept button.
@@ -465,6 +469,14 @@ func untrustedOutput(out []byte) string {
 		return "(no output)"
 	}
 	return untrustedOpen + "\n" + sanitizeBoundaries(text) + "\n" + untrustedClose
+}
+
+// sanitizeBoundaries strips boundary markers from page content to prevent
+// escaping the untrusted block.
+func sanitizeBoundaries(content string) string {
+	s := strings.ReplaceAll(content, untrustedOpen, "")
+	s = strings.ReplaceAll(s, untrustedClose, "")
+	return s
 }
 
 func webBrowserError(msg string) agent.ToolResult {

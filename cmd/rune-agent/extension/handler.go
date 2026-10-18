@@ -39,7 +39,6 @@ import (
 
 	"unstable.build/rune/cmd/rune-agent/agent"
 	"unstable.build/rune/cmd/rune-agent/agent/agentools"
-	"unstable.build/rune/cmd/rune-agent/agent/agentools/webfetch"
 	"unstable.build/rune/cmd/rune-agent/agent/audit"
 	"unstable.build/rune/cmd/rune-agent/agent/geminitools"
 	"unstable.build/rune/cmd/rune-agent/agent/taskstore"
@@ -341,9 +340,6 @@ func newCommandEventHandler(
 	lsp := w.LSP(ctx)
 	cfg := configedit.NewConfig(fs, cwd, pconfig)
 	tools, tracker := agentools.DefaultTools(fs, executor, cwd, lsp, toolsCfg, cfg)
-
-	fetcher := webfetch.NewHTTPFetcher(webfetch.DefaultConfig())
-	tools = append(tools, agentools.NewWebFetch(fetcher))
 
 	parser := w.Parser(ctx)
 	tools = append(tools, agentools.LSPTools(lsp, fs, parser, cwd, tracker)...)
