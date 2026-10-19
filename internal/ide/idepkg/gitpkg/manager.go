@@ -21,12 +21,18 @@
 // are the moving `latest` (default-branch HEAD), a published tag, or a
 // commit hash. This manager handles only git IDs; routing between it and
 // the official distribution lives in the multipkg package.
+//
+// Repositories are fetched anonymously with the built-in go-git client,
+// which runs in-process. When it fails, as it does for a private
+// repository, they are fetched with the git CLI if it is on PATH, so
+// the user's credential helpers, SSH agent and URL rewrites apply.
 package gitpkg
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -76,6 +82,92 @@ func IsGitPkgID(id string) bool {
 	return true
 }
 
+// scpLikeURL matches git's scp-like SSH remote syntax, [user@]host:path.
+var scpLikeURL = regexp.MustCompile(`^(?:([^@/:]+)@)?([^@/:]+):(.+)$`)
+
+// RemoteURLError returns an error naming the git package ID to use
+// instead when id is a git remote URL, and nil otherwise. It recognizes
+// scheme URLs (https://, ssh://, ...) and the scp-like SSH form
+// [user@]host:path; the latter without a user only when it maps to a
+// valid ID, so official names containing a colon are not mistaken for
+// URLs. Passwords in the URL are redacted from the message. For SSH
+// URLs the message also gives the git config that enables SSH for the
+// CLI fallback; the first attempt with go-git still uses HTTPS.
+func RemoteURLError(id string) error {
+	if strings.Contains(id, "://") {
+		return schemeURLError(id)
+	}
+	m := scpLikeURL.FindStringSubmatch(id)
+	if m == nil {
+		return nil
+	}
+	user, host, path := m[1], m[2], m[3]
+	pkgID, ok := remotePkgID(host, path)
+	if user == "" && !ok {
+		return nil
+	}
+	return sshURLError(id, pkgID, ok, strings.TrimSuffix(id, path), host)
+}
+
+func schemeURLError(id string) error {
+	u, err := url.Parse(id)
+	if err != nil || u.Host == "" {
+		return urlError(id, "", false)
+	}
+	display := u.Redacted()
+	if u.Scheme == "ssh" || u.Scheme == "git+ssh" || u.Scheme == "ssh+git" {
+		pkgID, ok := remotePkgID(u.Hostname(), u.Path)
+		var user string
+		if u.User != nil {
+			user = u.User.Username() + "@"
+		}
+		return sshURLError(display, pkgID, ok,
+			u.Scheme+"://"+user+u.Host+"/", u.Hostname())
+	}
+	// IDs are fetched from the default HTTPS port.
+	if u.Port() != "" {
+		return urlError(display, "", false)
+	}
+	pkgID, ok := remotePkgID(u.Hostname(), u.Path)
+	return urlError(display, pkgID, ok)
+}
+
+// remotePkgID maps a remote's host and repository path to the package
+// ID fetched from https://<host>/<path>. On github.com, where every
+// repository is owner/repo, the rest of a pasted browser URL such as
+// /tree/main is dropped.
+func remotePkgID(host, path string) (string, bool) {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	if host == "github.com" && len(segments) > 2 {
+		segments = segments[:2]
+	}
+	last := len(segments) - 1
+	segments[last] = strings.TrimSuffix(segments[last], ".git")
+	pkgID := host + "/" + strings.Join(segments, "/")
+	return pkgID, IsGitPkgID(pkgID)
+}
+
+const noPkgIDHint = "name git packages by host and path, like github.com/owner/repo"
+
+func urlError(display, pkgID string, ok bool) error {
+	if !ok {
+		return fmt.Errorf("%q is a URL; %s", display, noPkgIDHint)
+	}
+	return fmt.Errorf("%q is a URL; use %s", display, pkgID)
+}
+
+// sshURLError suggests pkgID for the SSH URL display, along with the
+// insteadOf rewrite of https://<host>/ to sshPrefix that makes the git
+// CLI fallback fetch it over SSH.
+func sshURLError(display, pkgID string, ok bool, sshPrefix, host string) error {
+	if !ok {
+		return fmt.Errorf("%q is an SSH URL; %s", display, noPkgIDHint)
+	}
+	return fmt.Errorf("%q is an SSH URL; use %s; to enable SSH for the git CLI "+
+		"fallback, run: git config --global url.\"%s\".insteadOf https://%s/",
+		display, pkgID, sshPrefix, host)
+}
+
 // Option configures the git package manager.
 type Option func(*manager)
 
@@ -119,11 +211,18 @@ type remoteRefs struct {
 // resolveRefs lists the remote repository's refs without cloning, like
 // git ls-remote, returning the resolved HEAD commit and the tag names.
 func (m *manager) resolveRefs(ctx context.Context, pkgID string) (remoteRefs, error) {
-	rem := git.NewRemote(memory.NewStorage(), &gitconfig.RemoteConfig{
-		Name: "origin",
-		URLs: []string{m.remoteURL(pkgID)},
-	})
-	refs, err := rem.ListContext(ctx, &git.ListOptions{})
+	url := m.remoteURL(pkgID)
+	refs, err := withCLIFallback(ctx, pkgID,
+		func() ([]*plumbing.Reference, error) {
+			rem := git.NewRemote(memory.NewStorage(), &gitconfig.RemoteConfig{
+				Name: "origin",
+				URLs: []string{url},
+			})
+			return rem.ListContext(ctx, &git.ListOptions{})
+		},
+		func(gitBin string) ([]*plumbing.Reference, error) {
+			return cliListRefs(ctx, gitBin, url)
+		})
 	if err != nil {
 		return remoteRefs{}, fmt.Errorf("list refs of %s: %w", pkgID, err)
 	}
@@ -278,14 +377,13 @@ func (m *manager) Get(
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	repo, checkedOut, err := m.cloneVersion(ctx, dir, pkgID, rv)
+	createdAt, err := m.cloneVersion(ctx, dir, pkgID, rv)
 	if err != nil {
 		return release.Bundle{}, err
 	}
 	if err := verifyRepoConfig(dir); err != nil {
 		return release.Bundle{}, fmt.Errorf("%s is not installable: %w", pkgID, err)
 	}
-	createdAt := commitTime(repo, checkedOut)
 	if err := writeTarGz(dir, pw); err != nil {
 		return release.Bundle{}, fmt.Errorf("bundle %s: %w", pkgID, err)
 	}
@@ -297,65 +395,90 @@ func (m *manager) Get(
 }
 
 // cloneVersion clones pkgID into dir according to rv and returns the
-// repository and the checked-out commit. `latest` and tags use a
-// shallow single-ref clone; a specific commit needs the full history
-// because the object may be unreachable from any tip of a shallow
-// clone.
+// checked-out commit's committer time.
 func (m *manager) cloneVersion(
 	ctx context.Context, dir, pkgID string, rv resolvedVersion,
+) (time.Time, error) {
+	url := m.remoteURL(pkgID)
+	createdAt, err := withCLIFallback(ctx, pkgID,
+		func() (time.Time, error) {
+			repo, checkedOut, err := goGitClone(ctx, dir, url, rv)
+			if err != nil {
+				return time.Time{}, err
+			}
+			return commitTime(repo, checkedOut), nil
+		},
+		func(gitBin string) (time.Time, error) {
+			// A failed go-git clone leaves its repository behind, and git
+			// refuses to clone into a non-empty directory.
+			if err := emptyDir(dir); err != nil {
+				return time.Time{}, fmt.Errorf("reset clone dir: %w", err)
+			}
+			return cliClone(ctx, gitBin, dir, url, rv)
+		})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("clone %s: %w", pkgID, err)
+	}
+	return createdAt, nil
+}
+
+// goGitClone clones url into dir according to rv with the built-in
+// client and returns the repository and the checked-out commit.
+// `latest` and tags use a shallow single-ref clone; a specific commit
+// needs the full history because the object may be unreachable from
+// any tip of a shallow clone.
+func goGitClone(
+	ctx context.Context, dir, url string, rv resolvedVersion,
 ) (*git.Repository, plumbing.Hash, error) {
 	switch {
 	case rv.head:
 		repo, err := git.PlainCloneContext(ctx, dir, &git.CloneOptions{
-			URL:   m.remoteURL(pkgID),
+			URL:   url,
 			Depth: 1,
 			Tags:  plumbing.NoTags,
 		})
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf("clone %s: %w", pkgID, err)
+			return nil, plumbing.ZeroHash, err
 		}
 		head, err := repo.Head()
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf("resolve HEAD of %s: %w", pkgID, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("resolve HEAD: %w", err)
 		}
 		return repo, head.Hash(), nil
 	case rv.tag != "":
 		repo, err := git.PlainCloneContext(ctx, dir, &git.CloneOptions{
-			URL:           m.remoteURL(pkgID),
+			URL:           url,
 			ReferenceName: plumbing.NewTagReferenceName(rv.tag),
 			SingleBranch:  true,
 			Depth:         1,
 			Tags:          plumbing.NoTags,
 		})
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf(
-				"clone %s at tag %s: %w", pkgID, rv.tag, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("at tag %s: %w", rv.tag, err)
 		}
 		head, err := repo.Head()
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf("resolve HEAD of %s: %w", pkgID, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("resolve HEAD: %w", err)
 		}
 		return repo, head.Hash(), nil
 	default:
 		repo, err := git.PlainCloneContext(ctx, dir, &git.CloneOptions{
-			URL:        m.remoteURL(pkgID),
+			URL:        url,
 			NoCheckout: true,
 		})
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf("clone %s: %w", pkgID, err)
+			return nil, plumbing.ZeroHash, err
 		}
 		wt, err := repo.Worktree()
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf("worktree of %s: %w", pkgID, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("worktree: %w", err)
 		}
 		hash, err := repo.ResolveRevision(plumbing.Revision(rv.commitRev))
 		if err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf(
-				"resolve commit %s of %s: %w", rv.commitRev, pkgID, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("resolve commit %s: %w", rv.commitRev, err)
 		}
 		if err := wt.Checkout(&git.CheckoutOptions{Hash: *hash}); err != nil {
-			return nil, plumbing.ZeroHash, fmt.Errorf(
-				"checkout commit %s of %s: %w", rv.commitRev, pkgID, err)
+			return nil, plumbing.ZeroHash, fmt.Errorf("checkout commit %s: %w", rv.commitRev, err)
 		}
 		return repo, *hash, nil
 	}

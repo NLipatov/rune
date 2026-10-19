@@ -268,6 +268,41 @@ func TestInstallMissingPackageNameErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestInstallGitURLNamesPackageID(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{
+			args: []string{"https://github.com/ernestrc/rune-test-private-repo"},
+			want: `install package: package id: ` +
+				`"https://github.com/ernestrc/rune-test-private-repo" is a URL; ` +
+				`use github.com/ernestrc/rune-test-private-repo`,
+		},
+		{
+			args: []string{"git@github.com:ernestrc/rune-test-private-repo"},
+			want: `install package: package id: ` +
+				`"git@github.com:ernestrc/rune-test-private-repo" is an SSH URL; ` +
+				`use github.com/ernestrc/rune-test-private-repo; to enable SSH ` +
+				`for the git CLI fallback, run: git config --global ` +
+				`url."git@github.com:".insteadOf https://github.com/`,
+		},
+		{
+			args: []string{"https://github.com/owner/repo.git", "v1.0.0"},
+			want: `package id: "https://github.com/owner/repo.git" is a URL; ` +
+				`use github.com/owner/repo`,
+		},
+	}
+	for _, tc := range cases {
+		h, _ := newHandlerForTest(t)
+		_, err := h.HandleCommand(context.Background(),
+			repl.Command{Name: CommandName, Args: append([]string{"install"}, tc.args...)},
+			repl.NopProgressWriter())
+		assert.EqualError(t, err, tc.want, "args=%q", tc.args)
+	}
+}
+
 func TestUseAndRemove(t *testing.T) {
 	t.Parallel()
 	h, n := newHandlerForTest(t)

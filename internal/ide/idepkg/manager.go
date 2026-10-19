@@ -284,7 +284,7 @@ func (m *Manager) LibDir(ctx context.Context, pkgID string) (iterator.Iterator[s
 
 // DescribePackage fetches a Package manifest.
 func (m *Manager) DescribePackage(ctx context.Context, pkgID string) (release.Package, error) {
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return release.Package{}, fmt.Errorf("package id: %w", err)
 	}
 	pkg, err := m.m.GetPackage(ctx, pkgID)
@@ -298,7 +298,7 @@ func (m *Manager) DescribePackage(ctx context.Context, pkgID string) (release.Pa
 func (m *Manager) DescribeRelease(ctx context.Context, pkgID string, version string) (
 	release.Bundle, error,
 ) {
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return release.Bundle{}, fmt.Errorf("package id: %w", err)
 	}
 	if err := validatePkgPath(version); err != nil {
@@ -327,7 +327,7 @@ func (m *Manager) ListPackages(ctx context.Context, filters map[string]string) (
 func (m *Manager) ListPackageVersions(ctx context.Context, pkgID string, filters map[string]string) (
 	iterator.Iterator[release.Bundle], error,
 ) {
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return nil, fmt.Errorf("package id: %w", err)
 	}
 	it, err := m.m.List(ctx, pkgID, filters)
@@ -414,7 +414,7 @@ func (m *Manager) install(
 		pw = repl.NopProgressWriter()
 	}
 
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return "", fmt.Errorf("package id: %w", err)
 	}
 	if err := validatePkgPath(string(version)); err != nil {
@@ -506,7 +506,7 @@ func (m *Manager) DeletePackageVersion(
 	if pkgID == "" || version == "" {
 		return errors.New("package and version must not be empty")
 	}
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return fmt.Errorf("package id: %w", err)
 	}
 	if err := validatePkgPath(string(version)); err != nil {
@@ -562,7 +562,7 @@ func (m *Manager) DeletePackage(
 	if pkgID == "" {
 		return errors.New("package and version must not be empty")
 	}
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return fmt.Errorf("package id: %w", err)
 	}
 	it, err := m.ListInstalledPackageVersions(ctx, pkgID)
@@ -679,7 +679,7 @@ func (m *Manager) ListInstalledPackageVersions(ctx context.Context, pkgID string
 	if pkgID == "" {
 		return nil, errors.New("package must not be empty")
 	}
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return nil, fmt.Errorf("package id: %w", err)
 	}
 	dit, err := m.storage.List(ctx, []storageapi.Filter{{
@@ -706,7 +706,7 @@ func (m *Manager) ListInstalledPackageVersions(ctx context.Context, pkgID string
 func (m *Manager) UsePackageVersion(
 	ctx context.Context, pkgID string, version release.Version,
 ) error {
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return fmt.Errorf("package id: %w", err)
 	}
 	if err := validatePkgPath(string(version)); err != nil {
@@ -748,7 +748,7 @@ func (m *Manager) UsePackageVersion(
 func (m *Manager) PackageVersionInUse(
 	_ context.Context, pkgID string,
 ) (release.Version, bool, error) {
-	if err := validatePkgPath(pkgID); err != nil {
+	if err := validatePkgID(pkgID); err != nil {
 		return "", false, fmt.Errorf("package id: %w", err)
 	}
 	libDir := makePackageLibDirname(m.dataDir, pkgID)
@@ -962,7 +962,7 @@ func (m *Manager) installRequirements(
 		return fmt.Errorf("parse requirements: %w", err)
 	}
 	for _, req := range reqs {
-		if err := validatePkgPath(req); err != nil {
+		if err := validatePkgID(req); err != nil {
 			return fmt.Errorf("requirement id: %w", err)
 		}
 		if req == pkgID {
@@ -2407,6 +2407,17 @@ func validatePkgPath(val string) error {
 		}
 	}
 	return nil
+}
+
+// validatePkgID is validatePkgPath for package ids, rejecting a git
+// remote URL with the package id to use instead: a URL fails
+// validatePkgPath with an opaque segment error or, in the scp-like SSH
+// form, passes it and is looked up as an official package.
+func validatePkgID(id string) error {
+	if err := gitpkg.RemoteURLError(id); err != nil {
+		return err
+	}
+	return validatePkgPath(id)
 }
 
 // Reconcile cleans up incomplete installs left by a previous crash.

@@ -21,10 +21,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +76,70 @@ func TestIsGitPkgID(t *testing.T) {
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.ok, IsGitPkgID(tc.id), "id=%q", tc.id)
+	}
+}
+
+func TestRemoteURLError(t *testing.T) {
+	t.Parallel()
+	const (
+		noID     = "; name git packages by host and path, like github.com/owner/repo"
+		viaSSH   = "; to enable SSH for the git CLI fallback, run: git config --global url."
+		toGitHub = ".insteadOf https://github.com/"
+	)
+	cases := []struct {
+		id   string
+		want string
+	}{
+		{"github.com/owner/repo", ""},
+		{"gitlab.com/group/subgroup/repo", ""},
+		{"go", ""},
+		{"a:b", ""},
+		{"", ""},
+		{"https://github.com/ernestrc/rune-test-private-repo",
+			`"https://github.com/ernestrc/rune-test-private-repo" is a URL; ` +
+				`use github.com/ernestrc/rune-test-private-repo`},
+		{"https://github.com/owner/repo.git",
+			`"https://github.com/owner/repo.git" is a URL; use github.com/owner/repo`},
+		{"https://github.com/owner/repo/",
+			`"https://github.com/owner/repo/" is a URL; use github.com/owner/repo`},
+		{"https://github.com/owner/repo/tree/main/src",
+			`"https://github.com/owner/repo/tree/main/src" is a URL; use github.com/owner/repo`},
+		{"http://gitlab.com/group/subgroup/repo.git",
+			`"http://gitlab.com/group/subgroup/repo.git" is a URL; ` +
+				`use gitlab.com/group/subgroup/repo`},
+		{"git://github.com/owner/repo",
+			`"git://github.com/owner/repo" is a URL; use github.com/owner/repo`},
+		{"https://user:secret@github.com/owner/repo",
+			`"https://user:xxxxx@github.com/owner/repo" is a URL; use github.com/owner/repo`},
+		{"https://git.example.com:8443/owner/repo",
+			`"https://git.example.com:8443/owner/repo" is a URL` + noID},
+		{"https://github.com", `"https://github.com" is a URL` + noID},
+		{"git@github.com:ernestrc/rune-test-private-repo",
+			`"git@github.com:ernestrc/rune-test-private-repo" is an SSH URL; ` +
+				`use github.com/ernestrc/rune-test-private-repo` +
+				viaSSH + `"git@github.com:"` + toGitHub},
+		{"git@github.com:owner/repo.git",
+			`"git@github.com:owner/repo.git" is an SSH URL; use github.com/owner/repo` +
+				viaSSH + `"git@github.com:"` + toGitHub},
+		{"github.com:owner/repo",
+			`"github.com:owner/repo" is an SSH URL; use github.com/owner/repo` +
+				viaSSH + `"github.com:"` + toGitHub},
+		{"ssh://git@github.com/owner/repo.git",
+			`"ssh://git@github.com/owner/repo.git" is an SSH URL; use github.com/owner/repo` +
+				viaSSH + `"ssh://git@github.com/"` + toGitHub},
+		{"ssh://git@git.example.com:2222/group/repo",
+			`"ssh://git@git.example.com:2222/group/repo" is an SSH URL; ` +
+				`use git.example.com/group/repo` + viaSSH +
+				`"ssh://git@git.example.com:2222/".insteadOf https://git.example.com/`},
+		{"git@localhost:repo", `"git@localhost:repo" is an SSH URL` + noID},
+	}
+	for _, tc := range cases {
+		err := RemoteURLError(tc.id)
+		if tc.want == "" {
+			assert.NoError(t, err, "id=%q", tc.id)
+			continue
+		}
+		assert.EqualError(t, err, tc.want, "id=%q", tc.id)
 	}
 }
 
@@ -164,9 +231,12 @@ func tagFixtureRepo(t *testing.T, dir, tag string) string {
 
 // newFixtureManager serves every repository under base over git
 // smart-HTTP and returns a release.Manager whose git IDs resolve
-// against that server.
+// against that server. git is hidden from PATH so a go-git failure is
+// not masked by the host's git CLI fallback; the CLI is covered by the
+// e2e suite.
 func newFixtureManager(t *testing.T, base string) release.Manager {
 	t.Helper()
+	t.Setenv("PATH", "")
 	srv := httptest.NewServer(backendhttp.NewBackend(
 		transport.NewFilesystemLoader(osfs.New(base), false)))
 	t.Cleanup(srv.Close)
@@ -536,6 +606,106 @@ func TestGet(t *testing.T) {
 			release.Latest, &bufferProgressWriter{})
 		require.ErrorContains(t, err, "requirements")
 	})
+}
+
+func TestGoGitRunsBeforeGitCLI(t *testing.T) {
+	const id = "github.com/owner/repo"
+	base := t.TempDir()
+	sha := initFixtureRepo(t, filepath.Join(base, "github.com", "owner", "repo"),
+		map[string]fixtureFile{
+			"config.yaml": {content: validConfigYAML},
+			"main.py":     {content: "print('hi')\n"},
+		})
+	m := newFixtureManager(t, base)
+	// A git on PATH that cannot be executed: reaching the CLI fails
+	// before any process runs.
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, name), nil, 0o755))
+	t.Setenv("PATH", bin)
+	ctx := context.Background()
+
+	pkg, err := m.GetPackage(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, release.Version(sha[:shortSHALen]), pkg.Latest)
+
+	pw := &bufferProgressWriter{}
+	bundle, err := m.Get(ctx, id, release.Latest, pw)
+	require.NoError(t, err)
+	assert.Equal(t, release.Version(sha[:shortSHALen]), bundle.Version)
+	assert.Equal(t, "print('hi')\n", entryContent(t, pw.Bytes(), "main.py"))
+
+	_, err = m.GetPackage(ctx, "github.com/owner/missing")
+	require.Error(t, err)
+	goGitErr, cliErr, ok := strings.Cut(err.Error(), "; git CLI fallback: ")
+	require.True(t, ok, "a go-git failure must be retried with the CLI: %v", err)
+	assert.Contains(t, goGitErr, transport.ErrRepositoryNotFound.Error())
+	assert.Contains(t, cliErr, "git ls-remote")
+}
+
+func TestWithCLIFallback(t *testing.T) {
+	goGitErr := errors.New("go-git failed")
+	cliErr := errors.New("CLI failed")
+	cases := []struct {
+		name       string
+		noGit      bool
+		cancel     bool
+		firstErr   error
+		secondErr  error
+		wantCalls  []string
+		wantErrors []error
+	}{
+		{name: "go-git succeeds", wantCalls: []string{"go-git"}},
+		{name: "CLI succeeds", firstErr: goGitErr, wantCalls: []string{"go-git", "CLI"}},
+		{name: "both fail", firstErr: goGitErr, secondErr: cliErr,
+			wantCalls: []string{"go-git", "CLI"}, wantErrors: []error{goGitErr, cliErr}},
+		{name: "git unavailable", noGit: true, firstErr: goGitErr,
+			wantCalls: []string{"go-git"}, wantErrors: []error{goGitErr}},
+		{name: "cancelled go-git request", cancel: true,
+			wantCalls: []string{"go-git"}, wantErrors: []error{context.Canceled}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			gitBin := filepath.Join(bin, "git")
+			if runtime.GOOS == "windows" {
+				gitBin += ".exe"
+			}
+			if !tc.noGit {
+				// LookPath can find this file, but the callback never executes it.
+				require.NoError(t, os.WriteFile(gitBin, nil, 0o755))
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var calls []string
+			value, err := withCLIFallback(ctx, "github.com/owner/repo",
+				func() (string, error) {
+					calls = append(calls, "go-git")
+					if tc.cancel {
+						cancel()
+						return "go-git", ctx.Err()
+					}
+					return "go-git", tc.firstErr
+				},
+				func(path string) (string, error) {
+					assert.Equal(t, gitBin, path)
+					calls = append(calls, "CLI")
+					return "CLI", tc.secondErr
+				})
+			assert.Equal(t, tc.wantCalls, calls)
+			assert.Equal(t, tc.wantCalls[len(tc.wantCalls)-1], value)
+			if len(tc.wantErrors) == 0 {
+				require.NoError(t, err)
+			}
+			for _, want := range tc.wantErrors {
+				assert.ErrorIs(t, err, want)
+			}
+		})
+	}
 }
 
 func TestUnsupportedOperations(t *testing.T) {

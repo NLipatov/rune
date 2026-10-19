@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,7 @@ import (
 	"unstable.build/rune/internal/extension/extensionv2"
 	"unstable.build/rune/internal/ide/console/pkgconsole"
 	"unstable.build/rune/internal/ide/idepkg/idepkgtest"
+	"unstable.build/rune/internal/ide/vctrl/testgit"
 )
 
 func TestGitHubPkgExtensionEndToEnd(t *testing.T) {
@@ -197,7 +199,11 @@ func runGitHubPkgE2E(t *testing.T, f ghE2EFixture) {
 		f.prepare(t, repoDir)
 	}
 	gitFixtureCommit(t, repoDir, nil)
-	ghURL := serveGitFixtures(t, gitBase)
+	// A real backend supports shallow fetches from either go-git or
+	// the CLI fallback.
+	srv := httptest.NewServer(testgit.HTTPBackend(t, gitBase))
+	t.Cleanup(srv.Close)
+	ghURL := func(pkgID string) string { return srv.URL + "/" + pkgID }
 
 	// The official distribution serves the requirement package whose
 	// tarball delivers the host's real toolchain into <dataDir>/bin.

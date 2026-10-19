@@ -13,9 +13,9 @@ which communicate with Rune through the [SDK](./sdk/index.md),
 
 ## Distributing from a git repository
 
-You distribute your own package by pushing it to a **public git
-repository** and telling users to install it by its repository ID, which is
-the repository's host and path:
+You distribute your own package by pushing it to a **git repository** and
+telling users to install it by its repository ID, which is the repository's
+host and path, without a scheme or `.git` suffix:
 
 ```
 pkg install github.com/<owner>/<repo>
@@ -34,8 +34,23 @@ pkg install git.example.com/<owner>/<repo>
 Rune clones the repository, reads a `config.yaml` at its root as the
 [config overlay](#the-config-overlay), and installs anything the overlay
 [requires](#requiring-other-packages). An extension runs from source through
-the matching language toolchain; a theme-only package needs no toolchain. The
-repository must be public: Rune clones anonymously over HTTPS.
+the matching language toolchain; a theme-only package needs no toolchain.
+
+Rune first fetches `https://<id>` anonymously with its built-in go-git client,
+without starting an external process. If that fails, Rune retries with your
+`git` command when it is installed. This fallback uses git's credentials and
+configuration, so private repositories can install using a credential helper
+or GitHub CLI credentials configured with `gh auth setup-git`. To enable SSH
+for the CLI fallback, rewrite the host's HTTPS URLs in your git config:
+
+```
+git config --global url."git@github.com:".insteadOf https://github.com/
+```
+
+Git's credential helpers and URL rewrites apply only to the CLI fallback;
+public repositories that go-git can fetch stay on anonymous HTTPS. Without
+`git`, a failed go-git request is returned as an error. If both clients fail,
+the error includes both causes. Cancelling an install does not trigger a retry.
 
 ### What the repository must contain
 

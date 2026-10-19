@@ -80,6 +80,9 @@ func serveGitFixtures(t *testing.T, base string) func(pkgID string) string {
 
 func TestPkgManagerGitHubInstallFacade(t *testing.T) {
 	const ghID = "github.com/owner/repo"
+	// Hiding git from PATH keeps the install on the built-in go-git
+	// client, so this test stays hermetic.
+	t.Setenv("PATH", "")
 	base := t.TempDir()
 	repoDir := filepath.Join(base, "github.com", "owner", "repo")
 	sha := gitFixtureCommit(t, repoDir, map[string]string{
