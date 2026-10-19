@@ -46,6 +46,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/extension"
+	thandlerrpc "unstable.build/rune/internal/handler/handlerrpc"
 	"unstable.build/rune/internal/ide/ideauthorizer"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/text/texttest"
@@ -106,7 +107,7 @@ func TestExtensionInterruptPermissionE2E(t *testing.T) {
 
 	runner, err := baseRunner.WorkspaceExtensionsRunner(
 		uri,
-		extension.BrowserResources(hostBrowser, publishEvent),
+		extension.BrowserResources(hostBrowser, publishEvent, thandlerrpc.GraphicsConfig{}),
 		authorizer,
 		nopTrustVerifier{},
 		dataDir,
@@ -324,7 +325,7 @@ func TestExtensionInterruptPermissionConcurrentE2E(t *testing.T) {
 
 	runner, err := baseRunner.WorkspaceExtensionsRunner(
 		uri,
-		extension.BrowserResources(hostBrowser, publishEvent),
+		extension.BrowserResources(hostBrowser, publishEvent, thandlerrpc.GraphicsConfig{}),
 		authorizer,
 		nopTrustVerifier{},
 		dataDir,

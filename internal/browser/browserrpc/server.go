@@ -47,6 +47,7 @@ type Server struct {
 	browserrpc.UnimplementedWindowManagerServer
 
 	syncMode bool
+	graphics thandlerrpc.GraphicsConfig
 
 	browser struct {
 		browser.Browser
@@ -58,17 +59,22 @@ type Server struct {
 }
 
 // NewServer allocates storage for a new Server and initializes it.
-func NewServer(browser browser.Browser, lock sync.Locker) *Server {
+func NewServer(
+	browser browser.Browser, lock sync.Locker, graphics thandlerrpc.GraphicsConfig,
+) *Server {
 	ret := new(Server)
-	ret.Init(browser, lock)
+	ret.Init(browser, lock, graphics)
 	return ret
 }
 
 // Init initializes this Server with the given browser impl and locker.
-func (s *Server) Init(browser browser.Browser, lock sync.Locker) {
+func (s *Server) Init(
+	browser browser.Browser, lock sync.Locker, graphics thandlerrpc.GraphicsConfig,
+) {
 	s.browser.Browser = browser
 	s.browser.Locker = lock
 	s.serverCtx, s.serverCancelCtx = context.WithCancel(context.Background())
+	s.graphics = graphics
 }
 
 // SetSyncMode ensures that all future handler clients are fully synchronous.
@@ -109,7 +115,7 @@ func (s *Server) Split(srv browserrpc.WindowManager_SplitServer) error {
 			client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 				func() *browserrpc.SplitWindowMessage {
 					return new(browserrpc.SplitWindowMessage)
-				}, s.browser.PublishEvent)
+				}, s.browser.PublishEvent, thandlerrpc.WithGraphics(s.graphics))
 		}
 		handler = &streamHandler{mu: s.browser, Handler: client}
 	} else {
@@ -163,7 +169,7 @@ func (s *Server) Bar(srv browserrpc.WindowManager_BarServer) error {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.BarMessage {
 				return new(browserrpc.BarMessage)
-			}, s.browser.PublishEvent)
+			}, s.browser.PublishEvent, thandlerrpc.WithGraphics(s.graphics))
 	}
 
 	cfg := browserapi.BarConfig{}
@@ -392,7 +398,7 @@ func (s *Server) Floating(srv browserrpc.WindowManager_FloatingServer) error {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.FloatingWindowMessage {
 				return new(browserrpc.FloatingWindowMessage)
-			}, s.browser.PublishEvent)
+			}, s.browser.PublishEvent, thandlerrpc.WithGraphics(s.graphics))
 	}
 
 	at := req.GetOffset().ToModel()
@@ -455,7 +461,7 @@ func (s *Server) Tab(srv browserrpc.WindowManager_TabServer) error {
 		client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 			func() *browserrpc.TabMessage {
 				return new(browserrpc.TabMessage)
-			}, s.browser.PublishEvent)
+			}, s.browser.PublishEvent, thandlerrpc.WithGraphics(s.graphics))
 	}
 	handler := &streamHandler{mu: s.browser, Handler: client}
 
@@ -501,7 +507,7 @@ func (s *Server) SetContent(srv browserrpc.WindowManager_SetContentServer) error
 			client = thandlerrpc.NewClientStream(s.serverCtx, srv,
 				func() *browserrpc.WindowSetContentMessage {
 					return new(browserrpc.WindowSetContentMessage)
-				}, s.browser.PublishEvent)
+				}, s.browser.PublishEvent, thandlerrpc.WithGraphics(s.graphics))
 		}
 		handler = &streamHandler{mu: s.browser, Handler: client}
 	} else {

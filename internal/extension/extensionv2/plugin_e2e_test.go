@@ -36,6 +36,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/extension"
+	thandlerrpc "unstable.build/rune/internal/handler/handlerrpc"
 	"unstable.build/rune/internal/ide/ideauthorizer"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/text/texttest"
@@ -135,7 +136,8 @@ func TestPluginPermissionPromptE2E(t *testing.T) {
 			require.NoError(t, err)
 			runner, err := baseRunner.WorkspaceExtensionsRunner(
 				uri,
-				extension.BrowserResources(e2eBrowser{}, func(term.Event) bool { return true }),
+				extension.BrowserResources(e2eBrowser{}, func(term.Event) bool { return true },
+					thandlerrpc.GraphicsConfig{}),
 				authorizer,
 				nopTrustVerifier{},
 				dataDir,

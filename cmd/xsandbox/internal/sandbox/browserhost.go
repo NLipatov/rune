@@ -33,6 +33,7 @@ import (
 	tbrowserrpc "unstable.build/rune/internal/browser/browserrpc"
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/extension"
+	"unstable.build/rune/internal/handler/handlerrpc"
 	"unstable.build/rune/internal/rpc"
 	"unstable.build/rune/internal/term/programstatus"
 )
@@ -275,7 +276,7 @@ func (n *recordingNotifier) UpdateNotificationProgress(
 // The server is guarded by h.mu, the same lock render and send_key
 // take, so host-driven renders never race the RPC handlers.
 func (h *browserHost) resources() map[extensionapi.Permission]extension.ResourceRegistrar {
-	server := tbrowserrpc.NewServer(h, &h.mu)
+	server := tbrowserrpc.NewServer(h, &h.mu, handlerrpc.GraphicsConfig{})
 	server.SetSyncMode()
 	reg := &browserServerRegistrar{server: server}
 	return map[extensionapi.Permission]extension.ResourceRegistrar{

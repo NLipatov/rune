@@ -23,18 +23,23 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi/browserrpc"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
+	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"go.uber.org/goleak"
 	gomock "go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/browser/browsertest"
+	"unstable.build/rune/internal/debug"
+	thandlerrpc "unstable.build/rune/internal/handler/handlerrpc"
+	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/workspace/processctx"
 )
@@ -46,6 +51,14 @@ const integrationExtensionID = "test-extension"
 func newClientServerIntegration(
 	t *testing.T, h browser.Browser,
 ) (*browserrpc.Client, func()) {
+	server, client, cleanup := newClientServerIntegrationWith(t, h, thandlerrpc.GraphicsConfig{})
+	server.SetSyncMode()
+	return client, cleanup
+}
+
+func newClientServerIntegrationWith(
+	t *testing.T, h browser.Browser, graphics thandlerrpc.GraphicsConfig,
+) (*Server, *browserrpc.Client, func()) {
 	lis, err := net.Listen("tcp", ":0")
 	require.NoError(t, err)
 	mutex := new(sync.Mutex)
@@ -55,8 +68,7 @@ func newClientServerIntegration(
 	) (any, error) {
 		return handler(processctx.ContextWithExtensionID(ctx, integrationExtensionID), req)
 	}))
-	rpcServer := NewServer(h, mutex)
-	rpcServer.SetSyncMode()
+	rpcServer := NewServer(h, mutex, graphics)
 	browserrpc.RegisterWindowManagerServer(grpcServer, rpcServer)
 	browserrpc.RegisterResourceOpenerServer(grpcServer, rpcServer)
 	browserrpc.RegisterNotificationsServer(grpcServer, rpcServer)
@@ -78,7 +90,7 @@ func newClientServerIntegration(
 		conn.Close()
 	}
 
-	return client, closeFn
+	return rpcServer, client, closeFn
 }
 
 func TestClientServerIntegrationSplit(t *testing.T) {
@@ -248,3 +260,154 @@ func TestClientServerIntegrationSetTabStatus(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid id")
 }
+
+func TestClientServerIntegrationImages(t *testing.T) {
+	tabURI, err := workspaceapi.ParseURI("rune-agent://browser/1")
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		install func(
+			mock *browsertest.MockBrowser, ctrl *gomock.Controller,
+			client *browserrpc.Client, ext browserapi.Handler,
+			installed chan<- tui.Handler,
+		) error
+	}{
+		{
+			name: "split",
+			install: func(
+				mock *browsertest.MockBrowser, _ *gomock.Controller,
+				client *browserrpc.Client, ext browserapi.Handler, installed chan<- tui.Handler,
+			) error {
+				mock.EXPECT().Window(gomock.Any()).Return(browsertest.NopWindow(), true)
+				mock.EXPECT().Split(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ browserapi.Orientation, _ browser.Window, h browserapi.Handler) (browser.Window, error) {
+						installed <- h
+						return browsertest.NopWindow(), nil
+					})
+				_, err := client.Split(browserapi.OrientationRight, browsertest.NopWindow(), ext)
+				return err
+			},
+		},
+		{
+			name: "floating",
+			install: func(
+				mock *browsertest.MockBrowser, _ *gomock.Controller,
+				client *browserrpc.Client, ext browserapi.Handler, installed chan<- tui.Handler,
+			) error {
+				mock.EXPECT().Floating(gomock.Any(), gomock.Any()).DoAndReturn(
+					func(h browser.Floating, _ browserapi.FloatingConfig) (browser.Window, error) {
+						installed <- h
+						return browsertest.NopWindow(), nil
+					})
+				_, err := client.Floating(floatingRaster{ext.(*handlerrpctest.RasterHandler)},
+					browserapi.FloatingConfig{})
+				return err
+			},
+		},
+		{
+			name: "tab",
+			install: func(
+				mock *browsertest.MockBrowser, _ *gomock.Controller,
+				client *browserrpc.Client, ext browserapi.Handler, installed chan<- tui.Handler,
+			) error {
+				mock.EXPECT().Tab(tabURI, gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ workspaceapi.URI, _ rune, _ string, h browserapi.Handler) (browserapi.Handler, error) {
+						installed <- h
+						return h, nil
+					})
+				_, err := client.Tab(tabURI, 'B', "browser", ext)
+				return err
+			},
+		},
+		{
+			name: "set content",
+			install: func(
+				mock *browsertest.MockBrowser, ctrl *gomock.Controller,
+				client *browserrpc.Client, ext browserapi.Handler, installed chan<- tui.Handler,
+			) error {
+				win := browsertest.NewMockWindow(ctrl)
+				win.EXPECT().Closed().Return(false)
+				win.EXPECT().WindowID().Return(uint64(1)).AnyTimes()
+				win.EXPECT().SetContent(gomock.Any()).DoAndReturn(func(h browserapi.Handler) error {
+					installed <- h
+					return nil
+				})
+				mock.EXPECT().Window(gomock.Any()).Return(win, true)
+				return client.SetWindowContent(browsertest.NopWindow(), ext)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mock := browsertest.NewMockBrowser(ctrl)
+			published := make(chan term.Event, 64)
+			mock.EXPECT().PublishEvent(gomock.Any()).DoAndReturn(func(ev term.Event) error {
+				published <- ev
+				return nil
+			}).AnyTimes()
+			var server *Server
+			server, client, cleanup := newClientServerIntegrationWith(t, mock, thandlerrpc.GraphicsConfig{ArenaRoot: t.TempDir()})
+			defer cleanup()
+
+			ext := handlerrpctest.NewRasterHandler()
+			installed := make(chan tui.Handler, 1)
+			done := make(chan error, 1)
+			go debug.CapturePanicReport(func() {
+				done <- tt.install(mock, ctrl, client, ext, installed)
+			})
+			var host tui.Handler
+			select {
+			case host = <-installed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the handler was not installed")
+			}
+			// The UI calls host handlers under the browser's lock.
+			locked := func(f func()) {
+				server.browser.Lock()
+				defer server.browser.Unlock()
+				f()
+			}
+			// The install response is only sent with the next message to the handler.
+			require.Eventually(t, func() bool {
+				locked(func() { host.Resize(4, 2) })
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+					return true
+				default:
+					return false
+				}
+			}, 5*time.Second, 10*time.Millisecond)
+
+			sized := func(ctx context.Context) context.Context {
+				return term.ContextWithCellPixelSize(ctx, 8.5, 17.25)
+			}
+			locked(func() { host.Draw(&handlerrpctest.ImageRecorder{Ctx: sized(context.Background())}) })
+			var frame context.Context
+			for frame == nil {
+				select {
+				case ev := <-published:
+					if ev.Type == term.EventInterrupt && ev.Raw != nil {
+						frame = term.ContextWithPayload(context.Background(), ev.Raw)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("the extension's frame did not arrive")
+				}
+			}
+			w := &handlerrpctest.ImageRecorder{Ctx: sized(frame)}
+			locked(func() { host.Draw(w) })
+			require.Len(t, w.Images, 1)
+			assert.Equal(t, ext.Raster().Pix, w.Images[0].Pix)
+			assert.Equal(t, []bool{true}, ext.Shown())
+			assert.Equal(t, []handlerrpctest.CellPixelSize{{Width: 8.5, Height: 17.25}},
+				ext.CellPixelSizes(), "the extension must draw with the frame's cell size")
+		})
+	}
+}
+
+type floatingRaster struct {
+	*handlerrpctest.RasterHandler
+}
+
+func (floatingRaster) Dimensions() (int, int) { return 4, 2 }

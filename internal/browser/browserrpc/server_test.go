@@ -35,6 +35,7 @@ import (
 	status "google.golang.org/grpc/status"
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/debug"
+	"unstable.build/rune/internal/handler/handlerrpc"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/workspace/processctx"
 )
@@ -45,7 +46,7 @@ func newServerWithNoBroker(ctrl *gomock.Controller) (
 	*Server, *browsertest.MockBrowser,
 ) {
 	mock := browsertest.NewMockBrowser(ctrl)
-	s := NewServer(mock, new(sync.Mutex))
+	s := NewServer(mock, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 	s.SetSyncMode()
 	return s, mock
 }
@@ -54,7 +55,7 @@ func newTestServer(ctrl *gomock.Controller, mu *sync.Mutex) (
 	*Server, *browsertest.MockBrowser,
 ) {
 	mockBrowser := browsertest.NewMockBrowser(ctrl)
-	s := NewServer(mockBrowser, mu)
+	s := NewServer(mockBrowser, mu, handlerrpc.GraphicsConfig{})
 	s.SetSyncMode()
 
 	return s, mockBrowser

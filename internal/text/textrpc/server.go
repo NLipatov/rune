@@ -60,6 +60,7 @@ type Server struct {
 
 	syncMode bool
 	publish  func(term.Event) error
+	graphics thandlerrpc.GraphicsConfig
 
 	// scheme -> the stream whose opener is registered for it; guarded by
 	// the editor lock.
@@ -70,15 +71,17 @@ type Server struct {
 // NewServer allocates storage for a new Server and initializes it.
 func NewServer(
 	b browser.Notifications, editor text.Editor, lock sync.Locker,
+	g thandlerrpc.GraphicsConfig,
 ) *Server {
 	ret := new(Server)
-	ret.Init(b, editor, lock)
+	ret.Init(b, editor, lock, g)
 	return ret
 }
 
 // Init initializes this Server with broker and browser.
 func (s *Server) Init(
 	b browser.Notifications, editor text.Editor, lock sync.Locker,
+	g thandlerrpc.GraphicsConfig,
 ) {
 	s.editor.Editor = editor
 	s.editor.Locker = lock
@@ -86,6 +89,7 @@ func (s *Server) Init(
 	s.openers = make(map[string]*resourceOpenerClientStream)
 	s.publish = func(term.Event) error { return errNoEventPublisher }
 	s.ctx, s.cancelCtx = context.WithCancel(context.Background())
+	s.graphics = g
 }
 
 // SetEventPublisher sets the publisher the handlers served by extensions
@@ -389,7 +393,8 @@ func (s *Server) OpenResource(srv textrpc.Editor_OpenResourceServer) error {
 	if s.syncMode {
 		client = thandlerrpc.NewSyncClientStream(s.ctx, srv, newT)
 	} else {
-		client = thandlerrpc.NewClientStream(s.ctx, srv, newT, s.publish)
+		client = thandlerrpc.NewClientStream(s.ctx, srv, newT, s.publish,
+			thandlerrpc.WithGraphics(s.graphics))
 	}
 
 	// The waiter may use the handler as soon as it has it, and the

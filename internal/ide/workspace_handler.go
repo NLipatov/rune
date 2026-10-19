@@ -63,6 +63,7 @@ import (
 	"unstable.build/rune/internal/extension/extensionv2"
 	"unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/handler/command"
+	thandlerrpc "unstable.build/rune/internal/handler/handlerrpc"
 	handlermarkdown "unstable.build/rune/internal/handler/markdown"
 	"unstable.build/rune/internal/handler/search"
 	"unstable.build/rune/internal/ide/console/ideconsole/debugshell"
@@ -2318,9 +2319,10 @@ func (h *workspaceManagerHandler) buildExtensions(
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("new command authorizer: %w", err)
 	}
-	res := extension.BrowserResources(ex.Browser(), h.events.newPublisher(uri))
+	var graphics thandlerrpc.GraphicsConfig
+	res := extension.BrowserResources(ex.Browser(), h.events.newPublisher(uri), graphics)
 	res = extension.MergeResourceMap(res,
-		extension.EditorResources(ex.Browser(), ed, h.events.newPublisher(uri)))
+		extension.EditorResources(ex.Browser(), ed, h.events.newPublisher(uri), graphics))
 	res = extension.MergeResourceMap(res,
 		extension.WorkspaceResources(cwd, cmdAuthorizer))
 	res = extension.MergeResourceMap(res,

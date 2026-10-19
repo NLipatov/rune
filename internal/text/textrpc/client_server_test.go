@@ -46,6 +46,8 @@ import (
 	tbrowserrpc "unstable.build/rune/internal/browser/browserrpc"
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/cell"
+	"unstable.build/rune/internal/handler/handlerrpc"
+	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
 	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/sh"
 	"unstable.build/rune/internal/text"
@@ -60,7 +62,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -77,7 +79,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -93,7 +95,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -111,7 +113,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -185,7 +187,7 @@ func TestClientServerIntegration(t *testing.T) {
 			t.Run(tcase.name, func(t *testing.T) {
 				var wg sync.WaitGroup
 				ed := texttest.NopEditorWithCallback(wg.Done)
-				s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+				s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 				client, closeFn := setupIntTest(t, s)
 				defer closeFn()
@@ -228,7 +230,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("calls unsubscribe if event stream completes", func(t *testing.T) {
 		var wg sync.WaitGroup
 		ed := texttest.NopEditorWithCallback(wg.Done)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -261,7 +263,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("event handler drops messages if event handler server is not processing events", func(t *testing.T) {
 		var wg sync.WaitGroup
 		ed := texttest.NopEditorWithCallback(wg.Done)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -321,7 +323,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -354,7 +356,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -387,7 +389,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -424,7 +426,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, nopLocker{})
+		s := NewServer(nopNotifications{}, ed, nopLocker{}, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -453,7 +455,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("dispatches commands to subscribed command handler", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 		var wg sync.WaitGroup
 
 		client, closeFn := setupIntTest(t, s)
@@ -534,7 +536,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
 		noti := browsertest.NewMockNotifications(ctrl)
-		s := NewServer(noti, ed, new(sync.Mutex))
+		s := NewServer(noti, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -582,7 +584,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("returns subscribe error", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -605,7 +607,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("completes commands", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -663,7 +665,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("returns complete error", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -709,7 +711,7 @@ func TestClientServerIntegration(t *testing.T) {
 	t.Run("returns iterator error", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -756,7 +758,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -830,7 +832,7 @@ func TestClientServerIntegration(t *testing.T) {
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
 		lock := &dispatchOnUnlockLocker{}
-		s := NewServer(nopNotifications{}, ed, lock)
+		s := NewServer(nopNotifications{}, ed, lock, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -866,7 +868,7 @@ func TestClientServerIntegration(t *testing.T) {
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
 		lock := &dispatchOnUnlockLocker{}
-		s := NewServer(nopNotifications{}, ed, lock)
+		s := NewServer(nopNotifications{}, ed, lock, handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -905,7 +907,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -953,7 +955,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -1003,7 +1005,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -1034,7 +1036,7 @@ func TestClientServerIntegration(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		ed := texttest.NewMockEditor(ctrl)
-		s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+		s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 		client, closeFn := setupIntTest(t, s)
 		defer closeFn()
@@ -1094,7 +1096,7 @@ func TestClientServer_ShellProgressE2E(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ed := texttest.NewMockEditor(ctrl)
-	s := NewServer(nopNotifications{}, ed, new(sync.Mutex))
+	s := NewServer(nopNotifications{}, ed, new(sync.Mutex), handlerrpc.GraphicsConfig{})
 
 	client, closeFn := setupIntTest(t, s)
 	defer closeFn()
@@ -1268,7 +1270,7 @@ func TestRPCTab(t *testing.T) {
 			return nil, nil, err
 		}
 
-		s := tbrowserrpc.NewServer(c, mu)
+		s := tbrowserrpc.NewServer(c, mu, handlerrpc.GraphicsConfig{})
 		s.SetSyncMode()
 
 		client, closeFn := setupWmIntTest(t, s)
@@ -1588,7 +1590,7 @@ func TestResourceOpenerClientServer(t *testing.T) {
 		c, err := newTestComponentErr(texttest.NopEditor())
 		require.NoError(t, err)
 		mu := new(sync.Mutex)
-		s := NewServer(nopNotifications{}, c, mu)
+		s := NewServer(nopNotifications{}, c, mu, handlerrpc.GraphicsConfig{})
 		s.SetSyncMode()
 		conn, closeFn := doSetupIntTest(t, func(g *grpc.Server) {
 			textrpc.RegisterEditorServer(g, s)
@@ -1751,4 +1753,65 @@ func TestResourceOpenerClientServer(t *testing.T) {
 		assert.Contains(t, drawn(h, 10, 1), "second")
 		require.NoError(t, h.Close())
 	})
+}
+
+func TestResourceOpenerClientServerDrawsImages(t *testing.T) {
+	const scheme = "fake"
+	uri, err := workspaceapi.ParseURI("fake://host/page")
+	require.NoError(t, err)
+	c, err := newTestComponentErr(texttest.NopEditor())
+	require.NoError(t, err)
+	mu := new(sync.Mutex)
+	s := NewServer(nopNotifications{}, c, mu, handlerrpc.GraphicsConfig{ArenaRoot: t.TempDir()})
+	published := make(chan term.Event, 64)
+	s.SetEventPublisher(func(ev term.Event) error {
+		published <- ev
+		return nil
+	})
+	conn, closeFn := doSetupIntTest(t, func(g *grpc.Server) {
+		textrpc.RegisterEditorServer(g, s)
+	})
+	t.Cleanup(func() {
+		_ = s.Close()
+		closeFn()
+	})
+	client := NewClient(context.Background(), conn)
+	t.Cleanup(func() { _ = client.Close() })
+
+	ext := handlerrpctest.NewRasterHandler()
+	require.NoError(t, client.RegisterResourceOpener(scheme, openerFunc(
+		func(context.Context, workspaceapi.URI) (browserapi.Handler, error) {
+			return ext, nil
+		})))
+	mu.Lock()
+	opener, ok := c.ResourceOpener(scheme)
+	mu.Unlock()
+	require.True(t, ok)
+	h, err := opener.OpenResource(context.Background(), uri)
+	require.NoError(t, err)
+	defer h.Close()
+
+	sized := func(ctx context.Context) context.Context {
+		return term.ContextWithCellPixelSize(ctx, 8.5, 17.25)
+	}
+	h.Resize(4, 2)
+	h.Draw(&handlerrpctest.ImageRecorder{Ctx: sized(context.Background())})
+	var frame context.Context
+	for frame == nil {
+		select {
+		case ev := <-published:
+			if ev.Type == term.EventInterrupt && ev.Raw != nil {
+				frame = term.ContextWithPayload(context.Background(), ev.Raw)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the extension's frame did not arrive")
+		}
+	}
+	w := &handlerrpctest.ImageRecorder{Ctx: sized(frame)}
+	h.Draw(w)
+	require.Len(t, w.Images, 1)
+	assert.Equal(t, ext.Raster().Pix, w.Images[0].Pix)
+	assert.Equal(t, []bool{true}, ext.Shown())
+	assert.Equal(t, []handlerrpctest.CellPixelSize{{Width: 8.5, Height: 17.25}},
+		ext.CellPixelSizes(), "the extension must draw with the frame's cell size")
 }
