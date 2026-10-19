@@ -30,15 +30,18 @@ import (
 
 // ToolResult is the result of executing a tool.
 type ToolResult struct {
-	Content           string
-	MultiContent      []llmapi.ContentPart // Image/multi-modal content for user-message injection.
-	IsError           bool
-	Compact           bool // Signals that the agent should compact the conversation.
-	ClearContext      bool // Signals that the agent should clear the conversation context.
-	ApprovedPlan      *dialoguemanager.ApprovedPlan
-	DropToolResultIDs []string         // Tool call IDs whose results should be truncated in history.
-	TouchedFiles      []string         // Files that were created or modified (not deleted) by this tool.
-	ReadObservation   *ReadObservation // Optional successful text-read coverage; not persisted.
+	Content      string
+	MultiContent []llmapi.ContentPart // Image/multi-modal content for user-message injection.
+	IsError      bool
+	Compact      bool // Signals that the agent should compact the conversation.
+	// CompactInstructions is optional guidance for the compaction summary.
+	// It is only read when Compact is set.
+	CompactInstructions string
+	ClearContext        bool // Signals that the agent should clear the conversation context.
+	ApprovedPlan        *dialoguemanager.ApprovedPlan
+	DropToolResultIDs   []string         // Tool call IDs whose results should be truncated in history.
+	TouchedFiles        []string         // Files that were created or modified (not deleted) by this tool.
+	ReadObservation     *ReadObservation // Optional successful text-read coverage; not persisted.
 }
 
 // ReadObservation identifies the full file version and the zero-based,

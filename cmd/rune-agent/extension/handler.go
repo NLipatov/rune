@@ -265,7 +265,6 @@ func registerOpenAITools(registry *agent.Registry, fs workspaceapi.FileSystem, c
 		)
 		registry.RegisterReplacement(provider, "bash",
 			agentools.NewExecCommand(sessions, cwd, cfg))
-		registry.RegisterExclusions(provider, "compact")
 	}
 }
 

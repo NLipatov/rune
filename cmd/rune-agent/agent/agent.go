@@ -1243,7 +1243,8 @@ func (a *Agent) run(
 							// would cause an API error during summarization.
 							compactD := dialogue
 							compactD.Messages = messages[:len(messages)-1]
-							compactedDialogue, compactErr := a.compact(ctx, ch, compactD)
+							compactedDialogue, compactErr := a.compact(ctx, ch, compactD,
+								WithCompactInstructions(result.CompactInstructions))
 							if compactErr != nil {
 								result = ToolResult{
 									Content: fmt.Sprintf("Compaction failed: %v. Continue without compacting.", compactErr),
@@ -1764,16 +1765,18 @@ func SummarizeMaxOutputTokens(sessionValue int, model llmapi.ModelEntry) int {
 func (a *Agent) compact(
 	ctx context.Context, ch chan<- Event,
 	d dialoguemanager.Dialogue,
+	opts ...CompactOption,
 ) (dialoguemanager.Dialogue, error) {
 	summarizeSvc := a.svc
 	if a.config.CompactSvc != nil {
 		summarizeSvc = a.config.CompactSvc
 	}
 
-	compactedMsgs, archivedID, err := CompactDialogue(
-		ctx, summarizeSvc, a.config.Model, a.store, d,
+	opts = append([]CompactOption{
 		WithMaxOutputTokens(SummarizeMaxOutputTokens(a.MaxOutputTokens(), a.config.Model)),
-	)
+	}, opts...)
+	compactedMsgs, archivedID, err := CompactDialogue(
+		ctx, summarizeSvc, a.config.Model, a.store, d, opts...)
 	if err != nil {
 		emit(ctx, ch, Event{Type: EventError, Error: fmt.Errorf("compact: %v", err)})
 		return dialoguemanager.Dialogue{}, err
@@ -1988,18 +1991,25 @@ func cleanSummary(raw string) string {
 // a structured summary. It returns the cleaned summary text. When
 // maxOutputTokens is greater than zero it is set on the request so the
 // provider's smaller default cap does not truncate long summaries.
+// Non-empty instructions are appended to SummarizePrompt as additional
+// guidance; they do not replace it.
 func Summarize(
 	ctx context.Context,
 	svc llmapi.Service,
 	model llmapi.ModelEntry,
 	messages []llmapi.Message,
 	maxOutputTokens int,
+	instructions string,
 ) (string, error) {
 	messages = normalizeMessages(slices.Clone(messages))
 
+	promptText := SummarizePrompt
+	if instructions != "" {
+		promptText += "\n\nAdditional instructions for this summary:\n" + instructions
+	}
 	prompt := llmapi.Message{
 		Role:    llmapi.RoleUser,
-		Content: SummarizePrompt,
+		Content: promptText,
 	}
 	summaryReq := llmapi.Request{
 		Messages: append(messages, prompt),
@@ -2089,7 +2099,7 @@ func CompactDialogue(
 		return nil, "", errors.New(reason)
 	}
 
-	summaryText, err := Summarize(ctx, svc, model, d.Messages, copts.maxOutputTokens)
+	summaryText, err := Summarize(ctx, svc, model, d.Messages, copts.maxOutputTokens, copts.instructions)
 	if err != nil {
 		return nil, "", err
 	}
@@ -2161,6 +2171,7 @@ type CompactOption func(*compactOptions)
 type compactOptions struct {
 	hooks           *hooks.Runner
 	maxOutputTokens int
+	instructions    string
 }
 
 // WithCompactHooks fires the PreCompact hook (manual trigger) before
@@ -2175,6 +2186,12 @@ func WithCompactHooks(r *hooks.Runner) CompactOption {
 // truncated mid-sentence by the provider's smaller default cap.
 func WithMaxOutputTokens(n int) CompactOption {
 	return func(o *compactOptions) { o.maxOutputTokens = n }
+}
+
+// WithCompactInstructions adds guidance for the summarize request on top
+// of SummarizePrompt. An empty string leaves the prompt unchanged.
+func WithCompactInstructions(instructions string) CompactOption {
+	return func(o *compactOptions) { o.instructions = instructions }
 }
 
 // toolInputJSON returns the tool's raw arguments string as a

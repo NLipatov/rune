@@ -2198,6 +2198,52 @@ func TestAgentCompact(t *testing.T) {
 		assert.True(t, hasEventType(events, EventDone))
 	})
 
+	t.Run("compact forwards tool instructions to the summarizer", func(t *testing.T) {
+		tests := []struct {
+			name         string
+			instructions string
+			wantPrompt   string
+		}{
+			{name: "without instructions", wantPrompt: SummarizePrompt},
+			{
+				name:         "with instructions",
+				instructions: "Keep the failing test output verbatim.",
+				wantPrompt: SummarizePrompt + "\n\nAdditional instructions for this summary:\n" +
+					"Keep the failing test output verbatim.",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				svc := &mockService{
+					responses: []mockResponse{
+						toolCallResponse("compact", "{}", "c1"),
+						stopResponse("Summary of work so far"),
+						stopResponse("Continuing from summary"),
+					},
+				}
+				tool := &mockTool{
+					name: "compact",
+					result: ToolResult{
+						Content:             "Compacting conversation...",
+						Compact:             true,
+						CompactInstructions: tt.instructions,
+					},
+				}
+				ag := NewAgent(svc, NewRegistry(tool), noSkills(), newMockStore(), NoMemory(),
+					Config{SystemPrompt: "test system prompt"})
+
+				collectEvents(t, ag.Run(context.Background(), "d", "do stuff"))
+
+				require.Equal(t, 3, svc.getCallCount())
+				summarizeMsgs := svc.requests[1].Messages
+				require.NotEmpty(t, summarizeMsgs)
+				last := summarizeMsgs[len(summarizeMsgs)-1]
+				assert.Equal(t, llmapi.RoleUser, last.Role)
+				assert.Equal(t, tt.wantPrompt, last.Content)
+			})
+		}
+	})
+
 	t.Run("compact failure LLM error falls through", func(t *testing.T) {
 		svc := &mockService{
 			responses: []mockResponse{
@@ -4922,7 +4968,7 @@ func TestSummarizeEmptySummaryReturnsError(t *testing.T) {
 				{Role: llmapi.RoleUser, Content: "hello"},
 				{Role: llmapi.RoleAssistant, Content: "hi there"},
 			}
-			_, err := Summarize(context.Background(), svc, llmapi.ModelEntry{}, msgs, 0)
+			_, err := Summarize(context.Background(), svc, llmapi.ModelEntry{}, msgs, 0, "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "empty summary")
 		})
@@ -4973,7 +5019,7 @@ func TestSummarizeTruncatedSummaryError(t *testing.T) {
 				{Role: llmapi.RoleUser, Content: "hello"},
 				{Role: llmapi.RoleAssistant, Content: "hi there"},
 			}
-			_, err := Summarize(context.Background(), svc, tt.model, msgs, tt.budget)
+			_, err := Summarize(context.Background(), svc, tt.model, msgs, tt.budget, "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.want)
 			if tt.wantRaise {

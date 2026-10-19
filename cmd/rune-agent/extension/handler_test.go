@@ -84,6 +84,25 @@ func TestProviderContentSearch(t *testing.T) {
 	}
 }
 
+func TestRegisterOpenAIToolsKeepsCompact(t *testing.T) {
+	dir := t.TempDir()
+	fs, cwd := testLocalFS{root: dir}, dirURI(dir)
+	tools, tracker := agentools.DefaultTools(fs, testLocalExec{}, cwd, nil, agentools.Config{}, configedit.NopConfig())
+	registry := agent.NewRegistry(tools...)
+	registerOpenAITools(registry, fs, cwd, tracker, nil, configedit.NopConfig())
+	for _, provider := range []string{"openai", "codex", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			_, ok := registry.Get("compact", provider)
+			assert.True(t, ok, "compact must be callable")
+			var advertised []string
+			for _, tool := range registry.Tools(provider) {
+				advertised = append(advertised, tool.Function.Name)
+			}
+			assert.Contains(t, advertised, "compact")
+		})
+	}
+}
+
 func TestCompleteChatAddSymbolUsesReferencedSymbols(t *testing.T) {
 	h := &aiEditorHandler{parser: &symbolsParser{
 		symbols: []string{"pkg.A", "pkg.B", "pkg.A"},
