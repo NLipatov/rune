@@ -218,7 +218,7 @@ func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error
 	ctx = processctx.ContextWithExtensionID(ctx, id)
 	readiness := newExtensionReadiness()
 	logPath := extensionLogPath(m.workspace, id)
-	cmd, err := m.makeCommand(ctx, id, cmdAndArgs, config, readiness, logPath)
+	cmd, releaseStdin, err := m.makeCommand(ctx, id, cmdAndArgs, config, readiness, logPath)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("make command: %w", err)
@@ -226,6 +226,7 @@ func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error
 
 	pid, err := m.extExecutor.StartCommand(ctx, cmd)
 	if err != nil {
+		releaseStdin()
 		cancel()
 		return fmt.Errorf("start command: %w", err)
 	}
@@ -292,7 +293,7 @@ func (m *workspaceRunner) log(level log.Level, msg string, args ...any) {
 func (m *workspaceRunner) makeCommand(
 	ctx context.Context, extensionID, path string, config config.Config,
 	readiness *extensionReadiness, logPath string,
-) (ret workspaceapi.Cmd, err error) {
+) (ret workspaceapi.Cmd, releaseStdin func(), err error) {
 	waitCh := make(chan error)
 	// allow args to be passed to extensions
 	argv := strings.Split(path, " ")
@@ -312,7 +313,7 @@ func (m *workspaceRunner) makeCommand(
 	}
 	argv, err = m.sourceEntrypointArgv(extensionID, argv)
 	if err != nil {
-		return workspaceapi.Cmd{}, err
+		return workspaceapi.Cmd{}, nil, err
 	}
 	ret = workspaceapi.Cmd{
 		Path:    argv[0],
@@ -334,18 +335,18 @@ func (m *workspaceRunner) makeCommand(
 		if werr != nil {
 			err = fmt.Errorf("could not expand workspace "+
 				"path: %q: %w", m.workspace.Path(), werr)
-			return workspaceapi.Cmd{}, err
+			return workspaceapi.Cmd{}, nil, err
 		}
 	}
 
 	ret.Env, err = m.commandEnvs(ctx, ret.Path, ret.Args, m.dataDir)
 	if err != nil {
-		return workspaceapi.Cmd{}, err
+		return workspaceapi.Cmd{}, nil, err
 	}
-	stdin, stdout, stderr, collector, err := m.makeProtocolExchange(
+	stdin, releaseStdin, stdout, stderr, collector, err := m.makeProtocolExchange(
 		extensionID, config, readiness, logPath, verifiedPublisher)
 	if err != nil {
-		return workspaceapi.Cmd{}, err
+		return workspaceapi.Cmd{}, nil, err
 	}
 	ret.Stdin, ret.Stdout, ret.Stderr = stdin, stdout, stderr
 	// The watcher goroutine owns the collector's lifecycle: it must
@@ -361,14 +362,16 @@ func (m *workspaceRunner) makeCommand(
 		select {
 		case exitErr := <-waitCh:
 			_ = collector.Close()
+			releaseStdin()
 			m.setExtensionExit(extensionID, exitErr)
 			if exitErr != nil {
 				m.log(log.ErrorLevel, "extension %s exit: %v", extensionID, exitErr)
 			}
 		case <-m.ctx.Done():
+			releaseStdin()
 		}
 	})
-	return
+	return ret, releaseStdin, nil
 }
 
 func (m *workspaceRunner) resolveEntrypoint(path string) (string, error) {
@@ -587,10 +590,12 @@ func (m *workspaceRunner) commandEnvs(
 	return env, nil
 }
 
+// makeProtocolExchange returns the extension's stdin, and a release that
+// must be called once the extension has exited or failed to start.
 func (m *workspaceRunner) makeProtocolExchange(
 	extensionID string, cfg config.Config, readiness *extensionReadiness, logPath, verifiedPublisher string,
 ) (
-	io.Reader, io.Writer, io.Writer, *logCollector, error,
+	io.Reader, func(), io.Writer, io.Writer, *logCollector, error,
 ) {
 	protocol := newProtocol(m.ctx, m.grantor, extensionID, m.socket,
 		m.dataDir, m.installDir, m.tlsCert, m.cfg.insecureAuth, cfg, m.keys,
@@ -598,8 +603,25 @@ func (m *workspaceRunner) makeProtocolExchange(
 	logFile, err := os.OpenFile(logPath,
 		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, nil, fmt.Errorf(
 			"open extension %q log file %q: %w", extensionID, logPath, err)
+	}
+	// exec.Cmd.Wait only returns once a stdin that is not a file is read to
+	// its end, and the protocol only ends once the extension sends its
+	// metadata: an extension that exits before it would never be seen to.
+	stdin, handshake, err := os.Pipe()
+	if err != nil {
+		_ = logFile.Close()
+		return nil, nil, nil, nil, nil, fmt.Errorf(
+			"extension %q stdin: %w", extensionID, err)
+	}
+	go debug.CapturePanicReport(func() {
+		_, _ = io.Copy(handshake, protocol)
+		_ = handshake.Close()
+	})
+	release := func() {
+		_ = protocol.Close()
+		_ = stdin.Close()
 	}
 	collector := newCollector(extensionID, m.workspace, logFile)
 	stdout := errIntercept{
@@ -607,7 +629,7 @@ func (m *workspaceRunner) makeProtocolExchange(
 		extensionID: extensionID,
 		protocol:    protocol,
 	}
-	return protocol, stdout, collector, collector, nil
+	return stdin, release, stdout, collector, collector, nil
 }
 
 func (m *workspaceRunner) setExtensionExit(extensionID string, err error) {
