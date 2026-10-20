@@ -20,9 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
+	"math/rand/v2"
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,6 +41,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"google.golang.org/grpc"
+	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/extension"
 	"unstable.build/rune/internal/ide/ideauthorizer"
 	"unstable.build/rune/internal/workspace/processctx"
@@ -146,6 +151,121 @@ func (s startErrorExecutor) Signal(workspaceapi.Pid, syscall.Signal) error {
 }
 
 func (s startErrorExecutor) Close() error {
+	return nil
+}
+
+// exitingExecutor starts processes that exit with err before StartCommand
+// returns, which it only does once wait does.
+type exitingExecutor struct {
+	recordingExecutor
+	err  error
+	wait func()
+}
+
+func (e *exitingExecutor) StartCommand(
+	ctx context.Context, cmd workspaceapi.Cmd,
+) (workspaceapi.Pid, error) {
+	pid, err := e.recordingExecutor.StartCommand(ctx, cmd)
+	if err != nil {
+		return pid, err
+	}
+	cmd.Watcher.WatchProcess() <- e.err
+	e.wait()
+	return pid, nil
+}
+
+func extensionMetadata(t *testing.T, id string) []byte {
+	t.Helper()
+	meta, err := json.Marshal(extensionapi.Metadata{
+		DeveloperID: "dev-id", DeveloperEmail: "dev@example.com", DeveloperKey: "dev-key",
+		ExtensionID: id, ExtensionName: "Ext",
+		Permissions: extensionapi.AllPermissions(),
+	})
+	require.NoError(t, err)
+	return meta
+}
+
+// stressExecutor runs fake extension processes that, like real ones, are
+// killed when their context is cancelled and take a while to die, and that
+// at random exit at once, fail their handshake, or complete it and then
+// crash or live until killed. A process names its pid in what it writes to
+// stderr and exits with.
+type stressExecutor struct {
+	// meta is the valid metadata of each extension id.
+	meta  map[string][]byte
+	exits sync.WaitGroup
+
+	mu   sync.Mutex
+	pids workspaceapi.Pid
+	// alive holds the extension id of each live process.
+	alive map[workspaceapi.Pid]string
+}
+
+var _ schemeapi.Executor = (*stressExecutor)(nil)
+
+func newStressExecutor(meta map[string][]byte) *stressExecutor {
+	return &stressExecutor{meta: meta, alive: make(map[workspaceapi.Pid]string)}
+}
+
+func (e *stressExecutor) StartCommand(
+	ctx context.Context, cmd workspaceapi.Cmd,
+) (workspaceapi.Pid, error) {
+	id, _ := processctx.ExtensionIDFromContext(ctx)
+	e.mu.Lock()
+	e.pids++
+	pid := e.pids
+	e.alive[pid] = id
+	e.mu.Unlock()
+
+	e.exits.Add(1)
+	go debug.CapturePanicReport(func() {
+		defer e.exits.Done()
+		err := fmt.Errorf("process %d killed", pid)
+		var crash <-chan time.Time
+		switch rand.IntN(4) {
+		case 0:
+			err = fmt.Errorf("process %d failed", pid)
+		case 1:
+			_, _ = cmd.Stdout.Write([]byte(`{"developer_id":"dev-id"}`))
+			<-ctx.Done()
+		case 2:
+			crash = time.After(rand.N(2 * time.Millisecond))
+			fallthrough
+		default:
+			_, _ = cmd.Stdout.Write(e.meta[id])
+			select {
+			case <-ctx.Done():
+			case <-crash:
+				err = fmt.Errorf("process %d crashed", pid)
+			}
+		}
+		time.Sleep(rand.N(time.Millisecond))
+		_, _ = fmt.Fprintf(cmd.Stderr, "process %d exiting\n", pid)
+		e.mu.Lock()
+		delete(e.alive, pid)
+		e.mu.Unlock()
+		cmd.Watcher.WatchProcess() <- err
+	})
+	return pid, nil
+}
+
+func (e *stressExecutor) alivePids() map[workspaceapi.Pid]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return maps.Clone(e.alive)
+}
+
+func (e *stressExecutor) started() workspaceapi.Pid {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.pids
+}
+
+func (e *stressExecutor) Signal(workspaceapi.Pid, syscall.Signal) error {
+	return nil
+}
+
+func (e *stressExecutor) Close() error {
 	return nil
 }
 
@@ -820,7 +940,7 @@ func TestWorkspaceRunnerStopExtensionRecordsReason(t *testing.T) {
 	require.NoError(t, runner.Run("test-extension", "/bin/ext", config.NopConfig()))
 
 	stopErr := errors.New("protocol write failed")
-	runner.stopExtension("test-extension", stopErr)
+	runner.stopExtension(runner.states["test-extension"], stopErr)
 
 	states := runner.listExtensions()
 	require.Len(t, states, 1)
@@ -1189,12 +1309,7 @@ func TestWorkspaceRunnerStartExtensionReturnsStartCommandError(t *testing.T) {
 func TestWorkspaceRunnerLogsLifecycle(t *testing.T) {
 	t.Parallel()
 
-	meta, err := json.Marshal(extensionapi.Metadata{
-		DeveloperID: "dev-id", DeveloperEmail: "dev@example.com", DeveloperKey: "dev-key",
-		ExtensionID: "ext", ExtensionName: "Ext",
-		Permissions: extensionapi.AllPermissions(),
-	})
-	require.NoError(t, err)
+	meta := extensionMetadata(t, "ext")
 	started := []string{
 		`level=info msg="starting /bin/ext --flag in `,
 		`level=info msg="started with pid 1" source=rune`,
@@ -1308,6 +1423,183 @@ func TestWorkspaceRunnerLogsLifecycle(t *testing.T) {
 			requireExtensionLog(t, runner, tt.want)
 		})
 	}
+}
+
+func TestWorkspaceRunnerSeesAnExitBeforeStartReturns(t *testing.T) {
+	t.Parallel()
+
+	keys, err := auth.GenerateKeys()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	uri, err := workspaceapi.ParseURI("file://" + dir)
+	require.NoError(t, err)
+	exitErr := errors.New("exit status 1")
+	exec := &exitingExecutor{err: exitErr}
+	runner := newWorkspaceRunner(exec, exec, extension.GrantAll(), nopTrustVerifier{}, uri,
+		"/tmp/ext.sock", dir, dir, []byte("cert"), keys)
+	t.Cleanup(func() { require.NoError(t, runner.Close()) })
+	exec.wait = func() {
+		assert.Eventually(t, func() bool {
+			state, ok := runner.extension("ext")
+			return ok && !state.Running
+		}, time.Second, time.Millisecond, "the exit must be seen before StartCommand returns")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.ErrorIs(t, runner.startExtension(ctx, "ext", "/bin/ext", config.NopConfig()), exitErr)
+	state, ok := runner.extension("ext")
+	require.True(t, ok)
+	assert.False(t, state.Running)
+	assert.Zero(t, state.Pid)
+	assert.ErrorIs(t, state.LastErr, exitErr)
+	assert.Equal(t, 1, state.StartCount)
+}
+
+func TestWorkspaceRunnerIgnoresTheExitOfAPreviousRun(t *testing.T) {
+	t.Parallel()
+
+	keys, err := auth.GenerateKeys()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	uri, err := workspaceapi.ParseURI("file://" + dir)
+	require.NoError(t, err)
+	exec := &protocolDrivingExecutor{extensionID: "ext"}
+	runner := newWorkspaceRunner(exec, exec, extension.GrantAll(), nopTrustVerifier{}, uri,
+		"/tmp/ext.sock", dir, dir, []byte("cert"), keys)
+	t.Cleanup(func() { require.NoError(t, runner.Close()) })
+	require.NoError(t, runner.Run("ext", "/bin/ext", config.NopConfig()))
+	previous := exec.waitCmd(t)
+
+	require.NoError(t, runner.restartExtension(context.Background(), "ext"))
+	previous.Watcher.WatchProcess() <- errors.New("signal: killed")
+
+	assert.Never(t, func() bool {
+		state, ok := runner.extension("ext")
+		return !ok || !state.Running || state.Pid != 2 || state.LastErr != nil
+	}, 100*time.Millisecond, time.Millisecond, "the previous run's exit must not end the next")
+	assert.NotContains(t, readExtensionLog(t, runner), "signal: killed",
+		"the previous run's exit must not be logged as the next one's")
+}
+
+func TestWorkspaceRunnerLifecycleUnderStress(t *testing.T) {
+	t.Parallel()
+
+	const workers, ops = 16, 250
+	ids := []string{"ext-0", "ext-1", "ext-2", "ext-3"}
+	meta := make(map[string][]byte, len(ids))
+	for _, id := range ids {
+		meta[id] = extensionMetadata(t, id)
+	}
+	keys, err := auth.GenerateKeys()
+	require.NoError(t, err)
+	dir := t.TempDir()
+	uri, err := workspaceapi.ParseURI("file://" + dir)
+	require.NoError(t, err)
+	exec := newStressExecutor(meta)
+	runner := newWorkspaceRunner(exec, exec, extension.GrantAll(), nopTrustVerifier{}, uri,
+		"/tmp/ext.sock", dir, dir, []byte("cert"), keys)
+	t.Cleanup(func() { require.NoError(t, runner.Close()) })
+
+	var mu sync.Mutex
+	var violations []string
+	violate := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		violations = append(violations, fmt.Sprintf(format, args...))
+	}
+
+	done := make(chan struct{})
+	checked := make(chan struct{})
+	go debug.CapturePanicReport(func() {
+		defer close(checked)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			for _, state := range runner.listExtensions() {
+				if !state.Running && state.Pid != 0 {
+					violate("%s is not running but has pid %d", state.ID, state.Pid)
+				}
+				if state.Running && state.LastErr != nil {
+					violate("%s is running but errored: %v", state.ID, state.LastErr)
+				}
+			}
+		}
+	})
+
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go debug.CapturePanicReport(func() {
+			defer wg.Done()
+			for range ops {
+				id := ids[rand.IntN(len(ids))]
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				var err error
+				switch rand.IntN(4) {
+				case 0:
+					err = runner.startExtension(ctx, id, "/bin/ext", config.NopConfig())
+				case 1:
+					err = runner.restartExtension(ctx, id)
+				case 2:
+					err = runner.stopExtensionByID(id)
+				default:
+					err = runner.Run(id, "/bin/ext", config.NopConfig())
+				}
+				cancel()
+				if errors.Is(err, context.DeadlineExceeded) {
+					violate("%s was never ready nor ended", id)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(done)
+	<-checked
+	require.Greater(t, exec.started(), workspaceapi.Pid(workers*ops/8))
+
+	// Once every exit has been seen, the extensions that are running are
+	// exactly those whose process is alive.
+	running := func() map[workspaceapi.Pid]string {
+		ret := make(map[workspaceapi.Pid]string)
+		for _, state := range runner.listExtensions() {
+			if state.Running {
+				ret[state.Pid] = state.ID
+			}
+		}
+		return ret
+	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, exec.alivePids(), running())
+	}, 5*time.Second, time.Millisecond)
+
+	for _, id := range ids {
+		_ = runner.stopExtensionByID(id)
+	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Empty(c, exec.alivePids(), "stopping an extension kills its process")
+		assert.Empty(c, running())
+	}, 5*time.Second, time.Millisecond)
+	exec.exits.Wait()
+
+	pid := regexp.MustCompile(`(?:pid|process) (\d+)`)
+	for _, id := range ids {
+		state, ok := runner.extension(id)
+		require.True(t, ok)
+		logs, err := os.ReadFile(state.LogPath)
+		require.NoError(t, err)
+		pids := make(map[string]bool)
+		for _, m := range pid.FindAllStringSubmatch(string(logs), -1) {
+			pids[m[1]] = true
+		}
+		assert.Lenf(t, pids, 1, "the log of %s holds only its last run:\n%s", id, logs)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Empty(t, violations)
 }
 
 func readExtensionLog(t *testing.T, runner *workspaceRunner) string {

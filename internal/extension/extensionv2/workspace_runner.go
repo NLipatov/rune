@@ -101,19 +101,24 @@ type workspaceRunner struct {
 	states     map[string]*extensionRunState
 }
 
+// extensionRunState is the state of one run of an extension. Each run has
+// a state of its own, so that what ends a run, such as its process exiting
+// late, is never taken for another's.
 type extensionRunState struct {
 	id         string
 	cmdAndArgs string
 	config     config.Config
 	cancel     context.CancelFunc
+	readiness  *extensionReadiness
+	logPath    string
+	collector  *logCollector
+
+	// Guarded by workspaceRunner.mu.
 	pid        workspaceapi.Pid
 	started    time.Time
 	running    bool
 	lastErr    error
 	startCount int
-	readiness  *extensionReadiness
-	logPath    string
-	collector  *logCollector
 }
 
 type extensionRunStateSnapshot struct {
@@ -205,70 +210,90 @@ func (m *workspaceRunner) Signal(pid workspaceapi.Pid, sig syscall.Signal) error
 // with the given config. An extension that fails to start is still
 // registered, errored, so its log can be read.
 func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error {
-	if id == "" || cmdAndArgs == "" {
-		return errors.New("extension id and cmd must not be empty")
-	}
-
-	m.mu.Lock()
-	if state := m.states[id]; state != nil && state.running {
-		m.mu.Unlock()
-		return fmt.Errorf("extension %q: %w", id, ErrExtensionAlreadyRunning)
-	}
-	m.mu.Unlock()
-
-	logPath := extensionLogPath(m.workspace, id)
-	logFile, err := os.OpenFile(logPath,
-		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("open extension %q log file %q: %w", id, logPath, err)
-	}
-	collector := newCollector(id, m.workspace, logFile)
-
-	ctx, cancel := context.WithCancel(m.ctx)
-	ctx = processctx.ContextWithExtensionID(ctx, id)
-	readiness := newExtensionReadiness()
-	pid, err := m.start(ctx, id, cmdAndArgs, config, readiness, collector)
-	if err != nil {
-		cancel()
-		collector.lifecycle(log.ErrorLevel, "failed to start: %v", err)
-		_ = collector.Close()
-		readiness.Set(err)
-	} else {
-		m.log(log.DebugLevel, "running extension with name %q at path %q, pid: %d",
-			id, cmdAndArgs, pid)
-	}
-
-	m.mu.Lock()
-	state := m.states[id]
-	if state == nil {
-		state = &extensionRunState{id: id}
-		m.states[id] = state
-	}
-	state.id = id
-	state.cmdAndArgs = cmdAndArgs
-	state.config = config
-	state.cancel = cancel
-	state.pid = pid
-	state.running = err == nil
-	state.lastErr = err
-	state.readiness = readiness
-	state.logPath = logPath
-	state.collector = collector
-	if err == nil {
-		state.started = time.Now()
-		state.startCount++
-	}
-	m.registered.Broadcast()
-	m.mu.Unlock()
-
+	_, err := m.run(id, cmdAndArgs, config)
 	return err
 }
 
+func (m *workspaceRunner) run(
+	id, cmdAndArgs string, cfg config.Config,
+) (*extensionRunState, error) {
+	if id == "" || cmdAndArgs == "" {
+		return nil, errors.New("extension id and cmd must not be empty")
+	}
+	ctx, cancel := context.WithCancel(m.ctx)
+	ctx = processctx.ContextWithExtensionID(ctx, id)
+	state, err := m.register(id, cmdAndArgs, cfg, cancel)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	pid, err := m.start(ctx, state)
+	if err != nil {
+		state.collector.lifecycle(log.ErrorLevel, "failed to start: %v", err)
+		_ = state.collector.Close()
+		m.setExtensionExit(state, err)
+		return state, err
+	}
+	m.log(log.DebugLevel, "running extension with name %q at path %q, pid: %d",
+		id, cmdAndArgs, pid)
+	m.mu.Lock()
+	state.started = time.Now()
+	state.startCount++
+	// The process may have exited already.
+	if state.running {
+		state.pid = pid
+	}
+	m.mu.Unlock()
+	return state, nil
+}
+
+// register makes a new run the extension's current one, before it starts so
+// that its exit cannot be missed.
+func (m *workspaceRunner) register(
+	id, cmdAndArgs string, cfg config.Config, cancel context.CancelFunc,
+) (*extensionRunState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	previous := m.states[id]
+	if previous != nil && previous.running {
+		return nil, fmt.Errorf("extension %q: %w", id, ErrExtensionAlreadyRunning)
+	}
+	logPath := extensionLogPath(m.workspace, id)
+	// The previous run may still be writing to its log as it exits:
+	// removing the file rather than truncating it leaves that run writing
+	// to a file of its own.
+	if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("remove extension %q log file %q: %w", id, logPath, err)
+	}
+	logFile, err := os.OpenFile(logPath,
+		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open extension %q log file %q: %w", id, logPath, err)
+	}
+	state := &extensionRunState{
+		id:         id,
+		cmdAndArgs: cmdAndArgs,
+		config:     cfg,
+		cancel:     cancel,
+		readiness:  newExtensionReadiness(),
+		logPath:    logPath,
+		collector:  newCollector(id, m.workspace, logFile),
+		running:    true,
+	}
+	if previous != nil {
+		state.startCount = previous.startCount
+	}
+	m.states[id] = state
+	m.registered.Broadcast()
+	return state, nil
+}
+
 func (m *workspaceRunner) start(
-	ctx context.Context, id, cmdAndArgs string, cfg config.Config,
-	readiness *extensionReadiness, collector *logCollector,
+	ctx context.Context, state *extensionRunState,
 ) (workspaceapi.Pid, error) {
-	cmd, releaseStdin, err := m.makeCommand(ctx, id, cmdAndArgs, cfg, readiness, collector)
+	collector := state.collector
+	cmd, releaseStdin, err := m.makeCommand(ctx, state)
 	if err != nil {
 		return 0, fmt.Errorf("make command: %w", err)
 	}
@@ -317,12 +342,12 @@ func (m *workspaceRunner) log(level log.Level, msg string, args ...any) {
 }
 
 func (m *workspaceRunner) makeCommand(
-	ctx context.Context, extensionID, path string, config config.Config,
-	readiness *extensionReadiness, collector *logCollector,
+	ctx context.Context, state *extensionRunState,
 ) (ret workspaceapi.Cmd, releaseStdin func(), err error) {
+	extensionID, collector := state.id, state.collector
 	waitCh := make(chan error)
 	// allow args to be passed to extensions
-	argv := strings.Split(path, " ")
+	argv := strings.Split(state.cmdAndArgs, " ")
 	// The extension runs against m.dataDir, so that is where the
 	// $RUNE_DATADIR in its configured entrypoint points, whatever the
 	// process environment says.
@@ -369,8 +394,7 @@ func (m *workspaceRunner) makeCommand(
 	if err != nil {
 		return workspaceapi.Cmd{}, nil, err
 	}
-	stdin, releaseStdin, stdout, err := m.makeProtocolExchange(
-		extensionID, config, readiness, collector, verifiedPublisher)
+	stdin, releaseStdin, stdout, err := m.makeProtocolExchange(state, verifiedPublisher)
 	if err != nil {
 		return workspaceapi.Cmd{}, nil, err
 	}
@@ -394,7 +418,7 @@ func (m *workspaceRunner) makeCommand(
 			}
 			_ = collector.Close()
 			releaseStdin()
-			m.setExtensionExit(extensionID, exitErr)
+			m.setExtensionExit(state, exitErr)
 			if exitErr != nil {
 				m.log(log.ErrorLevel, "extension %s exit: %v", extensionID, exitErr)
 			}
@@ -625,14 +649,12 @@ func (m *workspaceRunner) commandEnvs(
 // be called once the extension has exited or failed to start, and its
 // stdout.
 func (m *workspaceRunner) makeProtocolExchange(
-	extensionID string, cfg config.Config, readiness *extensionReadiness,
-	collector *logCollector, verifiedPublisher string,
-) (
-	io.Reader, func(), io.Writer, error,
-) {
+	state *extensionRunState, verifiedPublisher string,
+) (io.Reader, func(), io.Writer, error) {
+	extensionID, collector := state.id, state.collector
 	protocol := newProtocol(m.ctx, m.grantor, extensionID, m.socket,
-		m.dataDir, m.installDir, m.tlsCert, m.cfg.insecureAuth, cfg, m.keys,
-		readiness, verifiedPublisher)
+		m.dataDir, m.installDir, m.tlsCert, m.cfg.insecureAuth, state.config, m.keys,
+		state.readiness, verifiedPublisher)
 	// exec.Cmd.Wait only returns once a stdin that is not a file is read to
 	// its end, and the protocol only ends once the extension sends its
 	// metadata: an extension that exits before it would never be seen to.
@@ -656,27 +678,34 @@ func (m *workspaceRunner) makeProtocolExchange(
 		_ = stdin.Close()
 	}
 	stdout := errIntercept{
-		m:           m,
-		extensionID: extensionID,
-		protocol:    protocol,
+		m:        m,
+		state:    state,
+		protocol: protocol,
 	}
 	return stdin, release, stdout, nil
 }
 
-func (m *workspaceRunner) setExtensionExit(extensionID string, err error) {
+// setExtensionExit records that the run's process exited, or never started,
+// with err.
+func (m *workspaceRunner) setExtensionExit(state *extensionRunState, err error) {
+	m.end(state, err)
+	state.readiness.Set(err)
+	state.cancel()
+}
+
+// end records that the run ended with err, unless it already had: what
+// ended it first, such as a stop, explains it better than the exit that
+// follows. It reports whether the run was still running.
+func (m *workspaceRunner) end(state *extensionRunState, err error) bool {
 	m.mu.Lock()
-	state := m.states[extensionID]
-	if state == nil {
-		m.mu.Unlock()
-		return
+	defer m.mu.Unlock()
+	if !state.running {
+		return false
 	}
 	state.running = false
 	state.pid = 0
-	state.cancel = nil
 	state.lastErr = err
-	readiness := state.readiness
-	m.mu.Unlock()
-	readiness.Set(err)
+	return true
 }
 
 func (m *workspaceRunner) listExtensions() []extensionRunStateSnapshot {
@@ -725,15 +754,11 @@ func (m *workspaceRunner) extension(id string) (extensionRunStateSnapshot, bool)
 func (m *workspaceRunner) startExtension(
 	ctx context.Context, id, cmdAndArgs string, cfg config.Config,
 ) error {
-	if err := m.Run(id, cmdAndArgs, cfg); err != nil {
+	state, err := m.run(id, cmdAndArgs, cfg)
+	if err != nil {
 		return err
 	}
-	// Run just stored a fresh readiness in the state. Capture it and wait
-	// for the protocol handshake (or a stop/exit) to resolve it.
-	m.mu.Lock()
-	readiness := m.states[id].readiness
-	m.mu.Unlock()
-	return readiness.Wait(ctx)
+	return state.readiness.Wait(ctx)
 }
 
 // WaitReady blocks until the extension with this id has been registered
@@ -767,14 +792,15 @@ func (m *workspaceRunner) WaitReady(ctx context.Context, id string) error {
 func (m *workspaceRunner) stopExtensionByID(id string) error {
 	m.mu.Lock()
 	state := m.states[id]
+	running := state != nil && state.running
 	m.mu.Unlock()
 	if state == nil {
 		return fmt.Errorf("extension %q not found", id)
 	}
-	if !state.running {
+	if !running {
 		return fmt.Errorf("extension %q is not running", id)
 	}
-	m.stopExtension(id, nil)
+	m.stopExtension(state, nil)
 	return nil
 }
 
@@ -787,47 +813,31 @@ func (m *workspaceRunner) restartExtension(ctx context.Context, id string) error
 	}
 	cmdAndArgs := state.cmdAndArgs
 	cfg := state.config
-	running := state.running
 	m.mu.Unlock()
 	if cmdAndArgs == "" {
 		return fmt.Errorf("extension %q has no stored command", id)
 	}
-	if running {
-		if err := m.stopExtensionByID(id); err != nil {
-			return err
-		}
-	}
+	m.stopExtension(state, nil)
 	return m.startExtension(ctx, id, cmdAndArgs, cfg)
 }
 
-func (m *workspaceRunner) stopExtension(extensionID string, reason error) {
-	m.log(log.WarnLevel, "stopping extension %q: reason: %v", extensionID, reason)
-	m.mu.Lock()
-	state := m.states[extensionID]
-	if state == nil {
-		m.mu.Unlock()
+// stopExtension stops the run, unless it already ended.
+func (m *workspaceRunner) stopExtension(state *extensionRunState, reason error) {
+	if !m.end(state, reason) {
 		return
 	}
-	cancel := state.cancel
-	state.cancel = nil
-	state.running = false
-	state.pid = 0
-	state.lastErr = reason
-	readiness := state.readiness
-	collector := state.collector
-	m.mu.Unlock()
+	m.log(log.WarnLevel, "stopping extension %q: reason: %v", state.id, reason)
 	if reason != nil {
-		collector.lifecycle(log.WarnLevel, "stopping: %v", reason)
+		state.collector.lifecycle(log.WarnLevel, "stopping: %v", reason)
 	} else {
-		collector.lifecycle(log.InfoLevel, "stopping on request")
+		state.collector.lifecycle(log.InfoLevel, "stopping on request")
 	}
 	// Cancelling triggers the watcher goroutine spawned in
 	// makeCommand, which closes the collector after the stderr-copy
-	// goroutine completes. Doing it here would race with that writer.
-	readiness.Set(reason)
-	if cancel != nil {
-		cancel()
-	}
+	// goroutine completes. Doing it here would lose what the extension
+	// writes as it dies.
+	state.readiness.Set(reason)
+	state.cancel()
 }
 
 func makeLogLevelEnv(l log.Level) string {
@@ -846,15 +856,15 @@ func extensionLogPath(ws workspaceapi.URI, extensionID string) string {
 }
 
 type errIntercept struct {
-	m           *workspaceRunner
-	protocol    io.Writer
-	extensionID string
+	m        *workspaceRunner
+	protocol io.Writer
+	state    *extensionRunState
 }
 
 func (e errIntercept) Write(data []byte) (int, error) {
 	n, err := e.protocol.Write(data)
 	if err != nil {
-		e.m.stopExtension(e.extensionID, err)
+		e.m.stopExtension(e.state, err)
 		return n, err
 	}
 	return n, err
