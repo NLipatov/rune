@@ -22,6 +22,7 @@ package workspaceshell
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,15 +52,16 @@ var (
 // from a repl.Handler. It implements both
 // workspaceapi.Executor and ideconsole.CommandHandler.
 type Executor struct {
-	mu         sync.RWMutex
-	underlying workspaceapi.Executor
-	processes  map[workspaceapi.Pid]processInfo
-	history    map[workspaceapi.Pid]processInfo
-	stats      map[cmdKey]*cmdStats
-	extensions map[string]workspaceapi.Pid
-	stdio      *stdioStore
-	now        func() time.Time // for testing
-	stopGrace  time.Duration    // grace period for stop
+	mu           sync.RWMutex
+	underlying   workspaceapi.Executor
+	processes    map[workspaceapi.Pid]processInfo
+	history      map[workspaceapi.Pid]processInfo
+	failedStarts []processInfo
+	stats        map[cmdKey]*cmdStats
+	extensions   map[string]workspaceapi.Pid
+	stdio        *stdioStore
+	now          func() time.Time // for testing
+	stopGrace    time.Duration    // grace period for stop
 }
 
 type processInfo struct {
@@ -92,6 +94,11 @@ type cmdStats struct {
 }
 
 const defaultStopGrace = 3 * time.Second
+
+// maxFailedStarts bounds the failed-start audit log: a misconfigured
+// command retried on every trigger (a language server on each file
+// open) would otherwise grow it without limit.
+const maxFailedStarts = 64
 
 // NewExecutor returns an Executor that delegates to
 // underlying while tracking running processes.
@@ -131,6 +138,7 @@ func (e *Executor) Start(
 	pid, err := e.underlying.Start(ctx, cmd)
 	if err != nil {
 		sink.close()
+		e.recordFailedStart(cmd, err)
 		return pid, err
 	}
 
@@ -170,12 +178,7 @@ func (e *Executor) Start(
 		exitErr := <-ch
 		sink.close()
 		e.mu.Lock()
-		s := e.stats[key]
-		if s == nil {
-			s = &cmdStats{}
-			e.stats[key] = s
-		}
-		s.lastErr = exitErr
+		e.statsFor(key).lastErr = exitErr
 		if p, ok := e.processes[pid]; ok {
 			close(p.done)
 		}
@@ -195,6 +198,40 @@ func (e *Executor) Start(
 	})
 
 	return pid, nil
+}
+
+// recordFailedStart keeps a command that never started in the audit
+// log, where it is the only trace of a spawn failure, and makes it the
+// previous outcome of that command.
+func (e *Executor) recordFailedStart(cmd workspaceapi.Cmd, err error) {
+	key := makeCmdKey(cmd.Path, cmd.Args)
+	now := e.now()
+	info := processInfo{
+		path:    cmd.Path,
+		args:    append([]string{}, cmd.Args...),
+		dir:     cmd.Dir,
+		started: now,
+		ended:   now,
+		key:     key,
+		lastErr: err,
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.statsFor(key).lastErr = err
+	e.failedStarts = append(e.failedStarts, info)
+	if excess := len(e.failedStarts) - maxFailedStarts; excess > 0 {
+		e.failedStarts = slices.Delete(e.failedStarts, 0, excess)
+	}
+}
+
+// statsFor must be called with e.mu held for writing.
+func (e *Executor) statsFor(key cmdKey) *cmdStats {
+	s := e.stats[key]
+	if s == nil {
+		s = &cmdStats{}
+		e.stats[key] = s
+	}
+	return s
 }
 
 // Signal delegates to the underlying executor.
@@ -306,58 +343,74 @@ func (e *Executor) Help(
 }
 
 type psEntry struct {
+	// pid is 0 for a command that failed to start.
 	pid     workspaceapi.Pid
 	uptime  time.Duration
+	started time.Time
 	lastErr string
 	command string
 }
 
 func (e *Executor) handleStatus() iterator.Iterator[component.Responsive] {
+	return renderProcessTableMarkdown("PREV EXIT", e.statusEntries())
+}
+
+// statusEntries lists running processes. Running processes have no
+// exit error of their own, so the error column carries the previous
+// outcome of the same command, the clue to why it is running again.
+func (e *Executor) statusEntries() []psEntry {
 	now := e.now()
 	e.mu.RLock()
+	defer e.mu.RUnlock()
 	entries := make([]psEntry, 0, len(e.processes))
 	for _, info := range e.processes {
-		cmd := formatCmd(info)
-		lastErr := "—"
+		var prev error
 		if s := e.stats[info.key]; s != nil {
-			lastErr = formatLastErr(s.lastErr)
+			prev = s.lastErr
 		}
 		entries = append(entries, psEntry{
 			pid:     info.pid,
 			uptime:  now.Sub(info.started),
-			lastErr: lastErr,
-			command: cmd,
+			started: info.started,
+			lastErr: formatErrCell(prev),
+			command: formatCmd(info),
 		})
 	}
-	e.mu.RUnlock()
-	return renderProcessTableMarkdown(entries)
+	return entries
 }
 
 func (e *Executor) handleAudit() iterator.Iterator[component.Responsive] {
+	return renderProcessTableMarkdown("EXIT ERR", e.auditEntries())
+}
+
+// auditEntries lists every process ever started, each with its own
+// exit error, followed by the commands that failed to start.
+func (e *Executor) auditEntries() []psEntry {
 	now := e.now()
 	e.mu.RLock()
-	entries := make([]psEntry, 0, len(e.history))
+	defer e.mu.RUnlock()
+	entries := make([]psEntry, 0, len(e.history)+len(e.failedStarts))
 	for _, info := range e.history {
-		cmd := formatCmd(info)
 		uptime := now.Sub(info.started)
 		if !info.ended.IsZero() {
 			uptime = info.ended.Sub(info.started)
 		}
-		lastErr := "—"
-		if info.lastErr != nil {
-			lastErr = formatLastErr(info.lastErr)
-		} else if s := e.stats[info.key]; s != nil {
-			lastErr = formatLastErr(s.lastErr)
-		}
 		entries = append(entries, psEntry{
 			pid:     info.pid,
 			uptime:  uptime,
-			lastErr: lastErr,
-			command: cmd,
+			started: info.started,
+			lastErr: formatErrCell(info.lastErr),
+			command: formatCmd(info),
 		})
 	}
-	e.mu.RUnlock()
-	return renderProcessTableMarkdown(entries)
+	for _, info := range e.failedStarts {
+		entries = append(entries, psEntry{
+			started: info.started,
+			lastErr: formatErrCell(info.lastErr),
+			command: formatCmd(info),
+		})
+	}
+	return entries
 }
 
 func (e *Executor) handleTree() iterator.Iterator[component.Responsive] {
@@ -458,13 +511,6 @@ func (e *Executor) handleInfo(
 		uptime = info.ended.Sub(info.started)
 	}
 
-	lastErr := "—"
-	if info.lastErr != nil {
-		lastErr = formatLastErr(info.lastErr)
-	} else if stats != nil {
-		lastErr = formatLastErr(stats.lastErr)
-	}
-
 	ppidStr := "—"
 	if info.parent != 0 {
 		ppidStr = strconv.Itoa(int(info.parent))
@@ -481,10 +527,16 @@ func (e *Executor) handleInfo(
 	if fromHistory {
 		infoLines = append(infoLines,
 			fmt.Sprintf("- **Ended:** %s",
-				info.ended.Format(time.RFC3339)))
+				info.ended.Format(time.RFC3339)),
+			fmt.Sprintf("- **Exit Error:** %s", formatErrFull(info.lastErr)))
+	} else {
+		var prev error
+		if stats != nil {
+			prev = stats.lastErr
+		}
+		infoLines = append(infoLines,
+			fmt.Sprintf("- **Previous Exit:** %s", formatErrFull(prev)))
 	}
-	infoLines = append(infoLines,
-		fmt.Sprintf("- **Last Error:** %s", lastErr))
 
 	if len(info.env) > 0 {
 		infoLines = append(infoLines, "- **Environment:**")
@@ -497,16 +549,28 @@ func (e *Executor) handleInfo(
 	return markdownResponsive(strings.Join(infoLines, "\n")), nil
 }
 
-func formatLastErr(err error) string {
+// errCellWidth is how much of an error a table cell shows, in runes.
+const errCellWidth = 60
+
+// formatErrCell keeps the tail of err: wrapped errors end in their root
+// cause, while their head is often a transport prefix shared by every
+// command of a remote workspace.
+func formatErrCell(err error) string {
 	if err == nil {
 		return "—"
 	}
-	const maxLen = 30
-	s := err.Error()
-	if len(s) <= maxLen {
-		return s
+	r := []rune(err.Error())
+	if len(r) <= errCellWidth {
+		return string(r)
 	}
-	return s[:maxLen-1] + "…"
+	return "…" + string(r[len(r)-(errCellWidth-1):])
+}
+
+func formatErrFull(err error) string {
+	if err == nil {
+		return "—"
+	}
+	return "`" + strings.ReplaceAll(err.Error(), "`", "'") + "`"
 }
 
 // formatCmd renders a tracked process's command for display.
@@ -673,27 +737,42 @@ func toLines(ss ...string) iterator.Iterator[component.Responsive] {
 	return iterator.FromSlice(out)
 }
 
-func renderProcessTableMarkdown(entries []psEntry) iterator.Iterator[component.Responsive] {
-	return markdownResponsive(buildProcessTableMarkdownSource(entries))
+func renderProcessTableMarkdown(
+	errColumn string, entries []psEntry,
+) iterator.Iterator[component.Responsive] {
+	return markdownResponsive(buildProcessTableMarkdownSource(errColumn, entries))
 }
 
 // buildProcessTableMarkdownSource produces the markdown source
 // for the process status/audit table. Each row is sanitized so
 // that newlines or backticks inside a command or lastErr cannot
-// break out of their cell. Entries are sorted by PID.
-func buildProcessTableMarkdownSource(entries []psEntry) string {
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].pid < entries[j].pid
+// break out of their cell. Entries are sorted by PID, followed by
+// commands that failed to start in the order they were attempted.
+func buildProcessTableMarkdownSource(errColumn string, entries []psEntry) string {
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if (a.pid == 0) != (b.pid == 0) {
+			return b.pid == 0
+		}
+		if a.pid == 0 {
+			return a.started.Before(b.started)
+		}
+		return a.pid < b.pid
 	})
 	var b strings.Builder
-	b.WriteString("| PID | UPTIME | LAST ERR | COMMAND |\n")
+	fmt.Fprintf(&b, "| PID | UPTIME | %s | COMMAND |\n", errColumn)
 	b.WriteString("| --- | --- | --- | --- |\n")
 	for _, ent := range entries {
+		pid, uptime := "—", "—"
+		if ent.pid != 0 {
+			pid = fmt.Sprintf("`%d`", ent.pid)
+			uptime = fmt.Sprintf("`%s`", formatDuration(ent.uptime))
+		}
 		fmt.Fprintf(
 			&b,
-			"| `%d` | `%s` | %s | `%s` |\n",
-			ent.pid,
-			formatDuration(ent.uptime),
+			"| %s | %s | %s | `%s` |\n",
+			pid,
+			uptime,
 			escapeMarkdownTableCell(ent.lastErr),
 			escapeMarkdownTableCell(ent.command),
 		)

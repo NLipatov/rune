@@ -211,6 +211,12 @@ Rune:
 On a remote workspace these act on the remote host. Sensitive values in a
 process's environment are redacted in `process info`.
 
+`process status` shows, for each running process, how the previous run of the
+same command exited (`PREV EXIT`), which explains why a server or helper is
+running again. `process audit` shows each process's own exit error, and lists
+commands that failed to start, such as a program that does not exist on the
+workspace host, with `—` as their PID.
+
 ## Managing extensions with `extensions`
 
 Extensions are programs that bundle the Rune [SDK](../develop/sdk/index.md) to

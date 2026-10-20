@@ -173,7 +173,7 @@ func TestStartTracksProcess(t *testing.T) {
 	out := collectRenderedText(t, iter)
 	assert.Contains(t, out, "PID")
 	assert.Contains(t, out, "UPTIME")
-	assert.Contains(t, out, "LAST ERR")
+	assert.Contains(t, out, "PREV EXIT")
 	assert.Contains(t, out, "COMMAND")
 	assert.Contains(t, out, "gopls")
 	assert.Contains(t, out, "-rpc.trace")
@@ -347,7 +347,7 @@ func TestHandleCommandStatus(t *testing.T) {
 	out := collectRenderedText(t, iter)
 	assert.Contains(t, out, "PID")
 	assert.Contains(t, out, "UPTIME")
-	assert.Contains(t, out, "LAST ERR")
+	assert.Contains(t, out, "PREV EXIT")
 	assert.Contains(t, out, "COMMAND")
 	assert.Contains(t, out, "gopls")
 	assert.Contains(t, out, "bash")
@@ -690,9 +690,9 @@ func TestExitTracksStats(t *testing.T) {
 	exec.mu.RUnlock()
 }
 
-func TestStatusShowsLastErr(t *testing.T) {
-	// lastErr is tracked per cmdKey and displayed for any running
-	// process that shares that key.
+func TestStatusShowsPrevExit(t *testing.T) {
+	// The previous exit is tracked per cmdKey and displayed for any
+	// running process that shares that key.
 	mock := newMockExecutor()
 	exec := NewExecutor(mock)
 	exec.now = fixedTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -715,9 +715,8 @@ func TestStatusShowsLastErr(t *testing.T) {
 	iter := exec.handleStatus()
 	defer func() { _ = iter.Close() }()
 	out := collectRenderedText(t, iter)
-	assert.Contains(t, out, "LAST ERR")
-	assert.Contains(t, out, "process failed very badly")
-	assert.Contains(t, out, "…")
+	assert.Contains(t, out, "PREV EXIT")
+	assert.Contains(t, out, "process failed very badly with a long error")
 }
 
 func TestFormatDuration(t *testing.T) {
@@ -881,7 +880,9 @@ func TestHandleCommandInfoErrored(t *testing.T) {
 
 	// Advance time 10 minutes, then simulate exit with an error.
 	exec.now = fixedTime(started.Add(10 * time.Minute))
-	mock.exitProcessWithError(pid, errors.New("boom"))
+	exitErr := errors.New("stream receive msg: rpc error: code = Unavailable " +
+		"desc = error reading from server: EOF")
+	mock.exitProcessWithError(pid, exitErr)
 
 	// Wait for the exit goroutine to fully finish updating history.
 	// We must observe the goroutine after it released e.mu so that
@@ -909,8 +910,36 @@ func TestHandleCommandInfoErrored(t *testing.T) {
 	assert.Contains(t, out, "Uptime:")
 	assert.Contains(t, out, "10m0s")
 	assert.Contains(t, out, "Ended:")
-	assert.Contains(t, out, "Last Error:")
-	assert.Contains(t, out, "boom")
+	assert.Contains(t, out, "Exit Error:")
+	assert.Contains(t, out, exitErr.Error(), "info must show the full error")
+}
+
+func TestHandleCommandInfoRunningShowsPreviousExit(t *testing.T) {
+	mock := newMockExecutor()
+	exec := NewExecutor(mock)
+	exec.now = fixedTime(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	cmd := workspaceapi.Cmd{Path: "/usr/bin/gopls"}
+
+	first, err := exec.Start(ctx, cmd)
+	require.NoError(t, err)
+	mock.exitProcessWithError(first, errors.New("exit status 2"))
+	assert.Eventually(t, func() bool {
+		exec.mu.RLock()
+		defer exec.mu.RUnlock()
+		_, running := exec.processes[first]
+		return !running
+	}, time.Second, time.Millisecond)
+	second, err := exec.Start(ctx, cmd)
+	require.NoError(t, err)
+
+	iter, err := exec.handleInfo([]string{strconv.Itoa(int(second))})
+	require.NoError(t, err)
+	defer func() { _ = iter.Close() }()
+	out := collectRenderedText(t, iter)
+	assert.Contains(t, out, "Previous Exit:")
+	assert.Contains(t, out, "exit status 2")
+	assert.NotContains(t, out, "Exit Error:")
 }
 
 func TestHandleCommandInfoNoArgs(t *testing.T) {
@@ -1063,7 +1092,7 @@ func TestHandleCommandAuditShowsAllProcesses(t *testing.T) {
 	auditOut := collectRenderedText(t, auditIter)
 	assert.Contains(t, auditOut, "PID")
 	assert.Contains(t, auditOut, "UPTIME")
-	assert.Contains(t, auditOut, "LAST ERR")
+	assert.Contains(t, auditOut, "EXIT ERR")
 
 	// Exited process should show its runtime (5s) and error.
 	assert.Contains(t, auditOut, "/bin/a")
@@ -1073,6 +1102,123 @@ func TestHandleCommandAuditShowsAllProcesses(t *testing.T) {
 	// Running process should show current uptime (10s).
 	assert.Contains(t, auditOut, "/bin/b")
 	assert.Contains(t, auditOut, "10s")
+}
+
+func TestAuditShowsEachProcessOwnExitError(t *testing.T) {
+	mock := newMockExecutor()
+	exec := NewExecutor(mock)
+	exec.now = fixedTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	cmd := workspaceapi.Cmd{Path: "/bin/a"}
+
+	first, err := exec.Start(ctx, cmd)
+	require.NoError(t, err)
+	mock.exitProcessWithError(first, errors.New("crash"))
+	assert.Eventually(t, func() bool {
+		exec.mu.RLock()
+		defer exec.mu.RUnlock()
+		_, running := exec.processes[first]
+		return !running
+	}, time.Second, time.Millisecond)
+	second, err := exec.Start(ctx, cmd)
+	require.NoError(t, err)
+
+	byPid := func(entries []psEntry) map[workspaceapi.Pid]string {
+		ret := make(map[workspaceapi.Pid]string)
+		for _, e := range entries {
+			ret[e.pid] = e.lastErr
+		}
+		return ret
+	}
+	assert.Equal(t, map[workspaceapi.Pid]string{first: "crash", second: "—"},
+		byPid(exec.auditEntries()),
+		"a running process must not inherit an earlier run's error")
+	assert.Equal(t, map[workspaceapi.Pid]string{second: "crash"},
+		byPid(exec.statusEntries()),
+		"status reports the previous run's exit of the same command")
+}
+
+func TestStartFailureIsAudited(t *testing.T) {
+	mock := newMockExecutor()
+	exec := NewExecutor(mock)
+	exec.now = fixedTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	ctx := context.Background()
+	cmd := workspaceapi.Cmd{Path: "/Users/me/go/bin/gopls", Args: []string{"serve"}}
+	startErr := errors.New("error waiting for pid: stream receive msg: rpc error: " +
+		"code = Unknown desc = start command: fork/exec /Users/me/go/bin/gopls: " +
+		"no such file or directory")
+	mock.startErr = startErr
+
+	_, err := exec.Start(ctx, cmd)
+	require.ErrorIs(t, err, startErr)
+
+	assert.Empty(t, exec.statusEntries(), "a command that never started is not running")
+	audit := exec.auditEntries()
+	require.Len(t, audit, 1)
+	assert.Zero(t, audit[0].pid)
+	assert.Equal(t, "/Users/me/go/bin/gopls serve", audit[0].command)
+	assert.True(t, strings.HasSuffix(audit[0].lastErr,
+		"fork/exec /Users/me/go/bin/gopls: no such file or directory"),
+		"the root cause at the tail of the error must stay visible: %q", audit[0].lastErr)
+	assert.Contains(t, buildProcessTableMarkdownSource("EXIT ERR", audit),
+		"| — | — | ")
+
+	mock.mu.Lock()
+	mock.startErr = nil
+	mock.mu.Unlock()
+	_, err = exec.Start(ctx, cmd)
+	require.NoError(t, err)
+	status := exec.statusEntries()
+	require.Len(t, status, 1)
+	assert.True(t, strings.HasSuffix(status[0].lastErr, "no such file or directory"),
+		"a failed start is the previous outcome of the command: %q", status[0].lastErr)
+}
+
+func TestFailedStartsAreBounded(t *testing.T) {
+	mock := newMockExecutor()
+	mock.startErr = errors.New("nope")
+	exec := NewExecutor(mock)
+	ctx := context.Background()
+
+	for i := range maxFailedStarts + 5 {
+		_, err := exec.Start(ctx, workspaceapi.Cmd{Path: "/bin/" + strconv.Itoa(i)})
+		require.Error(t, err)
+	}
+
+	audit := exec.auditEntries()
+	require.Len(t, audit, maxFailedStarts)
+	assert.Equal(t, "/bin/5", audit[0].command, "the oldest failures are dropped first")
+	assert.Equal(t, "/bin/"+strconv.Itoa(maxFailedStarts+4), audit[len(audit)-1].command)
+}
+
+func TestFormatErrCell(t *testing.T) {
+	long := "stream receive msg: rpc error: code = Unknown desc = start command: " +
+		"fork/exec /Users/me/go/bin/gopls: no such file or directory"
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", err: nil, want: "—"},
+		{name: "short", err: errors.New("exit status 1"), want: "exit status 1"},
+		{
+			name: "long keeps the tail",
+			err:  errors.New(long),
+			want: "…" + long[len(long)-(errCellWidth-1):],
+		},
+		{
+			name: "multibyte runes are not split",
+			err:  errors.New(strings.Repeat("é", errCellWidth+1)),
+			want: "…" + strings.Repeat("é", errCellWidth-1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatErrCell(tc.err)
+			assert.Equal(t, tc.want, got)
+			assert.LessOrEqual(t, len([]rune(got)), errCellWidth)
+		})
+	}
 }
 
 func TestHandleCommandAuditViaDispatch(t *testing.T) {
@@ -1395,7 +1541,7 @@ func TestBuildProcessTableMarkdownSource_HeredocCorpus(t *testing.T) {
 				command: formatCmdFromArgv(tc.path, tc.args),
 			}
 			got := buildProcessTableMarkdownSource(
-				[]psEntry{entry},
+				"PREV EXIT", []psEntry{entry},
 			)
 			assert.Equal(t, tableHeader+tc.wantRow, got,
 				"markdown source mismatch")
@@ -1457,10 +1603,24 @@ func TestBuildProcessTableMarkdownSource_Structural(t *testing.T) {
 			want: tableHeader +
 				"| `6` | `1s` | exit \\`1\\` \\| core | `/bin/y` |\n",
 		},
+		{
+			name: "failed starts follow pids in start order",
+			entries: []psEntry{
+				{lastErr: "late", command: "/bin/late",
+					started: time.Date(2026, 1, 1, 0, 0, 2, 0, time.UTC)},
+				benignEntry(3, time.Second, "/bin/ok"),
+				{lastErr: "early", command: "/bin/early",
+					started: time.Date(2026, 1, 1, 0, 0, 1, 0, time.UTC)},
+			},
+			want: tableHeader +
+				"| `3` | `1s` | — | `/bin/ok` |\n" +
+				"| — | — | early | `/bin/early` |\n" +
+				"| — | — | late | `/bin/late` |\n",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildProcessTableMarkdownSource(tc.entries)
+			got := buildProcessTableMarkdownSource("PREV EXIT", tc.entries)
 			assert.Equal(t, tc.want, got)
 			assertTableStructure(t, got, len(tc.entries))
 		})
@@ -1489,7 +1649,7 @@ func TestHandleStatusHeredocCorpus(t *testing.T) {
 
 			assert.Contains(t, out, "PID")
 			assert.Contains(t, out, "UPTIME")
-			assert.Contains(t, out, "LAST ERR")
+			assert.Contains(t, out, "PREV EXIT")
 			assert.Contains(t, out, "COMMAND")
 			if argvHasNewline(tc.path, tc.args) {
 				assert.Contains(t, out, "␤",
@@ -1510,7 +1670,7 @@ func TestHandleStatusHeredocCorpus(t *testing.T) {
 // tableHeader is the literal two-line markdown header emitted
 // by buildProcessTableMarkdownSource. Centralised so individual
 // test cases stay focused on the row(s) they exercise.
-const tableHeader = "| PID | UPTIME | LAST ERR | COMMAND |\n" +
+const tableHeader = "| PID | UPTIME | PREV EXIT | COMMAND |\n" +
 	"| --- | --- | --- | --- |\n"
 
 // heredocCase is one row of the language-realistic argv corpus.
