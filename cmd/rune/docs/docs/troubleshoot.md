@@ -191,6 +191,14 @@ an error, or a build tool whose output was launched in the background.
 
 ### Language-server logging
 
+When code intelligence stops working, start with `lsp status` in the console.
+It shows whether each language server is running, failed to start, or was
+stopped, and its last error. A server that could not be started at all, for
+example because its configured path does not exist on the workspace host,
+fails with an error such as `no such file or directory` and has no PID. `lsp
+info <server>` shows the whole error and the command the server runs with. See
+[Managing language servers](./learn/console.md#managing-language-servers-with-lsp).
+
 Go, Python, Rust, and Zig language servers log to standard error, where Rune
 captures their output. Their language guides describe how to increase or reduce
 verbosity while keeping the same `process stdio` inspection workflow:

@@ -92,9 +92,9 @@ covers what is specific to Go.
 ### Language server logs
 
 gopls writes its normal logs to stderr, where Rune captures them. Run
-`process status` in the console to find the gopls PID, then run
-`process stdio <pid>` to view its logs. This also works after gopls exits; use
-`process audit` to find the PID of an exited server. See
+`lsp info go` in the console to find the gopls PID, then run
+`process stdio <pid>` to view its logs. This also works after gopls exits. If
+gopls is not running, `lsp status` shows why. See
 [Troubleshoot](../troubleshoot.md#inspect-any-process-rune-starts)
 for details.
 

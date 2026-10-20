@@ -95,7 +95,7 @@ installed in the workspace, but the core commands are:
 | `debugger <subcommand> [...]` | Control a [debug session](./debugger.md) via the Debug Adapter Protocol. Start with `debugger initialize <langID>`, then `launch` or `attach`, then `configured`. |
 | `extensions (status\|info\|start\|stop\|restart\|logs) ...` | Manage workspace extensions. |
 | `authorizer (list\|revoke) [<permission>]` | Manage persisted plugin authorizer decisions. |
-| `lsp <subcommand> [<args>...]` | Language Server Protocol commands. |
+| `lsp (status\|info\|params\|capabilities\|restart\|start\|stop) [<server>]` | Inspect and control the workspace's [language servers](#managing-language-servers-with-lsp). |
 | `process` | Process management: inspect and control processes Rune tracks. |
 | `network <subcommand>` | Manage this machine's membership in your [private network](./network.md) of Rune instances. |
 
@@ -216,6 +216,29 @@ same command exited (`PREV EXIT`), which explains why a server or helper is
 running again. `process audit` shows each process's own exit error, and lists
 commands that failed to start, such as a program that does not exist on the
 workspace host, with `—` as their PID.
+
+## Managing language servers with `lsp`
+
+The `lsp` command shows the language servers of the workspace, why one is not
+running, and lets you restart it. A `<server>` is a language id such as `go`,
+or a backend of a language served by several, such as `ruff` or `python/ruff`.
+Add `@<root>` to pick the server of one project root, relative to the
+workspace, such as `go@tools`. `<tab>` completes them.
+
+| Command | What it does |
+| --- | --- |
+| `lsp status` | List the language servers with their state, PID, uptime, restarts, and last error. |
+| `lsp info <server>` | Show a server's command, environment, PID, version, and its whole last error. |
+| `lsp params <server>` | Show the `initialize` request sent to a server, as JSON. |
+| `lsp capabilities <server>` | Show a server's `initialize` response, with its capabilities, as JSON. |
+| `lsp restart <server>` | Stop a server if it is running and start it again with the same parameters. |
+| `lsp start <server>` | Start a stopped or failed server with the parameters it was initialized with. |
+| `lsp stop <server>` | Shut a server down until it is started again. |
+
+The backends of a language at a root are started and stopped together. `lsp
+info` names the server's PID, so `process stdio <pid>` shows its logs. A server
+that fails to start also shows a notification, and requests to it report why it
+is not running.
 
 ## Managing extensions with `extensions`
 

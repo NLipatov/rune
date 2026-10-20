@@ -69,6 +69,7 @@ import (
 	"unstable.build/rune/internal/ide/console/ideconsole/debugshell"
 	"unstable.build/rune/internal/ide/console/ideconsole/workspaceshell"
 	"unstable.build/rune/internal/ide/console/llmconsole"
+	"unstable.build/rune/internal/ide/console/lspconsole"
 	"unstable.build/rune/internal/ide/console/pkgconsole"
 	"unstable.build/rune/internal/ide/hostenv"
 	"unstable.build/rune/internal/ide/ideauthorizer"
@@ -2463,6 +2464,11 @@ func (h *workspaceManagerHandler) buildExtensions(
 	pkgHandler := pkgconsole.New(pkgshellCfg)
 	if err := ex.editorObserver.RegisterREPLCommand(pkgconsole.Manual(), pkgHandler); err != nil {
 		log.Errorf("register pkg repl command: %v", err)
+	}
+
+	if err := ex.editorObserver.RegisterREPLCommand(
+		lspconsole.Manual(), lspconsole.New(lsp)); err != nil {
+		log.Errorf("register lsp repl command: %v", err)
 	}
 
 	dataDir := h.sixDir
