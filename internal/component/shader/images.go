@@ -21,6 +21,8 @@ import (
 	"image"
 	"image/draw"
 	"math"
+	"slices"
+	"sync"
 
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/cell"
@@ -144,4 +146,195 @@ func desaturatePixels(dst *image.RGBA, amount float64) {
 			row[i+2] = uint8(math.Round(b + (lum-b)*amount))
 		}
 	}
+}
+
+// sampleCell is the cell size pictures are painted at, as shaders are not
+// told the real one.
+var sampleCell = cell.PixelSize{Width: 10, Height: 10 * rowScale}
+
+// sampleGrid is how many samples, at most, a side of a cell takes of the
+// picture over it.
+const sampleGrid = 4
+
+// pictureLayers are the layers pictures are composited in, from the
+// bottom up.
+var pictureLayers = [...]term.ImageLayer{
+	term.ImageLayerBelowBackground, term.ImageLayerBelowText, term.ImageLayerAboveText,
+}
+
+func paintPictures(cells [][]term.Cell, images []term.Image) {
+	rows, cols := canvasSize(cells)
+	screen := image.Rect(0, 0, cols, rows)
+	var defaultBg [][]bool
+	for _, layer := range pictureLayers {
+		for _, img := range images {
+			if img.Layer != layer {
+				continue
+			}
+			if layer == term.ImageLayerBelowBackground && defaultBg == nil {
+				defaultBg = defaultBackgrounds(cells)
+			}
+			var shows [][]bool
+			if layer == term.ImageLayerBelowBackground {
+				shows = defaultBg
+			}
+			paintPicture(cells, img, screen, shows)
+		}
+	}
+}
+
+func paintPicture(cells [][]term.Cell, img term.Image, screen image.Rectangle, shows [][]bool) {
+	crop := cropOf(img)
+	covered := sampleCell.Covered(img).Intersect(screen)
+	if crop.Empty() || covered.Empty() {
+		return
+	}
+	x0, y0, x1, y1 := rasterArea(img, crop)
+	scaleX, scaleY := float64(crop.Dx())/(x1-x0), float64(crop.Dy())/(y1-y0)
+	cols := sampleCount(sampleCell.Width * scaleX)
+	rows := sampleCount(sampleCell.Height * scaleY)
+	samples := float64(cols * rows)
+	for y := covered.Min.Y; y < covered.Max.Y; y++ {
+		row := cells[y]
+		for x := covered.Min.X; x < min(covered.Max.X, len(row)); x++ {
+			if shows != nil && !shows[y][x] {
+				continue
+			}
+			var r, g, b, a uint32
+			for j := range rows {
+				py := (float64(y) + (float64(j)+0.5)/float64(rows)) * sampleCell.Height
+				if py < y0 || py >= y1 {
+					continue
+				}
+				sy := crop.Min.Y + min(int((py-y0)*scaleY), crop.Dy()-1)
+				for i := range cols {
+					px := (float64(x) + (float64(i)+0.5)/float64(cols)) * sampleCell.Width
+					if px < x0 || px >= x1 {
+						continue
+					}
+					sx := crop.Min.X + min(int((px-x0)*scaleX), crop.Dx()-1)
+					pr, pg, pb, pa := premultipliedAt(img.Src, sx, sy)
+					r, g, b, a = r+pr, g+pg, b+pb, a+pa
+				}
+			}
+			paintCell(row, x, img.Layer,
+				float64(r)/samples, float64(g)/samples, float64(b)/samples, float64(a)/samples)
+		}
+	}
+}
+
+// rasterArea returns the pixels img's raster spans on cells the size of
+// sampleCell, as its left, top, right and bottom edges.
+func rasterArea(img term.Image, crop image.Rectangle) (x0, y0, x1, y1 float64) {
+	b := img.Bounds()
+	x0, y0 = float64(b.Min.X)*sampleCell.Width, float64(b.Min.Y)*sampleCell.Height
+	w, h := float64(b.Dx())*sampleCell.Width, float64(b.Dy())*sampleCell.Height
+	if img.Fit == term.ImageFitContain {
+		scale := math.Min(w/float64(crop.Dx()), h/float64(crop.Dy()))
+		cw, ch := float64(crop.Dx())*scale, float64(crop.Dy())*scale
+		x0, y0 = x0+(w-cw)/2, y0+(h-ch)/2
+		w, h = cw, ch
+	}
+	d := img.Offset.Add(img.RasterOffset)
+	x0, y0 = x0+float64(d.X), y0+float64(d.Y)
+	return x0, y0, x0 + w, y0 + h
+}
+
+func sampleCount(pixels float64) int {
+	return max(1, min(sampleGrid, int(math.Ceil(pixels))))
+}
+
+// premultipliedAt returns the color of src at x, y, with 8 bits a channel
+// premultiplied by its alpha.
+func premultipliedAt(src image.Image, x, y int) (r, g, b, a uint32) {
+	if rgba, ok := src.(*image.RGBA); ok {
+		p := rgba.Pix[rgba.PixOffset(x, y):]
+		return uint32(p[0]), uint32(p[1]), uint32(p[2]), uint32(p[3])
+	}
+	r, g, b, a = src.At(x, y).RGBA()
+	return r >> 8, g >> 8, b >> 8, a >> 8
+}
+
+// paintCell paints the cell at x of row with the part of a picture on
+// layer over it, whose color r, g, b is premultiplied by its alpha a,
+// all in [0, 255].
+func paintCell(row []term.Cell, x int, layer term.ImageLayer, r, g, b, a float64) {
+	const half = 255 / 2.0
+	if a <= 0 {
+		return
+	}
+	c := &row[x]
+	switch {
+	case c.Bg.IsRGB():
+		br, bg, bb := c.Bg.RGB()
+		k := 1 - a/255
+		c.Bg = roundRGB(r+float64(br)*k, g+float64(bg)*k, b+float64(bb)*k)
+	case a >= half:
+		c.Bg = roundRGB(r*255/a, g*255/a, b*255/a)
+	default:
+		return
+	}
+	if layer == term.ImageLayerAboveText && a >= half {
+		claim([][]term.Cell{row}, x, 0)
+		c.Ch, c.Width, c.Extra, c.Attrs = ' ', 1, nil, term.AttrNone
+	}
+}
+
+func roundRGB(r, g, b float64) term.Color {
+	return term.NewRGBColor(int32(math.Round(r)), int32(math.Round(g)), int32(math.Round(b)))
+}
+
+func defaultBackgrounds(cells [][]term.Cell) [][]bool {
+	out := make([][]bool, len(cells))
+	for y, row := range cells {
+		out[y] = make([]bool, len(row))
+		for x, c := range row {
+			out[y][x] = c.Bg == term.ColorDefault
+		}
+	}
+	return out
+}
+
+// looksSame reports whether a picture over a and b looks the same, which
+// a text color does not change.
+func looksSame(a, b term.Cell) bool {
+	a.Fg = b.Fg
+	return a == b
+}
+
+// painting is the state [ShadeImages] keeps across frames for shaders of
+// cells.
+type painting struct {
+	drawn, painted [][]term.Cell
+	kept           [][]bool
+	cutter         imageCutter
+}
+
+var paintings = sync.Pool{New: func() any { return new(painting) }}
+
+// shade returns the parts of images over the cells s leaves as painted.
+func (p *painting) shade(s Shader, frame, total int, in [][]term.Cell, images []term.Image) []term.Image {
+	p.drawn = copyCellsInto(p.drawn, in)
+	paintPictures(in, images)
+	p.painted = copyCellsInto(p.painted, in)
+	s.Shade(frame, total, in)
+	p.kept = slices.Grow(p.kept[:0], len(in))[:len(in)]
+	for y, row := range in {
+		p.kept[y] = slices.Grow(p.kept[y][:0], len(row))[:len(row)]
+		for x, c := range row {
+			painted, drawn := p.painted[y][x], p.drawn[y][x]
+			p.kept[y][x] = looksSame(c, painted)
+			if p.kept[y][x] && painted != drawn {
+				// s colored the drawn glyph unless the picture hid it.
+				if painted.Ch == drawn.Ch {
+					drawn.Fg = c.Fg
+				}
+				row[x] = drawn
+			}
+		}
+	}
+	rows, cols := canvasSize(in)
+	return p.cutter.cut(nil, images, cols, rows, func(x, y int) bool {
+		return x < len(p.kept[y]) && p.kept[y][x]
+	})
 }

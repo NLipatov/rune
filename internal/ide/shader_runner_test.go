@@ -263,6 +263,60 @@ func TestShaderRunnerReplaysTheIntro(t *testing.T) {
 	assert.Equal(t, "intro", completions()[0])
 }
 
+func TestNamedShadersShadeThePicturesOnScreenWithTheCells(t *testing.T) {
+	const cols, rows, total = 20, 8, 100
+	drawsItsPictures := map[string]bool{
+		"nop": true, "grayFade": true, "burn": true, "beams": true, "binaryPath": true,
+		"decrypt": true, "expand": true, "matrix": true, "middleOut": true,
+		"pour": true, "print": true, "rain": true, "slide": true,
+	}
+	picture := func(c color.RGBA, pos term.Coordinates, width, height int) term.Image {
+		src := image.NewRGBA(image.Rect(0, 0, 1, 1))
+		src.SetRGBA(0, 0, c)
+		return term.Image{Src: src, ID: term.NewImageID(), Pos: pos, Width: width, Height: height}
+	}
+	pictures := []term.Image{
+		picture(color.RGBA{R: 30, G: 160, B: 220, A: 255}, term.Coordinates{X: 4, Y: 2}, 8, 4),
+		// A dark wallpaper, some cells of which the fire leaves as they
+		// were painted, on some frames and not others.
+		picture(color.RGBA{A: 255}, term.Coordinates{}, cols, rows),
+	}
+	attr := term.Attributes{Fg: term.ColorWhite}
+	for _, name := range namedShaderNames() {
+		if drawsItsPictures[name] {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			sh, ok := buildNamedShader(name, attr, component.FrameCharSetDefault(), shader.Snapshot{}, defaultShaderFPS)
+			require.True(t, ok)
+			for _, picture := range pictures {
+				// Every frame, as the shaders that fade in and out of
+				// the screen do so over the first and last of them.
+				for frame := range total {
+					cells := make([][]term.Cell, rows)
+					for y := range cells {
+						cells[y] = make([]term.Cell, cols)
+						for x := range cells[y] {
+							cells[y][x] = term.NewCell('x', 1, attr)
+						}
+					}
+					drawn := term.CloneCells(cells)
+					got := shader.ShadeImages(sh, frame, total, cells, []term.Image{picture})
+					for _, img := range got {
+						r := img.Visible()
+						for y := r.Min.Y; y < r.Max.Y; y++ {
+							for x := r.Min.X; x < r.Max.X; x++ {
+								require.Equal(t, drawn[y][x], cells[y][x],
+									"frame %d: the picture is drawn over the effect at %d,%d", frame, x, y)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestShaderRunnerOpenShaderStartsOnThePicturesOnScreen(t *testing.T) {
 	const cols, rows = 40, 12
 	ctx := cell.ContextWithPixelSize(context.Background(), cell.PixelSize{Width: 10, Height: 20})

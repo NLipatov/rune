@@ -45,7 +45,8 @@ import (
 //	|     [·c·r·o·s·s·]
 //
 // Images are shaded by the first shader until the change point and by
-// the second from then on, for those that are an [ImageShader].
+// the second from then on, as [ShadeImages] does. While they fade into
+// each other, pictures they do not both draw fade with the cells.
 func TransitionCrossFade(
 	params TransitionCrossFadeParams,
 	defaultAttr term.Attributes,
@@ -137,14 +138,21 @@ func (t *transCrossFade) ShadeImages(
 	behind := slices.Clone(images)
 
 	midPointFramePassed := float64(frame) >= changePointFrame
+	var back []term.Image
 	if midPointFramePassed {
 		// TransitionCrossFade docstring diagram case 3:
 		images = ShadeImages(t.shader2, int(frameShader2), int(totalShader2), in, images)
-		ShadeImages(t.shader1, int(frameShader1), int(totalShader1), t.buf, behind)
+		back = ShadeImages(t.shader1, int(frameShader1), int(totalShader1), t.buf, behind)
 	} else {
 		// TransitionCrossFade docstring diagram case 2:
 		images = ShadeImages(t.shader1, int(frameShader1), int(totalShader1), in, images)
-		ShadeImages(t.shader2, int(frameShader2), int(totalShader2), t.buf, behind)
+		back = ShadeImages(t.shader2, int(frameShader2), int(totalShader2), t.buf, behind)
+	}
+	// Drawn over the fade, pictures would hide it.
+	if !slices.Equal(images, back) {
+		paintPictures(in, images)
+		paintPictures(t.buf, back)
+		images = nil
 	}
 
 	t.interpolateBuffer(

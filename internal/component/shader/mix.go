@@ -20,8 +20,8 @@ import "github.com/unstablebuild/rune-go-sdk/term"
 
 // Mix combines multiple shaders into one. They're run
 // in the same order they're passed to this constructor,
-// and the images each [ImageShader] returns are passed
-// on to the next.
+// and the images each returns, as [ShadeImages] does,
+// are passed on to the next.
 func Mix(shaders ...Shader) Shader {
 	if len(shaders) == 0 {
 		panic("shaders must not be 0")

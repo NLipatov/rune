@@ -83,11 +83,18 @@ func (s Snapshot) copied(defaultFg term.Color) Snapshot {
 }
 
 // ShadeImages shades in with s, and returns the placements to draw over
-// it: the ones s returns if it is an [ImageShader], and images otherwise.
+// it: the ones s returns if it is an [ImageShader]. Otherwise the
+// pictures are painted onto the cells they cover and shaded with them,
+// and only their parts over the cells s leaves unchanged are returned.
 func ShadeImages(s Shader, frame, total int, in [][]term.Cell, images []term.Image) []term.Image {
 	if is, ok := s.(ImageShader); ok {
 		return is.ShadeImages(frame, total, in, images)
 	}
-	s.Shade(frame, total, in)
-	return images
+	if len(images) == 0 {
+		s.Shade(frame, total, in)
+		return images
+	}
+	p := paintings.Get().(*painting)
+	defer paintings.Put(p)
+	return p.shade(s, frame, total, in, images)
 }

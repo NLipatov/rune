@@ -118,7 +118,7 @@ AAAAAAAAAAAAAAAAAAAA
 			buf:   cell.NewBufferWriter(context.Background(), 10, 4),
 			total: 10,
 		}
-		s.shader = &testShader{}
+		s.shader = &imageShader{images: keepImages}
 		s.Resize(10, 4)
 
 		w := asciiart.NewStringWriter(10, 4, asciiart.DefaultConfig())
@@ -145,7 +145,7 @@ AAAAAAAAAA`}})
 			buf:   cell.NewBufferWriter(context.Background(), 10, 4),
 			total: 10,
 		}
-		s.shader = &testShader{}
+		s.shader = &imageShader{images: keepImages}
 		s.Resize(10, 4)
 
 		ctx := cell.ContextWithPixelSize(context.Background(), cell.PixelSize{Width: 10, Height: 20})
@@ -315,6 +315,8 @@ func (s *imageShader) ShadeImages(
 	s.Shade(frame, total, in)
 	return s.images(images)
 }
+
+func keepImages(images []term.Image) []term.Image { return images }
 
 type drawFunc func(term.Writer)
 

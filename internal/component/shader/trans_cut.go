@@ -23,7 +23,7 @@ import (
 )
 
 // TransitionCut jumps from one shader to the other without an interpolation.
-// Images are shaded by whichever is running, if it is an [ImageShader].
+// Images are shaded by whichever is running, as [ShadeImages] does.
 func TransitionCut(params TransitionCutParams, shader1, shader2 Shader) Shader {
 	if params.ChangeAtPerc < 0.0 || params.ChangeAtPerc > 1.0 {
 		panic("ChangeAtPerc must be within the closed interval [0,1]")

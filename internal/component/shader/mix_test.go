@@ -17,6 +17,8 @@
 package shader
 
 import (
+	"image"
+	"image/color"
 	"slices"
 	"testing"
 
@@ -32,12 +34,28 @@ func TestMixPassesImagesThroughItsShadersInOrder(t *testing.T) {
 			return append(images, term.Image{ID: id})
 		}}
 	}
-	plain := new(mockShader)
-	mix := Mix(adding(2), plain, adding(3)).(ImageShader)
+	mix := Mix(adding(2), adding(3)).(ImageShader)
 
 	got := mix.ShadeImages(0, 1, makeCellMatrix(2, 2), []term.Image{{ID: 1}})
 
 	assert.Equal(t, []term.Image{{ID: 1}, {ID: 2}, {ID: 3}}, got)
 	assert.Equal(t, [][]term.Image{{{ID: 1}}, {{ID: 1}, {ID: 2}}}, seen)
-	assert.True(t, plain.shadeCalled)
+}
+
+func TestMixPaintsThePicturesItsShadersOfCellsAreGiven(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	src.SetRGBA(0, 0, color.RGBA{R: 200, A: 255})
+	var seen []term.Image
+	last := &imageShader{images: func(images []term.Image) []term.Image {
+		seen = images
+		return images
+	}}
+	mix := Mix(halveBg{}, last).(ImageShader)
+	cells := makeCellMatrix(2, 1)
+
+	got := mix.ShadeImages(0, 1, cells, []term.Image{{Src: src, Width: 1, Height: 1}})
+
+	assert.Empty(t, got)
+	assert.Empty(t, seen)
+	assert.Equal(t, term.NewRGBColor(100, 0, 0), cells[0][0].Bg)
 }
