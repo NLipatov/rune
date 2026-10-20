@@ -119,15 +119,14 @@ func TestProvidersClaudeStatusDispatches(t *testing.T) {
 	renderedOnce(t, it, err)
 }
 
-func TestFormatClaudeStatusUsageCreditNote(t *testing.T) {
+func TestFormatClaudeStatus(t *testing.T) {
 	out := formatClaudeStatus(claude.AuthStatus{
 		Authenticated: true,
 		Email:         "dev@example.com",
 		PlanType:      "max_20x",
 	})
 	assert.Contains(t, out, "dev@example.com")
-	assert.Contains(t, out, "Agent-SDK credit")
-	assert.Contains(t, out, "Settings > Usage")
+	assert.Contains(t, out, "max_20x")
 }
 
 func TestProvidersHostedNoArgsShowsHelp(t *testing.T) {

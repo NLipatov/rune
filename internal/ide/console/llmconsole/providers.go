@@ -382,10 +382,6 @@ func formatClaudeStatus(status claude.AuthStatus) string {
 	if !status.HasRefreshToken {
 		b.WriteString("- **Refresh token**: missing\n")
 	}
-	b.WriteString("\nSubscription usage here draws from a separate monthly " +
-		"Agent-SDK credit (distinct from your Claude.ai and official Claude Code " +
-		"limits). To continue past that credit, enable usage credits " +
-		"(\"extra usage\") in your Claude account under Settings > Usage.\n")
 	return b.String()
 }
 
