@@ -261,6 +261,9 @@ A typical investigation:
 2. **Why did it stop or fail to start?** Run `extensions logs <id>`. Rune
    captures what the extension writes to its error stream, which is where
    most startup failures, missing-dependency errors, and crashes show up.
+   Interleaved with it, lines marked `source=rune` record the extension's
+   lifecycle: the command Rune ran and its process id, the handshake, and
+   why the extension was stopped, failed to start, or how it exited.
    `extensions info <id>` adds restart counts and other state.
 3. **Try a clean restart.** `extensions restart <id>` relaunches it with the
    current config, which is the fastest way to pick up a config change or

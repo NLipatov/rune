@@ -1186,6 +1186,152 @@ func TestWorkspaceRunnerStartExtensionReturnsStartCommandError(t *testing.T) {
 	assert.Contains(t, err.Error(), "start command: boom")
 }
 
+func TestWorkspaceRunnerLogsLifecycle(t *testing.T) {
+	t.Parallel()
+
+	meta, err := json.Marshal(extensionapi.Metadata{
+		DeveloperID: "dev-id", DeveloperEmail: "dev@example.com", DeveloperKey: "dev-key",
+		ExtensionID: "ext", ExtensionName: "Ext",
+		Permissions: extensionapi.AllPermissions(),
+	})
+	require.NoError(t, err)
+	started := []string{
+		`level=info msg="starting /bin/ext --flag in `,
+		`level=info msg="started with pid 1" source=rune`,
+	}
+
+	tests := []struct {
+		name       string
+		cmdAndArgs string
+		startErr   error
+		// run drives the started extension, and returns what it exits with.
+		run     func(t *testing.T, runner *workspaceRunner, cmd workspaceapi.Cmd) error
+		wantErr string
+		// want are lines of the log, in order.
+		want []string
+	}{
+		{
+			name:       "handshake and exit",
+			cmdAndArgs: "/bin/ext --flag",
+			run: func(t *testing.T, runner *workspaceRunner, cmd workspaceapi.Cmd) error {
+				_, err := cmd.Stdout.Write(meta)
+				require.NoError(t, err)
+				require.Eventually(t, func() bool {
+					return strings.Contains(readExtensionLog(t, runner), "handshake complete")
+				}, time.Second, time.Millisecond)
+				return errors.New("exit status 2")
+			},
+			want: append(started,
+				`level=info msg="handshake complete: config sent" source=rune`,
+				`level=error msg="exited: exit status 2" source=rune`),
+		},
+		{
+			name:       "rejected handshake",
+			cmdAndArgs: "/bin/ext --flag",
+			run: func(t *testing.T, _ *workspaceRunner, cmd workspaceapi.Cmd) error {
+				_, err := cmd.Stdout.Write([]byte(`{"developer_id":"dev-id"}`))
+				require.Error(t, err)
+				return errors.New("signal: killed")
+			},
+			want: append(started,
+				`level=warning msg="stopping: validate metadata: developer email must not be missing" source=rune`,
+				`level=error msg="exited: signal: killed" source=rune`),
+		},
+		{
+			name:       "stopped",
+			cmdAndArgs: "/bin/ext --flag",
+			run: func(t *testing.T, runner *workspaceRunner, _ workspaceapi.Cmd) error {
+				require.NoError(t, runner.stopExtensionByID("ext"))
+				return nil
+			},
+			want: append(started,
+				`level=info msg="stopping on request" source=rune`,
+				`level=info msg=exited source=rune`),
+		},
+		{
+			name:       "start command fails",
+			cmdAndArgs: "/bin/ext --flag",
+			startErr:   errors.New("boom"),
+			wantErr:    "start command: boom",
+			want: []string{
+				started[0],
+				`level=error msg="failed to start: start command: boom" source=rune`,
+			},
+		},
+		{
+			name:       "command cannot be made",
+			cmdAndArgs: "/src/main.go",
+			wantErr:    "pkg install go",
+			want: []string{
+				`level=error msg="failed to start: make command: extension ext requires the go package`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			keys, err := auth.GenerateKeys()
+			require.NoError(t, err)
+			// The log path derives from the workspace, so a workspace of its
+			// own keeps parallel tests out of each other's logs.
+			dir := t.TempDir()
+			uri, err := workspaceapi.ParseURI("file://" + dir)
+			require.NoError(t, err)
+			rec := &recordingExecutor{}
+			var exec schemeapi.Executor = rec
+			if tt.startErr != nil {
+				exec = startErrorExecutor{err: tt.startErr}
+			}
+			runner := newWorkspaceRunner(exec, exec, extension.GrantAll(), nopTrustVerifier{}, uri,
+				"/tmp/ext.sock", dir, dir, []byte("cert"), keys)
+			t.Cleanup(func() { require.NoError(t, runner.Close()) })
+
+			err = runner.Run("ext", tt.cmdAndArgs, config.NopConfig())
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				state, ok := runner.extension("ext")
+				require.True(t, ok, "an extension that fails to start is registered")
+				assert.False(t, state.Running)
+				assert.ErrorContains(t, state.LastErr, tt.wantErr)
+				assert.ErrorContains(t, runner.WaitReady(context.Background(), "ext"), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				cmd := rec.waitCmd(t)
+				cmd.Watcher.WatchProcess() <- tt.run(t, runner, cmd)
+				require.Eventually(t, func() bool {
+					return strings.Contains(readExtensionLog(t, runner), tt.want[len(tt.want)-1])
+				}, time.Second, time.Millisecond)
+			}
+
+			requireExtensionLog(t, runner, tt.want)
+		})
+	}
+}
+
+func readExtensionLog(t *testing.T, runner *workspaceRunner) string {
+	t.Helper()
+	state, ok := runner.extension("ext")
+	require.True(t, ok)
+	logs, err := os.ReadFile(state.LogPath)
+	require.NoError(t, err)
+	return string(logs)
+}
+
+// requireExtensionLog requires the log of extension "ext" to hold want in
+// order.
+func requireExtensionLog(t *testing.T, runner *workspaceRunner, want []string) {
+	t.Helper()
+	logs := readExtensionLog(t, runner)
+	rest := logs
+	for _, w := range want {
+		i := strings.Index(rest, w)
+		require.NotEqualf(t, -1, i, "want %q after the lines before it in:\n%s", w, logs)
+		rest = rest[i+len(w):]
+	}
+}
+
 type testServerStream struct {
 	grpc.ServerStream
 	ctx context.Context

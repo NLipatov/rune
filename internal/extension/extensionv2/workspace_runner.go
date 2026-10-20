@@ -113,6 +113,7 @@ type extensionRunState struct {
 	startCount int
 	readiness  *extensionReadiness
 	logPath    string
+	collector  *logCollector
 }
 
 type extensionRunStateSnapshot struct {
@@ -201,7 +202,8 @@ func (m *workspaceRunner) Signal(pid workspaceapi.Pid, sig syscall.Signal) error
 }
 
 // Run runs the given extension with an executable at the given path,
-// with the given config.
+// with the given config. An extension that fails to start is still
+// registered, errored, so its log can be read.
 func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error {
 	if id == "" || cmdAndArgs == "" {
 		return errors.New("extension id and cmd must not be empty")
@@ -214,25 +216,27 @@ func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error
 	}
 	m.mu.Unlock()
 
+	logPath := extensionLogPath(m.workspace, id)
+	logFile, err := os.OpenFile(logPath,
+		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open extension %q log file %q: %w", id, logPath, err)
+	}
+	collector := newCollector(id, m.workspace, logFile)
+
 	ctx, cancel := context.WithCancel(m.ctx)
 	ctx = processctx.ContextWithExtensionID(ctx, id)
 	readiness := newExtensionReadiness()
-	logPath := extensionLogPath(m.workspace, id)
-	cmd, releaseStdin, err := m.makeCommand(ctx, id, cmdAndArgs, config, readiness, logPath)
+	pid, err := m.start(ctx, id, cmdAndArgs, config, readiness, collector)
 	if err != nil {
 		cancel()
-		return fmt.Errorf("make command: %w", err)
+		collector.lifecycle(log.ErrorLevel, "failed to start: %v", err)
+		_ = collector.Close()
+		readiness.Set(err)
+	} else {
+		m.log(log.DebugLevel, "running extension with name %q at path %q, pid: %d",
+			id, cmdAndArgs, pid)
 	}
-
-	pid, err := m.extExecutor.StartCommand(ctx, cmd)
-	if err != nil {
-		releaseStdin()
-		cancel()
-		return fmt.Errorf("start command: %w", err)
-	}
-
-	m.log(log.DebugLevel, "running extension with name %q at path %q, pid: %d",
-		id, cmdAndArgs, pid)
 
 	m.mu.Lock()
 	state := m.states[id]
@@ -245,16 +249,38 @@ func (m *workspaceRunner) Run(id, cmdAndArgs string, config config.Config) error
 	state.config = config
 	state.cancel = cancel
 	state.pid = pid
-	state.started = time.Now()
-	state.running = true
-	state.lastErr = nil
-	state.startCount++
+	state.running = err == nil
+	state.lastErr = err
 	state.readiness = readiness
 	state.logPath = logPath
+	state.collector = collector
+	if err == nil {
+		state.started = time.Now()
+		state.startCount++
+	}
 	m.registered.Broadcast()
 	m.mu.Unlock()
 
-	return nil
+	return err
+}
+
+func (m *workspaceRunner) start(
+	ctx context.Context, id, cmdAndArgs string, cfg config.Config,
+	readiness *extensionReadiness, collector *logCollector,
+) (workspaceapi.Pid, error) {
+	cmd, releaseStdin, err := m.makeCommand(ctx, id, cmdAndArgs, cfg, readiness, collector)
+	if err != nil {
+		return 0, fmt.Errorf("make command: %w", err)
+	}
+	collector.lifecycle(log.InfoLevel, "starting %s in %s",
+		strings.Join(append([]string{cmd.Path}, cmd.Args...), " "), cmd.Dir)
+	pid, err := m.extExecutor.StartCommand(ctx, cmd)
+	if err != nil {
+		releaseStdin()
+		return 0, fmt.Errorf("start command: %w", err)
+	}
+	collector.lifecycle(log.InfoLevel, "started with pid %d", pid)
+	return pid, nil
 }
 
 // Close stops all extensions and cleans up all resources associated
@@ -292,7 +318,7 @@ func (m *workspaceRunner) log(level log.Level, msg string, args ...any) {
 
 func (m *workspaceRunner) makeCommand(
 	ctx context.Context, extensionID, path string, config config.Config,
-	readiness *extensionReadiness, logPath string,
+	readiness *extensionReadiness, collector *logCollector,
 ) (ret workspaceapi.Cmd, releaseStdin func(), err error) {
 	waitCh := make(chan error)
 	// allow args to be passed to extensions
@@ -343,24 +369,29 @@ func (m *workspaceRunner) makeCommand(
 	if err != nil {
 		return workspaceapi.Cmd{}, nil, err
 	}
-	stdin, releaseStdin, stdout, stderr, collector, err := m.makeProtocolExchange(
-		extensionID, config, readiness, logPath, verifiedPublisher)
+	stdin, releaseStdin, stdout, err := m.makeProtocolExchange(
+		extensionID, config, readiness, collector, verifiedPublisher)
 	if err != nil {
 		return workspaceapi.Cmd{}, nil, err
 	}
-	ret.Stdin, ret.Stdout, ret.Stderr = stdin, stdout, stderr
+	ret.Stdin, ret.Stdout, ret.Stderr = stdin, stdout, collector
 	// The watcher goroutine owns the collector's lifecycle: it must
 	// close it only after exec.Cmd.Wait has returned (signalled by
 	// waitCh), which is the one moment we know the stderr-copy
 	// goroutine has stopped writing. Closing from any other
-	// goroutine (stopExtension, runner Close, m.ctx.Done) would race
-	// with that writer. If m.ctx is cancelled first we don't close
-	// the collector at all; the log file lives in os.TempDir and is
-	// unlinked from workspaceRunner.Close, and the FD is released on
-	// process exit.
+	// goroutine (stopExtension, runner Close, m.ctx.Done) would lose
+	// what the extension writes as it dies. If m.ctx is cancelled
+	// first we don't close the collector at all; the log file lives in
+	// os.TempDir and is unlinked from workspaceRunner.Close, and the FD
+	// is released on process exit.
 	go debug.CapturePanicReport(func() {
 		select {
 		case exitErr := <-waitCh:
+			if exitErr != nil {
+				collector.lifecycle(log.ErrorLevel, "exited: %v", exitErr)
+			} else {
+				collector.lifecycle(log.InfoLevel, "exited")
+			}
 			_ = collector.Close()
 			releaseStdin()
 			m.setExtensionExit(extensionID, exitErr)
@@ -590,46 +621,46 @@ func (m *workspaceRunner) commandEnvs(
 	return env, nil
 }
 
-// makeProtocolExchange returns the extension's stdin, and a release that
-// must be called once the extension has exited or failed to start.
+// makeProtocolExchange returns the extension's stdin, a release that must
+// be called once the extension has exited or failed to start, and its
+// stdout.
 func (m *workspaceRunner) makeProtocolExchange(
-	extensionID string, cfg config.Config, readiness *extensionReadiness, logPath, verifiedPublisher string,
+	extensionID string, cfg config.Config, readiness *extensionReadiness,
+	collector *logCollector, verifiedPublisher string,
 ) (
-	io.Reader, func(), io.Writer, io.Writer, *logCollector, error,
+	io.Reader, func(), io.Writer, error,
 ) {
 	protocol := newProtocol(m.ctx, m.grantor, extensionID, m.socket,
 		m.dataDir, m.installDir, m.tlsCert, m.cfg.insecureAuth, cfg, m.keys,
 		readiness, verifiedPublisher)
-	logFile, err := os.OpenFile(logPath,
-		os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf(
-			"open extension %q log file %q: %w", extensionID, logPath, err)
-	}
 	// exec.Cmd.Wait only returns once a stdin that is not a file is read to
 	// its end, and the protocol only ends once the extension sends its
 	// metadata: an extension that exits before it would never be seen to.
 	stdin, handshake, err := os.Pipe()
 	if err != nil {
-		_ = logFile.Close()
-		return nil, nil, nil, nil, nil, fmt.Errorf(
-			"extension %q stdin: %w", extensionID, err)
+		return nil, nil, nil, fmt.Errorf("extension %q stdin: %w", extensionID, err)
 	}
 	go debug.CapturePanicReport(func() {
-		_, _ = io.Copy(handshake, protocol)
+		// The protocol only yields the config once the extension's
+		// metadata is granted; a rejection is recorded by stopExtension.
+		switch n, err := io.Copy(handshake, protocol); {
+		case err != nil:
+			collector.lifecycle(log.ErrorLevel, "send config: %v", err)
+		case n > 0:
+			collector.lifecycle(log.InfoLevel, "handshake complete: config sent")
+		}
 		_ = handshake.Close()
 	})
 	release := func() {
 		_ = protocol.Close()
 		_ = stdin.Close()
 	}
-	collector := newCollector(extensionID, m.workspace, logFile)
 	stdout := errIntercept{
 		m:           m,
 		extensionID: extensionID,
 		protocol:    protocol,
 	}
-	return stdin, release, stdout, collector, collector, nil
+	return stdin, release, stdout, nil
 }
 
 func (m *workspaceRunner) setExtensionExit(extensionID string, err error) {
@@ -673,8 +704,8 @@ func (m *workspaceRunner) listExtensions() []extensionRunStateSnapshot {
 
 func (m *workspaceRunner) extension(id string) (extensionRunStateSnapshot, bool) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	state := m.states[id]
-	m.mu.Unlock()
 	if state == nil {
 		return extensionRunStateSnapshot{}, false
 	}
@@ -783,7 +814,13 @@ func (m *workspaceRunner) stopExtension(extensionID string, reason error) {
 	state.pid = 0
 	state.lastErr = reason
 	readiness := state.readiness
+	collector := state.collector
 	m.mu.Unlock()
+	if reason != nil {
+		collector.lifecycle(log.WarnLevel, "stopping: %v", reason)
+	} else {
+		collector.lifecycle(log.InfoLevel, "stopping on request")
+	}
 	// Cancelling triggers the watcher goroutine spawned in
 	// makeCommand, which closes the collector after the stderr-copy
 	// goroutine completes. Doing it here would race with that writer.

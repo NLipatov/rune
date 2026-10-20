@@ -51,21 +51,29 @@ func TestWorkspaceRunnerExtensionProcessE2E(t *testing.T) {
 		// metadata.
 		script  string
 		wantErr string
-		// wantLog is in the extension's stderr log.
-		wantLog string
+		// wantLog are lines of the extension's log, in order.
+		wantLog []string
 	}{
 		{
 			// As `go run` does when the extension does not build.
 			name:    "exit before handshake is seen",
 			script:  "echo 'no Go files' >&2\nexit 1\n",
 			wantErr: "exit status 1",
-			wantLog: "no Go files",
+			wantLog: []string{
+				`level=info msg="starting `,
+				"no Go files",
+				`level=error msg="exited: exit status 1" source=rune`,
+			},
 		},
 		{
 			name: "handshake delivers the config and ends stdin",
 			script: "cat meta.json\ncat > config.json\n" +
 				"echo 'config read' >&2\nexec sleep 60\n",
-			wantLog: "config read",
+			wantLog: []string{
+				`level=info msg="starting `,
+				`level=info msg="handshake complete: config sent" source=rune`,
+				"config read",
+			},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,13 +100,6 @@ func TestWorkspaceRunnerExtensionProcessE2E(t *testing.T) {
 			defer waitCancel()
 			err = runner.startExtension(waitCtx, "ext", ext, config.NopConfig())
 			require.NotErrorIs(t, err, context.DeadlineExceeded)
-			readLog := func() string {
-				state, ok := runner.extension("ext")
-				require.True(t, ok)
-				logs, err := os.ReadFile(state.LogPath)
-				require.NoError(t, err)
-				return string(logs)
-			}
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
@@ -107,13 +108,14 @@ func TestWorkspaceRunnerExtensionProcessE2E(t *testing.T) {
 				assert.False(t, state.Running)
 				assert.Zero(t, state.Pid)
 				assert.ErrorContains(t, state.LastErr, tt.wantErr)
-				assert.Contains(t, readLog(), tt.wantLog)
+				requireExtensionLog(t, runner, tt.wantLog)
 				return
 			}
 			require.NoError(t, err)
 			require.Eventually(t, func() bool {
-				return strings.Contains(readLog(), tt.wantLog)
+				return strings.Contains(readExtensionLog(t, runner), "config read")
 			}, 10*time.Second, 10*time.Millisecond, "the extension must read its config to EOF")
+			requireExtensionLog(t, runner, tt.wantLog)
 			data, err := os.ReadFile(filepath.Join(dir, "config.json"))
 			require.NoError(t, err)
 			var cfg extensionapi.Config
