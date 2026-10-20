@@ -1946,6 +1946,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 	green := term.Attributes{Fg: term.ColorGreen}
 	red := term.Attributes{Fg: term.ColorRed}
 	yellow := term.Attributes{Fg: term.ColorYellow}
+	cyan := term.Attributes{Fg: term.ColorAqua}
 	bell := term.Attributes{Attrs: term.AttrBlink}
 	// The shader is a no-op on the first frame, so the unfocused name
 	// attribute is what the tab bar paints.
@@ -1976,14 +1977,14 @@ func TestSetTabStatusDecorations(t *testing.T) {
 			desc:     "idle as reported",
 			status:   programstatus.Report{State: programstatus.Idle, Progress: -1},
 			icon:     'a',
-			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorGray, Attrs: offset},
 			nameAttr: nonFocus,
 		},
 		{
 			desc:     "working",
 			status:   programstatus.Report{State: programstatus.Working, Progress: -1},
 			icon:     '⠋',
-			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorAqua, Attrs: offset},
 			nameAttr: nonFocus,
 			shaded:   true,
 		},
@@ -1991,7 +1992,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 			desc:     "working with progress",
 			status:   programstatus.Report{State: programstatus.Working, Progress: 40},
 			icon:     '⠋',
-			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorAqua, Attrs: offset},
 			nameAttr: nonFocus,
 			painted:  4,
 			shaded:   true,
@@ -2002,7 +2003,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 				State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
 			},
 			icon:     '󰹇',
-			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, yellow),
 		},
 		{
@@ -2011,7 +2012,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 				State: programstatus.Blocked, Kind: programstatus.KindQuestion, Progress: -1,
 			},
 			icon:     '󰋗',
-			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, yellow),
 		},
 		{
@@ -2020,28 +2021,28 @@ func TestSetTabStatusDecorations(t *testing.T) {
 				State: programstatus.Blocked, Kind: programstatus.KindAuth, Progress: -1,
 			},
 			icon:     '󰗒',
-			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, yellow),
 		},
 		{
 			desc:     "blocked without a kind",
 			status:   programstatus.Report{State: programstatus.Blocked, Progress: -1},
 			icon:     '󰹇',
-			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, yellow),
 		},
 		{
 			desc:     "done",
 			status:   programstatus.Report{State: programstatus.Done, Progress: -1},
 			icon:     '󰗠',
-			iconAttr: term.Attributes{Fg: term.ColorSilver, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorGreen, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, green),
 		},
 		{
 			desc:     "error",
 			status:   programstatus.Report{State: programstatus.Error, Progress: -1},
 			icon:     '󰅙',
-			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, red),
 		},
 		{
@@ -2057,7 +2058,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 			bell:     true,
 			status:   programstatus.Report{State: programstatus.Error, Progress: -1},
 			icon:     '󰅙',
-			iconAttr: term.Attributes{Fg: term.ColorYellow, Attrs: offset},
+			iconAttr: term.Attributes{Fg: term.ColorRed, Attrs: offset},
 			nameAttr: term.AttributesUnion(nonFocus, term.Attributes{
 				Fg: term.ColorRed, Attrs: term.AttrBlink,
 			}),
@@ -2084,7 +2085,7 @@ func TestSetTabStatusDecorations(t *testing.T) {
 			for i := range 10 {
 				want := tc.nameAttr
 				if i < tc.painted {
-					want = term.AttributesUnion(want, green)
+					want = term.AttributesUnion(want, cyan)
 				}
 				assert.Equalf(t, want, cells[name+i].Attributes(), "name cell %d", i)
 			}

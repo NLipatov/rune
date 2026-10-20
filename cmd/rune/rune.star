@@ -1080,8 +1080,8 @@ config = {
                 "blocked_attr":      attr(fg = "default", bg = "default"),
                 "done_attr":         attr(fg = "default", bg = "default"),
                 "error_attr":        attr(fg = "default", bg = "default"),
-                "idle_icon_attr":    attr(fg = "yellow"),
-                "working_icon_attr": attr(fg = "yellow"),
+                "idle_icon_attr":    attr(fg = "gray"),
+                "working_icon_attr": attr(fg = "cyan"),
                 "done_icon_attr":    attr(fg = "green"),
                 "blocked_icon_attr": attr(fg = "yellow"),
                 "error_icon_attr":   attr(fg = "red"),
@@ -1092,7 +1092,7 @@ config = {
             # animations.active_workspace_tab effect.
             "workspace_tab": {
                 "progress":          True,
-                "working_done_attr": attr(fg = "green"),
+                "working_done_attr": attr(fg = "cyan"),
                 "blocked_attr":      attr(fg = "yellow"),
                 "done_attr":         attr(fg = "green"),
                 "error_attr":        attr(fg = "red"),

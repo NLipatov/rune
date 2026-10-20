@@ -94,11 +94,11 @@ shipped configuration:
 
 | State | Tab icon | Tab name |
 | --- | --- | --- |
-| `working` | A spinner, in yellow | The `animations.active_content_tab` effect plays over it |
+| `working` | A spinner, in cyan | The `animations.active_content_tab` effect plays over it |
 | `blocked` | `?` for `permission` and `question`, `@` for `auth`, in yellow | Unchanged |
 | `done` | A check mark, in green | Unchanged |
 | `error` | `x`, in red | Unchanged |
-| `idle` | The tab's own icon, in yellow | Unchanged |
+| `idle` | The tab's own icon, in gray | Unchanged |
 
 A program that reported `idle` is at rest and waiting on you, which is why its
 icon is colored until you see the tab; a tab whose program never reported
@@ -126,8 +126,8 @@ drawn from every tab and from terminals that are not tabs, such as floating
 With the shipped configuration the workspace's name turns yellow when
 blocked, red on error, and green once done. While the workspace is working,
 the `animations.active_workspace_tab` effect plays over its name, and a
-reported percentage fills the name in green from the left, so the tab reads as
-turning green as the work completes. The effect stops as soon as anything in
+reported percentage fills the name in cyan from the left, so the tab reads as
+filling up as the work completes. The effect stops as soon as anything in
 the workspace is blocked, failed, or finished, so it never hides a workspace
 that needs you.
 
@@ -379,9 +379,9 @@ keep the tab's own:
 | Key | `content_tab` | `workspace_tab` | Effect |
 | --- | --- | --- | --- |
 | `progress` | `false` | `true` | Split a working label at the reported percentage. |
-| `working_done_attr` | default | green | The completed part of a split label. |
+| `working_done_attr` | default | cyan | The completed part of a split label. |
 | `blocked_attr`, `done_attr`, `error_attr` | default | yellow, green, red | The name in that state. |
-| `idle_icon_attr`, `working_icon_attr` | yellow | default | The icon of a tab that reported `idle`, or the spinner. |
+| `idle_icon_attr`, `working_icon_attr` | gray, cyan | default | The icon of a tab that reported `idle`, or the spinner. |
 | `blocked_icon_attr`, `done_icon_attr`, `error_icon_attr` | yellow, green, red | default | The icon in that state. |
 
 For example, to be notified only when a program needs you or fails, and to

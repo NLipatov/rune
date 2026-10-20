@@ -374,10 +374,16 @@ func TestRuneStarFixture(t *testing.T) {
 			initConfig(&ide, cfg, nil, term.RingBell, term.ScheduleNextTick, "")
 			status := ide.tabStatusConfig()
 			assert.False(t, status.ContentTab.Progress)
+			ct := status.ContentTab
+			assert.Equal(t, term.Attributes{Fg: term.ColorGray}, ct.IdleIconAttr)
+			assert.Equal(t, term.Attributes{Fg: term.ColorAqua}, ct.WorkingIconAttr)
+			assert.Equal(t, term.Attributes{Fg: term.ColorYellow}, ct.BlockedIconAttr)
+			assert.Equal(t, term.Attributes{Fg: term.ColorGreen}, ct.DoneIconAttr)
+			assert.Equal(t, term.Attributes{Fg: term.ColorRed}, ct.ErrorIconAttr)
 			ws := status.WorkspaceTab
 			assert.True(t, ws.Progress)
 			green := term.Attributes{Fg: term.ColorGreen}
-			assert.Equal(t, green, ws.WorkingDoneAttr)
+			assert.Equal(t, term.Attributes{Fg: term.ColorAqua}, ws.WorkingDoneAttr)
 			assert.Equal(t, green, ws.DoneAttr)
 			assert.Equal(t, term.Attributes{Fg: term.ColorYellow}, ws.BlockedAttr)
 			assert.Equal(t, term.Attributes{Fg: term.ColorRed}, ws.ErrorAttr)
