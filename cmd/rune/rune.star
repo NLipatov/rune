@@ -331,9 +331,9 @@ config = {
         # of "duration" at a time through "time_shader", over and over.
         "screensaver": {
             "enabled":      True,
-            "idle_timeout": "10s",
-            "shaders":      ["shine"],  # e.g. ["matrix", "rain", "inferno"]
-            "duration":     "5s",
+            "idle_timeout": "10m",
+            "shaders":      ["thunderstorm", "spotlights", "vhsTape"],
+            "duration":     "15s",
             # one of loop, ping_pong, reverse, accelerate, decelerate or boomerang
             "time_shader":  "loop",
             "fps":          30,
