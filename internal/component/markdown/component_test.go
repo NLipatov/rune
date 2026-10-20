@@ -929,10 +929,6 @@ func TestComponentInitBeforeResize(t *testing.T) {
 }
 
 func TestLinkAtOnSpacingRow(t *testing.T) {
-	// Two paragraphs: "Hello" then a link. Each paragraph block has
-	// height = content lines + 1 (trailing spacing). A click on the
-	// spacing row of the first block should still find the link in
-	// the adjacent block below.
 	content := "Hello\n\n[click me](http://example.com)"
 	md, err := New(content)
 	require.NoError(t, err)
@@ -942,20 +938,13 @@ func TestLinkAtOnSpacingRow(t *testing.T) {
 	// Block 1: "click me" → height 2 (1 line + 1 spacing), Y=2..3
 	require.Equal(t, []int{2, 2}, md.BlockHeights())
 
-	// Direct hit on the link text (Y=2, first content row of block 1).
 	link := md.LinkAt(0, 2)
 	require.NotNil(t, link, "direct click on link row")
 	assert.Equal(t, "http://example.com", link.URL)
 
-	// Click on the spacing row of block 0 (Y=1). The next block's
-	// first row has the link, so LinkAt should still find it.
-	link = md.LinkAt(0, 1)
-	require.NotNil(t, link, "click on spacing row above link")
-	assert.Equal(t, "http://example.com", link.URL)
-
-	// Click on block 0 content (Y=0) should NOT find a link.
-	link = md.LinkAt(0, 0)
-	assert.Nil(t, link, "no link on content row of first block")
+	assert.Nil(t, md.LinkAt(0, 1), "no link on the blank row above the link")
+	assert.Nil(t, md.LinkAt(0, 0), "no link on content row of first block")
+	assert.Nil(t, md.LinkAt(0, 3), "no link on the blank row below the link")
 }
 
 func TestSearchFindsMatches(t *testing.T) {

@@ -258,20 +258,7 @@ func (c *Component) LinkAt(x, y int) *LinkInfo {
 	for i, blk := range c.blocks {
 		blockHeight := c.blockHeights[i]
 		if docY >= blockY && docY < blockY+blockHeight {
-			relY := docY - blockY
-			if info := c.linkInBlock(blk, x, relY); info != nil {
-				return info
-			}
-			// Each block's height includes a trailing spacing row.
-			// If we landed on that spacing and the next block's first
-			// row has a link, return it so clicks just above a link
-			// still work.
-			if relY == blockHeight-1 && i+1 < len(c.blocks) {
-				if info := c.linkInBlock(c.blocks[i+1], x, 0); info != nil {
-					return info
-				}
-			}
-			return nil
+			return c.linkInBlock(blk, x, docY-blockY)
 		}
 		blockY += blockHeight
 	}
