@@ -298,7 +298,7 @@ func newGUIBenchSession(tb testing.TB, cfg guiBenchConfig) *guiBenchSession {
 	// so every font load resolves against scale 1 regardless of the
 	// host monitor. Everything after mirrors runGUI exactly.
 	options := []gui.Option{gui.WithDeviceScale(1)}
-	options = append(options, buildGUIOptions(browser, guiCfg,
+	options = append(options, buildGUIOptions(browser, root.config(), guiCfg,
 		transparentWindow, s.mu, false)...)
 	options = append(options, gui.WithSize(cfg.pixelsW, cfg.pixelsH))
 	if cfg.forceFullRepaint {

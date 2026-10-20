@@ -764,12 +764,12 @@ func runGUI(
 		envErr = fmt.Errorf("load config for gui.env: %w", envErr)
 		rootCfg = config.NopConfig()
 	}
-	guiCfg, _, err := getGUIConfig(rootCfg)
+	envGUICfg, _, err := getGUIConfig(rootCfg)
 	if err != nil {
 		envErr = multierr.Append(envErr, err)
 	}
-	if guiCfg == nil {
-		guiCfg = config.NopConfig()
+	if envGUICfg == nil {
+		envGUICfg = config.NopConfig()
 	}
 
 	// gui.env must be applied before the workspace is created, otherwise we
@@ -778,7 +778,7 @@ func runGUI(
 	// $PATH, so we must wait for the login-shell PATH resolve first; when it
 	// does not, we still wait, because we run LSP servers or other tools
 	// which might need PATH to be set
-	if err := applyShellPATHAndGUIEnv(host, guiCfg, pathDone); err != nil {
+	if err := applyShellPATHAndGUIEnv(host, envGUICfg, pathDone); err != nil {
 		envErr = multierr.Append(envErr, err)
 	}
 
@@ -799,15 +799,15 @@ func runGUI(
 	if chdirerr != nil {
 		_, _ = browser.Notify(browserapi.LevelError, "%v", chdirerr)
 	}
-	cfg, ok, err := getGUIConfig(root.config())
+	guiCfg, ok, err := getGUIConfig(root.config())
 	if err != nil {
 		_, _ = browser.Notify(browserapi.LevelError, "%v", err)
 	}
 	if !ok {
-		cfg = config.NopConfig()
+		guiCfg = config.NopConfig()
 	}
 
-	transparentWindow := getGUITransparentWindow(browser, cfg)
+	transparentWindow := getGUITransparentWindow(browser, guiCfg)
 
 	if envErr != nil {
 		_, _ = browser.Notify(browserapi.LevelError, "%s", envErr)
@@ -816,7 +816,7 @@ func runGUI(
 		reportShellRCErr(browser, shellRCErr)
 	}
 
-	options := buildGUIOptions(browser, cfg, transparentWindow, mu, *flagFPS)
+	options := buildGUIOptions(browser, root.config(), guiCfg, transparentWindow, mu, *flagFPS)
 	options = append(options, gui.WithDragObserver(root.dragObserver))
 	options = append(options, gui.WithLinkObserver(root.linkObserver))
 
@@ -840,10 +840,9 @@ func runGUI(
 	defer func() { _ = g.Close() }()
 	guiRef.Store(g)
 	root.attachGUI(g, transparentWindow)
-	defer watchGUISignals(publishEvent,
-		quitEvent(appMenuKeyBindings(cfg)))()
+	defer watchGUISignals(publishEvent, quitEvent(appMenuKeyBindings(root.config())))()
 
-	if fg, bg := getGUIWindowOpacity(browser, cfg); transparentWindow && (fg != 1 || bg != 1) {
+	if fg, bg := getGUIWindowOpacity(browser, guiCfg); transparentWindow && (fg != 1 || bg != 1) {
 		g.SetOpacity(bg, fg)
 	}
 	if root.alreadyBootstrapped() {
@@ -875,28 +874,28 @@ func runGUI(
 }
 
 // buildGUIOptions builds the gui.Option list for the production GUI
-// runtime from the gui config section. It is shared between runGUI and
-// the GUI benchmark harness so benchmarks measure the exact production
-// GUI wiring.
+// runtime from cfg, the full configuration, and guiCfg, its gui
+// section. It is shared between runGUI and the GUI benchmark harness so
+// benchmarks measure the exact production GUI wiring.
 func buildGUIOptions(
-	b browser.Browser, cfg config.Config, transparentWindow bool,
+	b browser.Browser, cfg, guiCfg config.Config, transparentWindow bool,
 	mu sync.Locker, printFPS bool,
 ) []gui.Option {
 	return []gui.Option{
-		gui.WithColorThemes(getGUIDefaultColorTheme(b, cfg), getGUIColorThemes(b, cfg)),
-		gui.WithFontDPI(getGUIFontDPI(b, cfg)),
-		gui.WithFontSize(getGUIFontSize(b, cfg)),
-		gui.WithFontFamily(getGUIFontFamily(b, cfg)),
-		gui.WithColumnWidthOffset(getGUIColumnWidthOffset(b, cfg)),
-		gui.WithLineHeightOffset(getGUILineHeightOffset(b, cfg)),
-		gui.WithScrollMultiplier(getGUIScrollMultiplier(b, cfg)),
-		gui.WithLigatures(getGUILigatures(b, cfg)),
+		gui.WithColorThemes(getGUIDefaultColorTheme(b, guiCfg), getGUIColorThemes(b, guiCfg)),
+		gui.WithFontDPI(getGUIFontDPI(b, guiCfg)),
+		gui.WithFontSize(getGUIFontSize(b, guiCfg)),
+		gui.WithFontFamily(getGUIFontFamily(b, guiCfg)),
+		gui.WithColumnWidthOffset(getGUIColumnWidthOffset(b, guiCfg)),
+		gui.WithLineHeightOffset(getGUILineHeightOffset(b, guiCfg)),
+		gui.WithScrollMultiplier(getGUIScrollMultiplier(b, guiCfg)),
+		gui.WithLigatures(getGUILigatures(b, guiCfg)),
 		gui.WithTransparentWindow(transparentWindow),
-		gui.WithBackgroundBlur(getGUIBackgroundBlur(b, cfg)),
+		gui.WithBackgroundBlur(getGUIBackgroundBlur(b, guiCfg)),
 		gui.WithLocker(mu),
 		gui.WithPrintFPS(printFPS),
-		gui.WithKeyMapping(getGUIKeyMapping(b, cfg)),
-		gui.WithAltModifier(getGUIAltModifier(b, cfg)),
+		gui.WithKeyMapping(getGUIKeyMapping(b, guiCfg)),
+		gui.WithAltModifier(getGUIAltModifier(b, guiCfg)),
 		gui.WithCloseRequestEvent(quitEvent(appMenuKeyBindings(cfg))),
 	}
 }
