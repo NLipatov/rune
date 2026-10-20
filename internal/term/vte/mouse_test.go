@@ -850,11 +850,19 @@ func pointerEv() (term.Event, *term.Pointer) {
 
 func TestHandlerPointerShape(t *testing.T) {
 	t.Parallel()
+	osc := func(body string) string { return "\x1b]22;" + body + "\x1b\\" }
 	const (
 		tracking = "\x1b[?1000h"
 		link     = "\x1b]22;pointer\x1b\\"
 		reset    = "\x1b]22;\x1b\\"
 	)
+	fullStack := osc("move")
+	for range 16 {
+		fullStack += osc(">pointer")
+	}
+	for range 16 {
+		fullStack += osc("<")
+	}
 	cases := []struct {
 		name string
 		// before is the program's output before the event, after its
@@ -869,9 +877,27 @@ func TestHandlerPointerShape(t *testing.T) {
 		{"reset to the terminal's", link + reset, "", term.PointerText},
 		{"reset while the program tracks the mouse", tracking + link + reset, "",
 			term.PointerDefault},
+		{"closest shape of a name without its own", osc("wait"), "", term.PointerDefault},
+		{"x11 name", osc("hand2"), "", term.PointerLink},
+		{"unknown name keeps the shape", link + osc("nope"), "", term.PointerLink},
+		{"set stops at the first unknown name", osc("move,nope,pointer"), "", term.PointerMove},
+		{"pushed shape", osc(">pointer"), "", term.PointerLink},
+		{"last pushed name", osc(">move,pointer"), "", term.PointerLink},
+		{"pop restores the shape below", osc("move") + osc(">pointer") + osc("<"), "",
+			term.PointerMove},
+		{"popping the last shape lets the terminal choose", osc(">pointer") + osc("<"), "",
+			term.PointerText},
+		{"pop of an empty stack", osc("<") + osc("<") + link, "", term.PointerLink},
+		{"set replaces the top", osc(">move") + osc(">text") + osc("=pointer") + osc("<"), "",
+			term.PointerMove},
+		{"a full stack evicts its bottom", fullStack, "", term.PointerText},
+		{"extra parameters are ignored", osc("pointer;text"), "", term.PointerText},
 		{"shape set under a resting pointer", "", link, term.PointerLink},
 		{"reset under a resting pointer", link, reset, term.PointerText},
+		{"pop under a resting pointer", osc("move") + osc(">pointer"), osc("<"), term.PointerMove},
 		{"full reset under a resting pointer", tracking + link, "\x1bc", term.PointerText},
+		{"full reset empties the stack", osc(">move") + osc(">pointer") + "\x1bc" + osc("<"), "",
+			term.PointerText},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -883,6 +909,35 @@ func TestHandlerPointerShape(t *testing.T) {
 			h.output(tc.after)
 			shape, _ := p.Shape()
 			assert.Equal(t, tc.want.String(), shape.String())
+		})
+	}
+}
+
+func TestHandlerPointerShapeQuery(t *testing.T) {
+	t.Parallel()
+	osc := func(body string) string { return "\x1b]22;" + body + "\x1b\\" }
+	cases := []struct {
+		name, output, want string
+	}{
+		{"supported names", osc("?pointer,nope,wait,xterm"), osc("1,0,1,1")},
+		{"empty query", osc("?"), osc("0")},
+		{"current of an empty stack", osc("?__current__"), osc("0")},
+		{"current shape", osc("move") + osc("?__current__"), osc("move")},
+		{"current shape of an x11 name", osc("hand2") + osc("?__current__"), osc("pointer")},
+		{"current shape once the terminal chooses", osc("move") + osc("") + osc("?__current__"),
+			osc("0")},
+		{"current shape after a pop", osc("move") + osc(">text") + osc("<") + osc("?__current__"),
+			osc("move")},
+		{"terminal shapes", osc("?__default__,__grabbed__"), osc("text,default")},
+		{"BEL terminated", "\x1b]22;?pointer\x07", "\x1b]22;1\x07"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newPointerHarness(t)
+			h.written()
+			h.output(tc.output)
+			assert.Equal(t, tc.want, h.written())
 		})
 	}
 }

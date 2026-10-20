@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vtescanner"
 )
@@ -49,37 +48,56 @@ type pointerShapeHandler struct {
 	calls []string
 }
 
-func (h *pointerShapeHandler) SetPointerShape(shape term.PointerShape) {
-	h.calls = append(h.calls, shape.String())
+func (h *pointerShapeHandler) SetPointerShape(shape PointerShape) {
+	h.calls = append(h.calls, "set("+string(shape)+")")
 }
 
-func (h *pointerShapeHandler) ResetPointerShape() {
-	h.calls = append(h.calls, "reset")
+func (h *pointerShapeHandler) PushPointerShape(shape PointerShape) {
+	h.calls = append(h.calls, "push("+string(shape)+")")
+}
+
+func (h *pointerShapeHandler) PopPointerShape() {
+	h.calls = append(h.calls, "pop()")
+}
+
+func (h *pointerShapeHandler) PointerShapeQuery(names []string, terminator string) {
+	h.calls = append(h.calls, "query("+strings.Join(names, ",")+")"+terminator)
 }
 
 func TestOSCDispatchPointerShape(t *testing.T) {
 	t.Parallel()
-	osc := func(body string) string { return "\x1b]22;" + body + "\x1b\\" }
+	const st, bel = "\x1b\\", "\x07"
+	osc := func(body string) string { return "\x1b]22;" + body + st }
 	cases := []struct {
 		name   string
 		stream string
 		want   []string
 	}{
-		{"name", osc("pointer"), []string{"pointer"}},
-		{"BEL terminated", "\x1b]22;text\x07", []string{"text"}},
-		{"case insensitive", osc("Col-Resize"), []string{"col-resize"}},
-		{"x11 name", osc("xterm"), []string{"text"}},
-		{"set operation", osc("=move"), []string{"move"}},
-		{"push operation", osc(">ns-resize"), []string{"ns-resize"}},
-		{"first known name of a list", osc("wait,pointer,text"), []string{"pointer"}},
-		{"explicit default", osc("default"), []string{"default"}},
-		{"pop resets", osc("<"), []string{"reset"}},
-		{"empty name resets", osc(""), []string{"reset"}},
-		{"missing name resets", "\x1b]22\x1b\\", []string{"reset"}},
-		{"set operation without a name resets", osc("="), []string{"reset"}},
-		{"unknown names are ignored", osc("wait,progress"), nil},
-		{"queries are ignored", osc("?pointer"), nil},
-		{"sequences apply in order", osc("text") + osc(""), []string{"text", "reset"}},
+		{"name", osc("pointer"), []string{"set(pointer)"}},
+		{"BEL terminated", "\x1b]22;text" + bel, []string{"set(text)"}},
+		{"case insensitive", osc("Col-Resize"), []string{"set(col-resize)"}},
+		{"name without a shape of its own", osc("wait"), []string{"set(wait)"}},
+		{"x11 name", osc("xterm"), []string{"set(text)"}},
+		{"x11 open hand", osc("hand1"), []string{"set(grab)"}},
+		{"set operation", osc("=move"), []string{"set(move)"}},
+		{"set applies every name in order", osc("=wait,pointer"),
+			[]string{"set(wait)", "set(pointer)"}},
+		{"set stops at the first unknown name", osc("wait,nope,pointer"), []string{"set(wait)"}},
+		{"empty name lets the terminal choose", osc(""), []string{"set()"}},
+		{"missing name lets the terminal choose", "\x1b]22" + st, []string{"set()"}},
+		{"set operation without a name", osc("="), []string{"set()"}},
+		{"push operation", osc(">ns-resize"), []string{"push(ns-resize)"}},
+		{"push applies every name in order", osc(">wait,pointer"),
+			[]string{"push(wait)", "push(pointer)"}},
+		{"push skips empty names", osc(">,text,"), []string{"push(text)"}},
+		{"push without a name", osc(">"), nil},
+		{"pop", osc("<"), []string{"pop()"}},
+		{"pop ignores names", osc("<pointer,text"), []string{"pop()"}},
+		{"query", osc("?pointer,nope,__current__"), []string{"query(pointer,nope,__current__)" + st}},
+		{"BEL terminated query", "\x1b]22;?text" + bel, []string{"query(text)" + bel}},
+		{"unknown names are ignored", osc("nope"), nil},
+		{"extra parameters are ignored", osc("pointer;text"), nil},
+		{"sequences apply in order", osc("text") + osc(""), []string{"set(text)", "set()"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

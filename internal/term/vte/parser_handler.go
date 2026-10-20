@@ -24,6 +24,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
@@ -124,15 +126,17 @@ type parserHandler struct {
 	// every row above the bottom margin up by count.
 	historyScrolled func(count int)
 
-	// programPointer is the pointer shape the program set with OSC 22,
-	// if programPointerSet.
-	programPointer    term.PointerShape
-	programPointerSet bool
+	// pointerShapes is the OSC 22 pointer shape stack, top last.
+	pointerShapes []vteparser.PointerShape
 	// pointer is the slot of the last mouse event that reached the
 	// program, kept so that the shape changes under a resting pointer.
 	// It outlives ResetState.
 	pointer *term.Pointer
 }
+
+// pointerShapeStackSize is kitty's, the smallest its OSC 22 protocol
+// allows.
+const pointerShapeStackSize = 16
 
 // use a common api for alternate and primary buffers
 // used to simplify critical path calls and avoid extra branches
@@ -2238,28 +2242,87 @@ func (t *parserHandler) PromptStart() {
 }
 
 // SetPointerShape satisfies vteparser.Handler.
-func (t *parserHandler) SetPointerShape(shape term.PointerShape) {
+func (t *parserHandler) SetPointerShape(shape vteparser.PointerShape) {
 	t.sync.mu.Lock()
 	defer t.sync.mu.Unlock()
-	t.programPointer, t.programPointerSet = shape, true
+	if n := len(t.pointerShapes); n > 0 {
+		t.pointerShapes[n-1] = shape
+	} else {
+		t.pointerShapes = append(t.pointerShapes, shape)
+	}
 	t.showPointerShape()
 }
 
-// ResetPointerShape satisfies vteparser.Handler.
-func (t *parserHandler) ResetPointerShape() {
+// PushPointerShape satisfies vteparser.Handler. A full stack drops its
+// bottom shape.
+func (t *parserHandler) PushPointerShape(shape vteparser.PointerShape) {
 	t.sync.mu.Lock()
 	defer t.sync.mu.Unlock()
-	t.programPointerSet = false
+	if len(t.pointerShapes) == pointerShapeStackSize {
+		t.pointerShapes = slices.Delete(t.pointerShapes, 0, 1)
+	}
+	t.pointerShapes = append(t.pointerShapes, shape)
 	t.showPointerShape()
 }
 
-// pointerShape returns the shape the program set, else the arrow while
-// the program tracks the mouse, else the text cursor of the selection, as
+// PopPointerShape satisfies vteparser.Handler.
+func (t *parserHandler) PopPointerShape() {
+	t.sync.mu.Lock()
+	defer t.sync.mu.Unlock()
+	if n := len(t.pointerShapes); n > 0 {
+		t.pointerShapes = t.pointerShapes[:n-1]
+		t.showPointerShape()
+	}
+}
+
+// PointerShapeQuery satisfies vteparser.Handler. The terminal's default
+// and grabbed shapes are the ones pointerShape falls back to.
+func (t *parserHandler) PointerShapeQuery(names []string, terminator string) {
+	t.sync.mu.Lock()
+	current := t.programPointerShape()
+	t.sync.mu.Unlock()
+	answers := make([]string, len(names))
+	for i, name := range names {
+		switch name {
+		case "__current__":
+			answers[i] = string(current)
+			if current == "" {
+				answers[i] = "0"
+			}
+		case "__default__":
+			answers[i] = term.PointerText.String()
+		case "__grabbed__":
+			answers[i] = term.PointerDefault.String()
+		default:
+			answers[i] = "0"
+			if _, ok := vteparser.ParsePointerShape(name); ok {
+				answers[i] = "1"
+			}
+		}
+	}
+	reply := "\x1b]22;" + strings.Join(answers, ",") + terminator
+	if _, err := t.pty.Master.Write([]byte(reply)); err != nil {
+		t.log(log.WarnLevel, "write pointer shape reply to pty: %v", err)
+	}
+}
+
+// programPointerShape returns the shape on top of the OSC 22 stack, empty
+// when the terminal chooses. It must be called with t.sync.mu held.
+func (t *parserHandler) programPointerShape() vteparser.PointerShape {
+	if n := len(t.pointerShapes); n > 0 {
+		return t.pointerShapes[n-1]
+	}
+	return ""
+}
+
+// pointerShape returns the program's shape, else the arrow while the
+// program tracks the mouse, else the text cursor of the selection, as
 // kitty does. It must be called with t.sync.mu held.
 func (t *parserHandler) pointerShape() term.PointerShape {
+	shape := t.programPointerShape()
 	switch {
-	case t.programPointerSet:
-		return t.programPointer
+	case shape != "":
+		return shape.Shape()
 	case t.modeReportMouseClicks || t.modeReportCellMouseMotion || t.modeReportAllMouseMotion:
 		return term.PointerDefault
 	default:

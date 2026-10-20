@@ -250,7 +250,7 @@ func (p *driver) OSCDispatch(params [][]byte, bellTerminated bool) {
 	case "10", "11", "12":
 		/* unsupported setting color value of indexed color, or responding to dynamic color query */
 	case "22":
-		p.pointerShapeDispatch(params)
+		p.pointerShapeDispatch(params, terminator)
 	case "50":
 		if len(params) >= 2 && len(params[1]) >= 13 &&
 			bytes.HasPrefix(params[1], []byte("CursorShape=")) {
@@ -329,37 +329,48 @@ func (p *driver) programStatusDispatch(params [][]byte, terminator string) {
 	p.handler.ProgramStatus(report)
 }
 
-// pointerShapeDispatch handles OSC 22. The name may carry the kitty set
-// (=) or push (>) operation, which both set the shape; there is no stack,
-// so pop (<) resets it, as does an empty name. Of a comma separated list
-// of names the first known one wins. Queries (?) are not answered.
-func (p *driver) pointerShapeDispatch(params [][]byte) {
+// pointerShapeDispatch handles OSC 22 as kitty specifies it: an optional
+// operation, set (= or none), push (>), pop (<) or query (?), followed by
+// a comma separated list of names. Set and push apply the names in order,
+// as kitty does, up to the first unknown one; push skips empty names and
+// pop ignores them all.
+func (p *driver) pointerShapeDispatch(params [][]byte, terminator string) {
+	if len(params) > 2 {
+		p.logUnhandledOSC(params)
+		return
+	}
 	var body string
-	if len(params) > 1 {
+	if len(params) == 2 {
 		body = string(params[1])
 	}
-	if body != "" {
-		switch body[0] {
-		case '?':
-			p.logUnhandledOSC(params)
-			return
-		case '<':
-			body = ""
-		case '=', '>':
-			body = body[1:]
-		}
+	op := byte('=')
+	if body != "" && strings.IndexByte("=><?", body[0]) >= 0 {
+		op, body = body[0], body[1:]
 	}
-	if body == "" {
-		p.handler.ResetPointerShape()
+	switch op {
+	case '<':
+		p.handler.PopPointerShape()
+		return
+	case '?':
+		p.handler.PointerShapeQuery(strings.Split(body, ","), terminator)
 		return
 	}
 	for name := range strings.SplitSeq(body, ",") {
-		if shape, ok := term.ParsePointerShape(name); ok {
+		var shape PointerShape
+		if name != "" {
+			var ok bool
+			if shape, ok = ParsePointerShape(name); !ok {
+				p.logUnhandledOSC(params)
+				return
+			}
+		}
+		switch {
+		case op == '=':
 			p.handler.SetPointerShape(shape)
-			return
+		case shape != "":
+			p.handler.PushPointerShape(shape)
 		}
 	}
-	p.logUnhandledOSC(params)
 }
 
 func (p *driver) CSIDispatch(

@@ -266,13 +266,24 @@ type Handler interface {
 	// PromptStart marks the beginning of a shell prompt (OSC 133 A).
 	PromptStart()
 
-	// SetPointerShape sets the mouse pointer shape the program wants over
-	// the terminal (OSC 22).
-	SetPointerShape(shape term.PointerShape)
+	// SetPointerShape replaces the shape on top of the OSC 22 pointer
+	// shape stack, pushing it onto an empty one. The empty shape lets the
+	// terminal choose.
+	SetPointerShape(shape PointerShape)
 
-	// ResetPointerShape lets the terminal choose the mouse pointer shape
-	// again.
-	ResetPointerShape()
+	// PushPointerShape pushes shape onto the OSC 22 pointer shape stack.
+	PushPointerShape(shape PointerShape)
+
+	// PopPointerShape pops the OSC 22 pointer shape stack; popping an
+	// empty stack has no effect.
+	PopPointerShape()
+
+	// PointerShapeQuery answers an OSC 22 query with one comma separated
+	// answer per name, terminated with terminator (BEL or ST): 1 or 0
+	// for whether a shape name is supported, or the shape name for
+	// __current__ (0 when the terminal chooses), __default__ and
+	// __grabbed__.
+	PointerShapeQuery(names []string, terminator string)
 }
 
 // KeyboardMode is the vte keyboard mode.

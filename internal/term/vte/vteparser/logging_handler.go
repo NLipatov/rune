@@ -19,7 +19,6 @@ package vteparser
 import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/blue/logging"
-	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/term/graphemecluster"
 	"unstable.build/rune/internal/term/programstatus"
 )
@@ -449,14 +448,24 @@ func (h loggingHandler) PromptStart() {
 	h.h.PromptStart()
 }
 
-func (h loggingHandler) SetPointerShape(shape term.PointerShape) {
-	h.log("SetPointerShape %v", shape)
+func (h loggingHandler) SetPointerShape(shape PointerShape) {
+	h.log("SetPointerShape %q", shape)
 	h.h.SetPointerShape(shape)
 }
 
-func (h loggingHandler) ResetPointerShape() {
-	h.log("ResetPointerShape")
-	h.h.ResetPointerShape()
+func (h loggingHandler) PushPointerShape(shape PointerShape) {
+	h.log("PushPointerShape %q", shape)
+	h.h.PushPointerShape(shape)
+}
+
+func (h loggingHandler) PopPointerShape() {
+	h.log("PopPointerShape")
+	h.h.PopPointerShape()
+}
+
+func (h loggingHandler) PointerShapeQuery(names []string, terminator string) {
+	h.log("PointerShapeQuery %q %q", names, terminator)
+	h.h.PointerShapeQuery(names, terminator)
 }
 
 func (h loggingHandler) log(line string, params ...any) {
