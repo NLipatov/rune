@@ -108,6 +108,7 @@ invoke_command(h, args = ["world"])  # dispatch and wait for completion
 out = invoke_repl_command(r, args = [])  # its output, rendered 80 columns wide;
                                      # fails if the output ends in an error
 open_resource(o, "chat://host/1")    # ask for the content and show it
+uris = complete_resource(o, "chat://")  # the URIs completing a prefix, in order
 publish_event("open", uri = "file:///tmp/x", content = "...")
 
 # -- rendering installed handlers -------------------------------------
@@ -152,6 +153,13 @@ the tab of the uri in the focused window, so `render` draws it and
 `send_key` reaches it. Like any stream, the registration itself can also
 be matched with `expect_rpc("text.Editor/SubscribeResourceOpener")`, and
 the content's stream with `expect_rpc("text.Editor/OpenResource")`.
+
+`complete_resource` asks the same opener for the URIs completing a
+prefix, as Rune does to complete `view` and `edit`, and returns them as a
+list in the order the extension produced them. It fails with the error
+the extension reported, or when the completion does not end within the
+timeout. An extension built with an SDK older than v0.17.1 is not asked,
+as Rune does not ask it, and completes nothing.
 
 ## Report
 

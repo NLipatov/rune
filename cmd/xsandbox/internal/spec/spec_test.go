@@ -39,6 +39,8 @@ type mockHost struct {
 	graphics Graphics
 	// output is what InvokeCommand returns.
 	output string
+	// completions is what CompleteResource returns.
+	completions []string
 }
 
 func (m *mockHost) record(name string, args ...any) error {
@@ -83,6 +85,10 @@ func (m *mockHost) ExpectResourceOpener(scheme string, timeout time.Duration) er
 
 func (m *mockHost) OpenResource(scheme, uri string, timeout time.Duration) error {
 	return m.record("open_resource", scheme, uri, timeout)
+}
+
+func (m *mockHost) CompleteResource(scheme, prefix string, timeout time.Duration) ([]string, error) {
+	return m.completions, m.record("complete_resource", scheme, prefix, timeout)
 }
 
 func (m *mockHost) PublishEvent(evType, uri, content string) error {
@@ -252,13 +258,19 @@ func TestSpecRunResourceOpener(t *testing.T) {
 o = expect_resource_opener("fake", timeout = "3s")
 open_resource(o, "fake://host/a")
 open_resource(o, uri = "fake://host/b", timeout = "2s")
+if complete_resource(o, "fake://") != ["fake://host/a", "fake:///b c"]:
+    fail("unexpected completions")
+if complete_resource(o, prefix = "fake:///", timeout = "1s")[1] != "fake:///b c":
+    fail("unexpected completion")
 `
-	host := &mockHost{}
+	host := &mockHost{completions: []string{"fake://host/a", "fake:///b c"}}
 	require.NoError(t, runSpec(t, src, host))
 	assert.Equal(t, []hostCall{
 		{name: "expect_resource_opener", args: []any{"fake", 3 * time.Second}},
 		{name: "open_resource", args: []any{"fake", "fake://host/a", 7 * time.Second}},
 		{name: "open_resource", args: []any{"fake", "fake://host/b", 2 * time.Second}},
+		{name: "complete_resource", args: []any{"fake", "fake://", 7 * time.Second}},
+		{name: "complete_resource", args: []any{"fake", "fake:///", 1 * time.Second}},
 	}, host.calls)
 }
 
@@ -391,12 +403,23 @@ func TestSpecRunErrors(t *testing.T) {
 			src:     "o = expect_resource_opener(\"fake\")\nopen_resource(o)",
 			wantErr: "missing argument for uri",
 		},
+		{
+			name:    "complete_resource with a scheme instead of a handle",
+			src:     `complete_resource("fake", "fake://")`,
+			wantErr: "must be a handle from expect_resource_opener",
+		},
+		{
+			name:    "complete_resource failure is host error",
+			src:     "o = expect_resource_opener(\"fake\")\ncomplete_resource(o, \"fake://\")",
+			wantErr: "complete_resource failed",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			host := &mockHost{fail: map[string]error{
-				"publish_event": errors.New("publish_event failed"),
+				"publish_event":     errors.New("publish_event failed"),
+				"complete_resource": errors.New("complete_resource failed"),
 			}}
 			err := runSpec(t, tc.src, host)
 			require.Error(t, err)

@@ -17,6 +17,7 @@
 package extension
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1128,6 +1129,40 @@ func (h *aiEditorHandler) OpenResource(
 	return c.content, nil
 }
 
+// CompleteResource satisfies textapi.ResourceOpenHandler. It yields the URIs
+// starting with prefix of the dialogues chat completes without --all, in the
+// order the store lists them. An open chat is offered as the URI of its tab,
+// so opening it shows that tab rather than failing as already open.
+func (h *aiEditorHandler) CompleteResource(
+	ctx context.Context, prefix string,
+) (iterator.Iterator[string], error) {
+	it, err := h.dialogueStore.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("dialogue store list: %w", err)
+	}
+	chats := iterator.Filter(it, func(d dialoguemanager.DialogueHeader) bool {
+		return d.ID != "" && !d.SubAgent && !h.isForeignDialogue(d)
+	})
+	return iterator.Filter(iterator.Map(chats, h.chatURI), func(uri string) bool {
+		return uri != "" && strings.HasPrefix(uri, prefix)
+	}), nil
+}
+
+// chatURI returns the URI that opens the chat of d, or "" when it has none.
+func (h *aiEditorHandler) chatURI(d dialoguemanager.DialogueHeader) string {
+	if v, ok := h.openChats.Load(d.ID); ok {
+		if sc, ok := v.(syncComponent); ok && sc.tab.hasTab() {
+			return sc.tab.uri.String()
+		}
+	}
+	uri, err := getModelUri(d.ID, cmp.Or(d.Model, h.defaultModel))
+	if err != nil {
+		// newChat cannot open such a dialogue either.
+		return ""
+	}
+	return uri.String()
+}
+
 // routeChatCommand forwards a workspace command-prompt command (the
 // chat-prefixed commands like chatmodel, chateffort, chatclear) to the
 // focused rune-agent chat, where it runs exactly as if the user had typed
@@ -1793,10 +1828,6 @@ func (h *aiEditorHandler) completeWithDialoguesIterator(ctx context.Context, sho
 		}
 		return 3
 	}
-	isForeign := func(d dialoguemanager.DialogueHeader) bool {
-		ws, hasWS := d.Workspace()
-		return hasWS && !ws.Equal(h.cwd) && h.gitID.worktrees[ws.String()] == ""
-	}
 
 	// Filter: drop empty IDs, sub-agents, and (unless showAll)
 	// foreign-workspace dialogues.
@@ -1805,7 +1836,7 @@ func (h *aiEditorHandler) completeWithDialoguesIterator(ctx context.Context, sho
 		if d.ID == "" || d.SubAgent {
 			continue
 		}
-		if !showAll && isForeign(d) {
+		if !showAll && h.isForeignDialogue(d) {
 			continue
 		}
 		filtered = append(filtered, d)
@@ -1841,6 +1872,13 @@ func (h *aiEditorHandler) completeWithDialoguesIterator(ctx context.Context, sho
 		}
 	}
 	return iterator.FromSlice(out), nil
+}
+
+// isForeignDialogue reports whether d belongs to a workspace that is
+// neither this one nor one of its sibling worktrees.
+func (h *aiEditorHandler) isForeignDialogue(d dialoguemanager.DialogueHeader) bool {
+	ws, hasWS := d.Workspace()
+	return hasWS && !ws.Equal(h.cwd) && h.gitID.worktrees[ws.String()] == ""
 }
 
 func (h *aiEditorHandler) completeWithModelsIterator(ctx context.Context) (

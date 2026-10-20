@@ -3986,8 +3986,9 @@ func (h *workspaceManagerHandler) subscribeInternalCommands(
 // withoutHistoryFallback yields a single blank candidate when it ends
 // without yielding anything, because the command prompt fills an empty
 // completion with past arguments, and past scheme URIs may name
-// workspaces that are unreachable or never existed. A listing error is
-// logged and treated as empty so it cannot trigger the fallback either.
+// workspaces or resources that are unreachable or never existed. A
+// listing error is logged and treated as empty so it cannot trigger the
+// fallback either.
 func withoutHistoryFallback(it iterator.Iterator[string]) iterator.Iterator[string] {
 	var yielded, done bool
 	return iterator.FromFunc(func(ctx context.Context) (string, bool, error) {
@@ -4004,7 +4005,7 @@ func withoutHistoryFallback(it iterator.Iterator[string]) iterator.Iterator[stri
 			if errors.Is(err, context.Canceled) {
 				return "", false, err
 			}
-			log.Warnf("complete workspaces: %v", err)
+			log.Warnf("complete URIs: %v", err)
 		}
 		if yielded {
 			return "", false, nil

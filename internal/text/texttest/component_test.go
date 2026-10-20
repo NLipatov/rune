@@ -2445,6 +2445,12 @@ func (*testResourceOpener) OpenResource(
 	return browsertest.NewTestHandler(), nil
 }
 
+func (*testResourceOpener) CompleteResource(
+	context.Context, string,
+) (sdkiterator.Iterator[string], error) {
+	return sdkiterator.Empty[string](), nil
+}
+
 func TestComponentResourceOpeners(t *testing.T) {
 	first := &testResourceOpener{name: "first"}
 	second := &testResourceOpener{name: "second"}

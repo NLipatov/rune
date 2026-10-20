@@ -467,7 +467,9 @@ var (
 					"prevent multiple sessions from overwriting each other's changes. " +
 					"If the file has any pending changes that were lost due to a crash, or " +
 					"another session is currently editing the file, a prompt is shown " +
-					"to resolve the conflict.",
+					"to resolve the conflict. A URI on a scheme an extension opens " +
+					"shows what the extension opens for it instead, and completes " +
+					"to the URIs the extension offers.",
 				Synopsis: "[<scheme>:][//[<userinfo>@]<host>][/]<filepath>",
 			},
 			handler: (*ex).editFiles,
@@ -475,7 +477,7 @@ var (
 				e *ex, ctx context.Context, cmd textapi.Command,
 			) (iterator.Iterator[string], string, error) {
 				e.log(log.DebugLevel, "complete command: %v", cmd)
-				return e.filepathCompleter.Complete(ctx, cmd.Args)
+				return e.completeFileURI(ctx, cmd.Args)
 			},
 		},
 		"view": {
@@ -487,7 +489,7 @@ var (
 			completer: func(
 				e *ex, ctx context.Context, cmd textapi.Command,
 			) (iterator.Iterator[string], string, error) {
-				return e.filepathCompleter.Complete(ctx, cmd.Args)
+				return e.completeFileURI(ctx, cmd.Args)
 			},
 		},
 		"tabcopypath": {

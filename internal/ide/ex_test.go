@@ -6023,6 +6023,160 @@ func TestEditCompletion(t *testing.T) {
 	handlertest.TestHandlerIsolated(t, fn, 20, 10, cases)
 }
 
+func TestEditViewResourceURIs(t *testing.T) {
+	candidates := []string{"fake://host/one", "fake:///it's", "fake:///a&b$c", "fake:///p%20q"}
+	for _, name := range []string{"edit", "view"} {
+		t.Run(name, func(t *testing.T) {
+			uri, err := workspaceapi.ParseURI("memory:///")
+			require.NoError(t, err)
+			scheme, err := workspace.NewMemoryScheme(context.Background(), config.NopConfig(), uri)
+			require.NoError(t, err)
+			touchTestFile(t, scheme, "fake.txt")
+			b := newExForTestingWithWorkspace(t, workspace.NewSchemeWorkspace(uri, scheme, inlineSchedule),
+				texttest.NopEditor(), vte.DefaultConfig(), nopPublishEvent, clipboard.NewInMemory(),
+				text.WithCommandKey(testCommandKey),
+				text.WithWindowManagerConfig(thandler.WindowManagerConfig{
+					WindowManagerConfig: tcomponent.WindowManagerConfig{Frame: false}}),
+			)
+			t.Cleanup(func() { _ = b.Close() })
+			b.Resize(60, 16)
+
+			var (
+				mu       sync.Mutex
+				prefixes []string
+				// answer, when set, is what completion answers instead
+				// of the candidates.
+				answer func() (sdkiterator.Iterator[string], error)
+			)
+			content := browsertest.NewTestHandler()
+			opener := &recordingOpener{
+				open: func(_ context.Context, uri workspaceapi.URI) (browserapi.Handler, error) {
+					if !slices.Contains(candidates, uri.String()) {
+						return nil, errors.New("no such resource")
+					}
+					return content, nil
+				},
+				complete: func(_ context.Context, prefix string) (sdkiterator.Iterator[string], error) {
+					mu.Lock()
+					defer mu.Unlock()
+					prefixes = append(prefixes, prefix)
+					if answer != nil {
+						return answer()
+					}
+					var values []string
+					for _, c := range candidates {
+						if strings.HasPrefix(c, prefix) {
+							values = append(values, c)
+						}
+					}
+					return sdkiterator.FromSlice(values), nil
+				},
+			}
+			completions := func() int {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(prefixes)
+			}
+			feed := func(seq string) {
+				t.Helper()
+				keys, err := term.ParseKeys(seq)
+				require.NoError(t, err)
+				for _, k := range keys {
+					b.Handle(term.Event{Type: term.EventKey, Ch: k.Ch, Mod: k.Mod, Key: k.Key})
+				}
+			}
+			prompt := "<c-\\\\>" + name + "<space>"
+			// offered types typed as the argument and returns what the
+			// prompt lists for it.
+			offered := func(typed string) string {
+				t.Helper()
+				feed(prompt + typed)
+				defer feed("<esc>")
+				require.NotNil(t, b.cmd)
+				w := term.NewStringWriter(60, 16)
+				b.cmd.Resize(60, 16)
+				b.cmd.Draw(w)
+				require.NoError(t, w.Flush())
+				return w.String()
+			}
+			require.NoError(t, b.editorObserver.RegisterResourceOpener("fake", opener))
+
+			// Leaves a past argument the prompt could offer in place of
+			// the opener's candidates.
+			feed(prompt + "fake://gone<enter>")
+
+			t.Run("offers the opener's URIs, quoted, and nothing else", func(t *testing.T) {
+				got := offered("fake://")
+				for _, want := range []string{"fake://host/one", `"fake:///it's"`, "fake:///a&b$$c", "fake:///p%20q"} {
+					assert.Contains(t, got, want)
+				}
+				assert.NotContains(t, got, "fake://gone")
+				assert.NotContains(t, got, "fake.txt")
+				mu.Lock()
+				assert.Equal(t, "fake://", prefixes[len(prefixes)-1])
+				mu.Unlock()
+			})
+
+			t.Run("offers nothing else when the opener has nothing or fails", func(t *testing.T) {
+				failure := errors.New("listing failed")
+				for _, a := range []func() (sdkiterator.Iterator[string], error){
+					func() (sdkiterator.Iterator[string], error) { return sdkiterator.Empty[string](), nil },
+					func() (sdkiterator.Iterator[string], error) { return nil, failure },
+					func() (sdkiterator.Iterator[string], error) { return sdkiterator.Error[string](failure), nil },
+				} {
+					mu.Lock()
+					answer = a
+					mu.Unlock()
+					got := offered("fake://")
+					assert.NotContains(t, got, "fake://gone")
+					assert.NotContains(t, got, "fake.txt")
+				}
+				mu.Lock()
+				answer = nil
+				mu.Unlock()
+			})
+
+			t.Run("completes files for paths", func(t *testing.T) {
+				before := completions()
+				assert.Contains(t, offered("fa"), "fake.txt")
+				assert.Equal(t, before, completions())
+			})
+
+			t.Run("opens the URI picked", func(t *testing.T) {
+				for i, typed := range []string{"fake://h", "fake:///i", "fake:///a", "fake:///p"} {
+					feed(prompt + typed + "<tab><enter>")
+					want := candidates[i]
+					tabURI, err := workspaceapi.ParseURI(want)
+					require.NoError(t, err)
+					require.Eventually(t, func() bool {
+						// drawing runs what the open scheduled
+						b.Draw(term.NewStringWriter(60, 16))
+						tab, ok := b.comp.Browser().Tab(tabURI)
+						return ok && tab.Handler() == content
+					}, 5*time.Second, 10*time.Millisecond, "%s must open in a tab", want)
+					opened := opener.snapshot()
+					assert.Equal(t, want, opened[len(opened)-1])
+					win, err := b.comp.Focus()
+					require.NoError(t, err)
+					shown, err := win.Content()
+					require.NoError(t, err)
+					assert.Equal(t, tabURI, shown.(*browser.Tab).URI())
+				}
+			})
+
+			t.Run("completes as any other scheme once the opener unregisters", func(t *testing.T) {
+				require.NoError(t, b.editorObserver.UnregisterResourceOpener("fake"))
+				before := completions()
+				assert.Contains(t, offered("fake://"), "fake://gone")
+				assert.Equal(t, before, completions())
+				require.NoError(t, b.editorObserver.RegisterResourceOpener("fake", opener))
+				assert.NotContains(t, offered("fake://"), "fake://gone")
+				assert.Greater(t, completions(), before)
+			})
+		})
+	}
+}
+
 func TestRenameTab(t *testing.T) {
 	cases := []handlertest.SequenceTestCase{
 		{":edit hello.go>:tabrename 8berSucks>",

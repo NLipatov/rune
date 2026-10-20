@@ -326,7 +326,7 @@ func (s *Server) SubscribeResourceOpener(
 
 	streamCtx, cancelStream := context.WithCancel(s.ctx)
 	defer cancelStream()
-	clientStream := newResourceOpenerClientStream(streamCtx, srv, &s.opens)
+	clientStream := newResourceOpenerClientStream(streamCtx, srv, &s.opens, req.GetComplete())
 
 	s.editor.Lock()
 	if uerr := s.editor.UnregisterResourceOpener(scheme); uerr != nil &&

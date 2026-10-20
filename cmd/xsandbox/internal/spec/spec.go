@@ -71,6 +71,9 @@ type Host interface {
 	// OpenResource asks the resource opener of scheme for the content of
 	// uri and shows it as the tab of uri in the focused window.
 	OpenResource(scheme, uri string, timeout time.Duration) error
+	// CompleteResource asks the resource opener of scheme for the URIs
+	// that complete prefix, as Rune does to complete view and edit.
+	CompleteResource(scheme, prefix string, timeout time.Duration) ([]string, error)
 	// PublishEvent dispatches an editor event to extension subscribers.
 	PublishEvent(evType, uri, content string) error
 	// WaitIdle blocks until no RPC activity is recorded for d.
@@ -179,6 +182,7 @@ func (e *environment) builtins() starlark.StringDict {
 		"invoke_repl_command":       starlark.NewBuiltin("invoke_repl_command", e.invokeREPLCommand),
 		"expect_resource_opener":    starlark.NewBuiltin("expect_resource_opener", e.expectResourceOpener),
 		"open_resource":             starlark.NewBuiltin("open_resource", e.openResource),
+		"complete_resource":         starlark.NewBuiltin("complete_resource", e.completeResource),
 		"publish_event":             starlark.NewBuiltin("publish_event", e.publishEvent),
 		"wait_idle":                 starlark.NewBuiltin("wait_idle", e.waitIdle),
 		"assert_no_unexpected_rpcs": starlark.NewBuiltin("assert_no_unexpected_rpcs", e.assertNoUnexpectedRPCs),
@@ -485,6 +489,37 @@ func (e *environment) openResource(
 		return nil, fmt.Errorf("%s: %w", b.Name(), err)
 	}
 	return starlark.None, e.host.OpenResource(h.scheme, uri, d)
+}
+
+func (e *environment) completeResource(
+	_ *starlark.Thread, b *starlark.Builtin,
+	args starlark.Tuple, kwargs []starlark.Tuple,
+) (starlark.Value, error) {
+	var opener starlark.Value
+	var prefix, timeout string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs,
+		"opener", &opener, "prefix", &prefix, "timeout?", &timeout); err != nil {
+		return nil, err
+	}
+	h, ok := opener.(resourceOpenerHandle)
+	if !ok {
+		return nil, fmt.Errorf(
+			"%s: opener must be a handle from expect_resource_opener, got %s",
+			b.Name(), opener.Type())
+	}
+	d, err := e.timeout(timeout)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", b.Name(), err)
+	}
+	values, err := e.host.CompleteResource(h.scheme, prefix, d)
+	if err != nil {
+		return nil, err
+	}
+	list := make([]starlark.Value, len(values))
+	for i, v := range values {
+		list[i] = starlark.String(v)
+	}
+	return starlark.NewList(list), nil
 }
 
 func (e *environment) publishEvent(

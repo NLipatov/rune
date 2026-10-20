@@ -53,6 +53,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/handler"
+	sdkiterator "github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/browser"
@@ -9602,13 +9603,15 @@ func inlineSchedule(fn func()) bool {
 
 // recordingOpener is a resource opener that records every call. Each call
 // returns what open, the extension's side, returns when set; otherwise it
-// returns h, or fails with err when h is nil.
+// returns h, or fails with err when h is nil. It completes with complete,
+// or with nothing when complete is nil.
 type recordingOpener struct {
-	mu     sync.Mutex
-	opened []string
-	h      browserapi.Handler
-	err    error
-	open   func(ctx context.Context, uri workspaceapi.URI) (browserapi.Handler, error)
+	mu       sync.Mutex
+	opened   []string
+	h        browserapi.Handler
+	err      error
+	open     func(ctx context.Context, uri workspaceapi.URI) (browserapi.Handler, error)
+	complete func(ctx context.Context, prefix string) (sdkiterator.Iterator[string], error)
 }
 
 func (r *recordingOpener) OpenResource(
@@ -9624,6 +9627,15 @@ func (r *recordingOpener) OpenResource(
 		return nil, r.err
 	}
 	return r.h, nil
+}
+
+func (r *recordingOpener) CompleteResource(
+	ctx context.Context, prefix string,
+) (sdkiterator.Iterator[string], error) {
+	if r.complete != nil {
+		return r.complete(ctx, prefix)
+	}
+	return sdkiterator.Empty[string](), nil
 }
 
 // register makes r the opener of the fake scheme on the focused workspace

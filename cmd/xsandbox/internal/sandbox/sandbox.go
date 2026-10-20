@@ -423,6 +423,47 @@ func (s *sandbox) openResource(scheme, rawURI string, timeout time.Duration) err
 	return nil
 }
 
+// CompleteResource satisfies spec.Host.
+func (s *sandbox) CompleteResource(scheme, prefix string, timeout time.Duration) ([]string, error) {
+	if err := s.ensureLaunched(); err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	values, err := s.completeResource(scheme, prefix, timeout)
+	return values, s.finishExpectation("complete_resource "+prefix, start, err)
+}
+
+func (s *sandbox) completeResource(scheme, prefix string, timeout time.Duration) ([]string, error) {
+	h, ok := s.editor.lookupOpener(scheme)
+	if !ok {
+		return nil, fmt.Errorf("no resource opener for %q is registered (registered: %v)",
+			scheme, s.editor.openerSchemes())
+	}
+	ctx, cancel := context.WithTimeout(s.waitCtx, timeout)
+	defer cancel()
+	// As Rune does, completion runs without s.locker held.
+	it, err := h.CompleteResource(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("complete %s: %w", prefix, err)
+	}
+	defer func() { _ = it.Close() }()
+	values := []string{}
+	for {
+		v, ok := it.Next(ctx)
+		if !ok {
+			break
+		}
+		values = append(values, v)
+	}
+	if err := it.Err(); err != nil {
+		return values, fmt.Errorf("complete %s: %w", prefix, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return values, fmt.Errorf("complete %s: %w", prefix, err)
+	}
+	return values, nil
+}
+
 // PublishEvent satisfies spec.Host.
 func (s *sandbox) PublishEvent(evType, uri, content string) error {
 	if err := s.ensureLaunched(); err != nil {

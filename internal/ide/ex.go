@@ -510,6 +510,28 @@ func (e *ex) completeReadFile(
 	return e.filepathCompleter.Complete(ctx, args)
 }
 
+func (e *ex) completeFileURI(
+	ctx context.Context, args []string,
+) (iterator.Iterator[string], string, error) {
+	if len(args) == 0 {
+		return e.filepathCompleter.Complete(ctx, args)
+	}
+	prefix := command.DispatchedArg(ctx, command.UnquoteToken(args[len(args)-1]))
+	scheme, _, ok := strings.Cut(prefix, "://")
+	opener, registered := e.comp.ResourceOpener(scheme)
+	if !ok || !registered {
+		return e.filepathCompleter.Complete(ctx, args)
+	}
+	it, err := opener.CompleteResource(ctx, prefix)
+	if err != nil {
+		// the command prompt swallows a completer error and offers history instead.
+		// this does the same but ensures no history is displayed.
+		e.log(log.WarnLevel, "complete %s: %v", prefix, err)
+		it = iterator.Empty[string]()
+	}
+	return withoutHistoryFallback(iterator.Map(it, command.QuoteCandidate)), "", nil
+}
+
 func (e *ex) log(level log.Level, msg string, args ...any) {
 	if !log.IsLevelEnabled(level) {
 		return
@@ -1399,13 +1421,38 @@ func (e *ex) editFilesReadOnly(readOnly bool, args ...string) error {
 		if err != nil {
 			return err
 		}
-		_, err = e.editFileURI(uri, e.invokeWindow(), readOnly)
+		if opener, ok := e.comp.ResourceOpener(uri.Scheme()); ok {
+			err = e.openResourceTab(opener, uri, e.invokeWindow())
+		} else {
+			_, err = e.editFileURI(uri, e.invokeWindow(), readOnly)
+		}
 		if err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// openResourceTab shows the tab of uri in win, or in the window in focus
+// when win is closed, as OpenInWindow does with a file's. A tab that is
+// not open yet shows a placeholder until opener answers with its content.
+func (e *ex) openResourceTab(
+	opener textapi.ResourceOpenHandler, uri workspaceapi.URI, win browser.Window,
+) error {
+	t := e.comp.PendingTabs().Open(uri, e.config.Icons.Default, uri.String())
+	if e.comp.PendingTabs().Contains(uri) {
+		e.pendingTabs.open(opener, uri)
+	}
+	if win.Closed() {
+		win, _ = e.comp.Focus()
+	}
+	err := win.SetContent(t)
+	if errors.Is(err, browserapi.ErrTabNotFree) {
+		owner, _ := t.Window()
+		_, err = e.comp.SetFocus(owner)
+	}
+	return err
 }
 
 func (e *ex) tabcopypath(_ context.Context, args ...string) error {

@@ -42,6 +42,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/handler/repl"
+	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 
 	"unstable.build/rune/cmd/rune-agent/agent"
@@ -316,6 +317,104 @@ func TestOpenResourceResumesChat(t *testing.T) {
 			assert.False(t, ok, "closing the content must end the chat")
 		})
 	}
+}
+
+func newCompleteResourceHandler(t *testing.T, store dialoguemanager.Store) *aiEditorHandler {
+	h := &aiEditorHandler{
+		defaultModel:  "test-model",
+		dialogueStore: store,
+		gitID: gitIdentity{worktrees: map[string]string{
+			"file:///my/workspace":  "workspace",
+			"file:///my/worktree-b": "worktree-b",
+		}},
+	}
+	h.cwd, _ = workspaceapi.ParseURI("file:///my/workspace")
+	tabURI, err := workspaceapi.ParseURI("rune-agent://test-model/open-chat")
+	require.NoError(t, err)
+	h.openChats.Store("open-chat", syncComponent{tab: newTabStatusReporter(nil, tabURI, nil)})
+	h.openChats.Store("opening-chat", struct{}{})
+	return h
+}
+
+// completeResourceDialogues are in the order the store lists them.
+var completeResourceDialogues = []dialoguemanager.DialogueHeader{
+	{ID: "other-chat", WorkspaceURI: "ssh://host/other/project", Model: "test-model"},
+	{ID: "sub-agent", WorkspaceURI: "file:///my/workspace", SubAgent: true},
+	{ID: "open-chat", WorkspaceURI: "file:///my/workspace", Model: "other-model"},
+	{ID: "sibling-chat", WorkspaceURI: "file:///my/worktree-b", Model: "test-model"},
+	{ID: "opening-chat", WorkspaceURI: "file:///my/workspace", Model: "other-model"},
+	{ID: "stored-model", WorkspaceURI: "file:///my/workspace", Model: "hf.co/org/model:tag"},
+	{ID: "no-model"},
+}
+
+func TestCompleteResourceOffersChatURIs(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		{
+			name:   "chats in store order",
+			prefix: "rune-agent://",
+			want: []string{
+				"rune-agent://test-model/open-chat",
+				"rune-agent://test-model/sibling-chat",
+				"rune-agent://other-model/opening-chat",
+				"rune-agent://hf.co_org_model_tag/stored-model",
+				"rune-agent://test-model/no-model",
+			},
+		},
+		{
+			name:   "filtered by prefix",
+			prefix: "rune-agent://test-model/s",
+			want:   []string{"rune-agent://test-model/sibling-chat"},
+		},
+		{
+			name:   "open chat is offered as its tab only",
+			prefix: "rune-agent://other-model/open-chat",
+			want:   []string{},
+		},
+		{
+			name:   "no match",
+			prefix: "rune-agent://missing",
+			want:   []string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeListStore{dialogues: completeResourceDialogues}
+			h := newCompleteResourceHandler(t, store)
+			it, err := h.CompleteResource(t.Context(), tt.prefix)
+			require.NoError(t, err)
+			got, err := iterator.ToSlice(t.Context(), it)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+			assert.True(t, store.closed)
+		})
+	}
+}
+
+func TestCompleteResourceStreamsChats(t *testing.T) {
+	store := &fakeListStore{dialogues: completeResourceDialogues}
+	h := newCompleteResourceHandler(t, store)
+	it, err := h.CompleteResource(t.Context(), "rune-agent://")
+	require.NoError(t, err)
+	assert.Zero(t, store.pulled, "nothing is listed before it is asked for")
+
+	uri, ok := it.Next(t.Context())
+	require.True(t, ok)
+	assert.Equal(t, "rune-agent://test-model/open-chat", uri)
+	assert.Equal(t, 3, store.pulled, "only the dialogues up to the first chat are listed")
+
+	require.NoError(t, it.Close())
+	assert.True(t, store.closed)
+}
+
+func TestCompleteResourceListFailure(t *testing.T) {
+	h := newCompleteResourceHandler(t, &fakeListStore{err: errors.New("list failed")})
+	it, err := h.CompleteResource(t.Context(), "rune-agent://")
+	require.ErrorContains(t, err, "list failed")
+	assert.Nil(t, it)
 }
 
 func TestChatCompactUsesChatMaxOutputTokens(t *testing.T) {
