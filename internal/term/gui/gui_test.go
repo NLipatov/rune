@@ -936,6 +936,68 @@ func TestUpdateTakesUILockWhileDragging(t *testing.T) {
 	})
 }
 
+func TestUpdateShowsThePointerShapeOfTheLastMouseEvent(t *testing.T) {
+	type ctxKey struct{}
+	var slots []*term.Pointer
+	mock := mockHandler{
+		assertDraw: func(w term.Writer) { writeRow(w, 0, "https://example.com") },
+		assertEvent: func(ev term.Event) (bool, bool) {
+			p, ok := term.PointerFromContext(ev.Context)
+			require.True(t, ok, "every dispatched mouse event carries a Pointer")
+			assert.Equal(t, "kept", ev.Context.Value(ctxKey{}), "the event's own context is kept")
+			slots = append(slots, p)
+			if ev.MouseX == 1 {
+				term.SetPointerShape(ev, term.PointerText)
+			}
+			return false, true
+		},
+	}
+	g, input := newTestGUI(t, &mock)
+	var shapes []ebiten.CursorShapeType
+	g.pointer.setShape = func(s ebiten.CursorShapeType) { shapes = append(shapes, s) }
+	g.drawHandler(g.ctx)
+	mouse := func(x int) {
+		t.Helper()
+		g.pendingEvents = append(g.pendingEvents, term.Event{
+			Type: term.EventMouse, MouseX: x,
+			Context: context.WithValue(context.Background(), ctxKey{}, "kept"),
+		})
+		require.NoError(t, g.Update())
+	}
+
+	mouse(1)
+	mouse(1)
+	assert.Equal(t, []ebiten.CursorShapeType{ebiten.CursorShapeText}, shapes,
+		"a shape set on every event is pushed once")
+
+	mouse(2)
+	assert.Equal(t, []ebiten.CursorShapeType{
+		ebiten.CursorShapeText, ebiten.CursorShapeDefault,
+	}, shapes, "a handler that sets nothing gets the default")
+
+	slots[2].SetShape(term.PointerMove)
+	require.NoError(t, g.Update())
+	assert.Equal(t, ebiten.CursorShapeMove, shapes[len(shapes)-1],
+		"a late write to the last event's Pointer lands on an idle tick")
+
+	slots[1].SetShape(term.PointerLink)
+	require.NoError(t, g.Update())
+	assert.Len(t, shapes, 3, "a write to an earlier event's Pointer is ignored")
+
+	mouse(1)
+	metaDown(input)
+	require.NoError(t, g.Update())
+	input.events = nil
+	mouse(1)
+	assert.Equal(t, []ebiten.CursorShapeType{ebiten.CursorShapeText, ebiten.CursorShapePointer},
+		shapes[3:], "the meta-held link cursor overrides the handler")
+
+	metaUp(input)
+	require.NoError(t, g.Update())
+	assert.Equal(t, ebiten.CursorShapeText, shapes[len(shapes)-1],
+		"releasing meta restores the handler's shape")
+}
+
 type mockHandler struct {
 	width, height int
 	assertDraw    func(term.Writer)

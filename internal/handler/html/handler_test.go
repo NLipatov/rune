@@ -17,6 +17,7 @@
 package html
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -323,6 +324,49 @@ func TestClickSamePageAnchorLink(t *testing.T) {
 
 	// The cache should still have only one entry.
 	assert.Len(t, h.cache, 1, "no new cache entry for same-page anchor")
+}
+
+func TestHandleMouseSetsTheLinkPointer(t *testing.T) {
+	// Content layout: the paragraph on row 0, the link on row 2.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `<p>Page1</p><p><a href="http://%s/page2">Next2</a></p>`, r.Host)
+	}))
+	defer srv.Close()
+
+	bar := []Option{WithNavigationBar(BarTop)}
+	tests := []struct {
+		name string
+		opts []Option
+		y    int
+		want bool
+	}{
+		{"link", nil, 2, true},
+		{"text", nil, 0, false},
+		{"link below the navigation bar", bar, barHeight + 2, true},
+		{"navigation bar over the link row", bar, 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New(term.NopInterrupter(), mustParseURL(t, srv.URL+"/"), tt.opts...)
+			defer func() { _ = h.Close() }()
+			h.Resize(testWidth, testHeight+barHeight)
+			waitFor(t, func() bool {
+				return h.current.State() == htmlcomp.StateLoaded
+			}, 5*time.Second)
+			h.Resize(testWidth, testHeight+barHeight)
+
+			p := new(term.Pointer)
+			h.Handle(term.Event{
+				Type: term.EventMouse, MouseY: tt.y,
+				Context: term.ContextWithPointer(context.Background(), p),
+			})
+			shape, set := p.Shape()
+			assert.Equal(t, tt.want, set)
+			if tt.want {
+				assert.Equal(t, term.PointerLink, shape)
+			}
+		})
+	}
 }
 
 // ── Non-Handle/Draw tests ──────────────────────────────────────────

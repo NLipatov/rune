@@ -265,6 +265,14 @@ type Handler interface {
 
 	// PromptStart marks the beginning of a shell prompt (OSC 133 A).
 	PromptStart()
+
+	// SetPointerShape sets the mouse pointer shape the program wants over
+	// the terminal (OSC 22).
+	SetPointerShape(shape term.PointerShape)
+
+	// ResetPointerShape lets the terminal choose the mouse pointer shape
+	// again.
+	ResetPointerShape()
 }
 
 // KeyboardMode is the vte keyboard mode.

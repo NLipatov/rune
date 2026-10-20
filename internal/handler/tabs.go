@@ -37,7 +37,8 @@ type Tabs struct {
 	// OnClick, and the tab does not take focus. A click is a press and a
 	// release that never leave the icon: dragging off it, even back onto
 	// it, releasing elsewhere or any other mouse event in between cancels
-	// the click.
+	// the click. The pointer over the icons is then a link pointer, as
+	// over any other control a click activates.
 	OnIconClick func(int)
 }
 
@@ -66,6 +67,11 @@ func (t *Tabs) Handle(ev term.Event) (quit, handled bool) {
 		return
 	}
 	mousePos := term.Coordinates{X: ev.MouseX, Y: ev.MouseY}
+	if t.OnIconClick != nil {
+		if _, ok := t.Tabs.TabIconAt(mousePos); ok {
+			term.SetPointerShape(ev, term.PointerLink)
+		}
+	}
 	if t.iconPressed && t.followIconPress(ev, mousePos) {
 		return false, true
 	}

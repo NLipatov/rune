@@ -250,7 +250,7 @@ func (p *driver) OSCDispatch(params [][]byte, bellTerminated bool) {
 	case "10", "11", "12":
 		/* unsupported setting color value of indexed color, or responding to dynamic color query */
 	case "22":
-		/* unsupported setting of cursor icon */
+		p.pointerShapeDispatch(params)
 	case "50":
 		if len(params) >= 2 && len(params[1]) >= 13 &&
 			bytes.HasPrefix(params[1], []byte("CursorShape=")) {
@@ -327,6 +327,39 @@ func (p *driver) programStatusDispatch(params [][]byte, terminator string) {
 		return
 	}
 	p.handler.ProgramStatus(report)
+}
+
+// pointerShapeDispatch handles OSC 22. The name may carry the kitty set
+// (=) or push (>) operation, which both set the shape; there is no stack,
+// so pop (<) resets it, as does an empty name. Of a comma separated list
+// of names the first known one wins. Queries (?) are not answered.
+func (p *driver) pointerShapeDispatch(params [][]byte) {
+	var body string
+	if len(params) > 1 {
+		body = string(params[1])
+	}
+	if body != "" {
+		switch body[0] {
+		case '?':
+			p.logUnhandledOSC(params)
+			return
+		case '<':
+			body = ""
+		case '=', '>':
+			body = body[1:]
+		}
+	}
+	if body == "" {
+		p.handler.ResetPointerShape()
+		return
+	}
+	for name := range strings.SplitSeq(body, ",") {
+		if shape, ok := term.ParsePointerShape(name); ok {
+			p.handler.SetPointerShape(shape)
+			return
+		}
+	}
+	p.logUnhandledOSC(params)
 }
 
 func (p *driver) CSIDispatch(

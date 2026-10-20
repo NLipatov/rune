@@ -830,3 +830,88 @@ func TestMouseDriverDragScrollsTowardSelection(t *testing.T) {
 		})
 	}
 }
+
+func newPointerHarness(t *testing.T) *keyboardHarness {
+	t.Helper()
+	h := newKeyboardHarness(t)
+	h.mouseDriver = &mouseDriver{t: h.comp}
+	h.mouse = mouse.New(h.mouseDriver)
+	return h
+}
+
+// pointerEv is a hover over (1, 1) carrying a Pointer, as runtimes
+// dispatch mouse events.
+func pointerEv() (term.Event, *term.Pointer) {
+	p := new(term.Pointer)
+	ev := mouseEv(0, 1, 1)
+	ev.Context = term.ContextWithPointer(context.Background(), p)
+	return ev, p
+}
+
+func TestHandlerPointerShape(t *testing.T) {
+	t.Parallel()
+	const (
+		tracking = "\x1b[?1000h"
+		link     = "\x1b]22;pointer\x1b\\"
+		reset    = "\x1b]22;\x1b\\"
+	)
+	cases := []struct {
+		name string
+		// before is the program's output before the event, after its
+		// output while the pointer rests.
+		before, after string
+		want          term.PointerShape
+	}{
+		{"text cursor of the selection", "", "", term.PointerText},
+		{"arrow while the program tracks the mouse", tracking, "", term.PointerDefault},
+		{"the program's shape", link, "", term.PointerLink},
+		{"the program's shape while it tracks the mouse", tracking + link, "", term.PointerLink},
+		{"reset to the terminal's", link + reset, "", term.PointerText},
+		{"reset while the program tracks the mouse", tracking + link + reset, "",
+			term.PointerDefault},
+		{"shape set under a resting pointer", "", link, term.PointerLink},
+		{"reset under a resting pointer", link, reset, term.PointerText},
+		{"full reset under a resting pointer", tracking + link, "\x1bc", term.PointerText},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newPointerHarness(t)
+			h.output(tc.before)
+			ev, p := pointerEv()
+			h.Handle(ev)
+			h.output(tc.after)
+			shape, _ := p.Shape()
+			assert.Equal(t, tc.want.String(), shape.String())
+		})
+	}
+}
+
+func TestHandlerPointerShapeFollowsTheLastEvent(t *testing.T) {
+	t.Parallel()
+	h := newPointerHarness(t)
+	older, olderPointer := pointerEv()
+	h.Handle(older)
+	ev, p := pointerEv()
+	h.Handle(ev)
+	h.output("\x1b]22;pointer\x1b\\")
+
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerLink, shape)
+	shape, _ = olderPointer.Shape()
+	assert.Equal(t, term.PointerText, shape, "a superseded event keeps its shape")
+}
+
+func TestHandlerPointerShapeInViMode(t *testing.T) {
+	t.Parallel()
+	h := newPointerHarness(t)
+	h.output("\x1b[?1000h")
+	h.viMode = true
+	ev, p := pointerEv()
+	h.setPointerShape(ev)
+	h.output("\x1b]22;pointer\x1b\\")
+
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerText, shape,
+		"the program's shapes do not reach events it does not get")
+}

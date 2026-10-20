@@ -6724,3 +6724,13 @@ func TestHandleMouseWindowCoordinates(t *testing.T) {
 func mouseEventAt(key term.Key, x, y int) term.Event {
 	return term.Event{Type: term.EventMouse, Key: key, MouseX: x, MouseY: y}
 }
+
+func TestEmacsMouseSetsTheTextPointer(t *testing.T) {
+	h, _ := newEmacsHandler(t, "text")
+	p := new(term.Pointer)
+	ev := mouseEventAt(0, 1, 0)
+	ev.Context = term.ContextWithPointer(context.Background(), p)
+	h.Handle(ev)
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerText, shape)
+}

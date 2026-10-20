@@ -123,6 +123,15 @@ type parserHandler struct {
 	// primary screen scrolled count rows up into history, which moves
 	// every row above the bottom margin up by count.
 	historyScrolled func(count int)
+
+	// programPointer is the pointer shape the program set with OSC 22,
+	// if programPointerSet.
+	programPointer    term.PointerShape
+	programPointerSet bool
+	// pointer is the slot of the last mouse event that reached the
+	// program, kept so that the shape changes under a resting pointer.
+	// It outlives ResetState.
+	pointer *term.Pointer
 }
 
 // use a common api for alternate and primary buffers
@@ -1032,6 +1041,7 @@ func (t *parserHandler) ResetState() {
 	keyboard := t.keyboard
 	statusReported := t.statusReported
 	historyScrolled := t.historyScrolled
+	pointer := t.pointer
 	*t = parserHandler{}
 	t.init(mu, pty, tm, clipboard, bell, uri,
 		needsAttentionAttr, useTitleAsTabname, maxScrollLength, minWidth,
@@ -1040,6 +1050,8 @@ func (t *parserHandler) ResetState() {
 	t.keyboard.reset()
 	t.statusReported = statusReported
 	t.historyScrolled = historyScrolled
+	t.pointer = pointer
+	t.showPointerShape()
 
 	// resize
 	t.sync.altBuf.Resize(width, height)
@@ -2223,6 +2235,44 @@ func (t *parserHandler) PromptStart() {
 	t.sync.mu.Lock()
 	defer t.sync.mu.Unlock()
 	t.endStatus()
+}
+
+// SetPointerShape satisfies vteparser.Handler.
+func (t *parserHandler) SetPointerShape(shape term.PointerShape) {
+	t.sync.mu.Lock()
+	defer t.sync.mu.Unlock()
+	t.programPointer, t.programPointerSet = shape, true
+	t.showPointerShape()
+}
+
+// ResetPointerShape satisfies vteparser.Handler.
+func (t *parserHandler) ResetPointerShape() {
+	t.sync.mu.Lock()
+	defer t.sync.mu.Unlock()
+	t.programPointerSet = false
+	t.showPointerShape()
+}
+
+// pointerShape returns the shape the program set, else the arrow while
+// the program tracks the mouse, else the text cursor of the selection, as
+// kitty does. It must be called with t.sync.mu held.
+func (t *parserHandler) pointerShape() term.PointerShape {
+	switch {
+	case t.programPointerSet:
+		return t.programPointer
+	case t.modeReportMouseClicks || t.modeReportCellMouseMotion || t.modeReportAllMouseMotion:
+		return term.PointerDefault
+	default:
+		return term.PointerText
+	}
+}
+
+// showPointerShape sets the shape on the pointer of the last mouse event
+// that reached the program. It must be called with t.sync.mu held.
+func (t *parserHandler) showPointerShape() {
+	if t.pointer != nil {
+		t.pointer.SetShape(t.pointerShape())
+	}
 }
 
 // endStatus tells the tab manager that the program that reported a

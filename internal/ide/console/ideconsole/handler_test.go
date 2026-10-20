@@ -1309,6 +1309,40 @@ func TestHandlerMouseWheelDoesNotSelect(t *testing.T) {
 	assert.False(t, ok, "wheel scroll must not create a selection")
 }
 
+func TestHandlerMousePointerOverTheOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events func(y int) []term.Event
+	}{
+		{"hover", func(y int) []term.Event { return []term.Event{mouseEv(2, y, 0)} }},
+		{"press", func(y int) []term.Event {
+			return []term.Event{mouseEv(2, y, term.MouseLeft)}
+		}},
+		{"wheel", func(y int) []term.Event {
+			return []term.Event{mouseEv(2, y, term.MouseWheelUp)}
+		}},
+		{"drag into the input", func(y int) []term.Event {
+			return []term.Event{
+				mouseEv(2, y, term.MouseLeft),
+				mouseEv(2, mouseTestHeight-1, term.MouseLeft),
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hd, out := newMouseTestHandler(t, mouseTestWidth, mouseTestHeight,
+				[]string{"alpha bravo"})
+			var p *term.Pointer
+			for _, ev := range tc.events(rowOf(t, out, mouseTestWidth, 'a')) {
+				p = new(term.Pointer)
+				ev.Context = term.ContextWithPointer(context.Background(), p)
+				hd.Handle(ev)
+			}
+			shape, _ := p.Shape()
+			assert.Equal(t, term.PointerText, shape)
+		})
+	}
+}
+
 // ----- mouse selection fixtures & helpers -----
 
 const (

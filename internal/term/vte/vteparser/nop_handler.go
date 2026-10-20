@@ -16,7 +16,10 @@
 
 package vteparser
 
-import "unstable.build/rune/internal/term/programstatus"
+import (
+	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/term/programstatus"
+)
 
 // NopHandler returns an implementation of Handler that does nothing.
 func NopHandler() Handler {
@@ -312,5 +315,13 @@ func (h nopHandler) ProgramStatusQuery(terminator string) {
 }
 
 func (h nopHandler) PromptStart() {
+
+}
+
+func (h nopHandler) SetPointerShape(shape term.PointerShape) {
+
+}
+
+func (h nopHandler) ResetPointerShape() {
 
 }

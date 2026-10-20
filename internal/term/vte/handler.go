@@ -314,6 +314,9 @@ func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 		e.log(log.DebugLevel, "Handle: exit")
 		return
 	}
+	if ev.Type == term.EventMouse {
+		e.setPointerShape(ev)
+	}
 	if e.handleSearch(ev) {
 		return false, true
 	}
@@ -768,4 +771,20 @@ func (e *Handler) searchOverlayContains(x, y int) bool {
 	pos := e.searchOverlay.Position()
 	x, y = x-pos.X, y-pos.Y
 	return x >= 0 && y >= 0 && x < e.searchOverlay.Width() && y < e.searchOverlay.Height()
+}
+
+// setPointerShape gives the pointer of the mouse event ev to the program
+// when ev reaches it, and otherwise shows the text cursor of the
+// scrollback selection or of the search box.
+func (e *Handler) setPointerShape(ev term.Event) {
+	p, _ := term.PointerFromContext(ev.Context)
+	if e.viMode || e.searchViewing() ||
+		e.searchOpen() && e.searchOverlayContains(ev.MouseX, ev.MouseY) {
+		e.comp.pointTo(nil)
+		if p != nil {
+			p.SetShape(term.PointerText)
+		}
+		return
+	}
+	e.comp.pointTo(p)
 }

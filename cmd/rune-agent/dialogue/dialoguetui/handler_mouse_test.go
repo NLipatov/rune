@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -75,6 +76,44 @@ func TestHandlerToolCallHover(t *testing.T) {
 			h.Handle(mouseEv(childName.X+1, childName.Y, 0))
 			h.Handle(mouseEv(childName.X+1, comp.InputPosition().Y, 0))
 			assert.False(t, child.hovered)
+		})
+	}
+}
+
+func TestHandlerLinkPointerShape(t *testing.T) {
+	const width, height = 60, 16
+	openLink := func(*url.URL) bool { return true }
+	for _, tc := range []struct {
+		name        string
+		onLinkClick func(*url.URL) bool
+		dx, dy      int
+		want        term.PointerShape
+		wantSet     bool
+	}{
+		{name: "over a link", onLinkClick: openLink, dx: len("Visit "), want: term.PointerLink, wantSet: true},
+		{name: "over plain text", onLinkClick: openLink, dx: 0},
+		{name: "blank row above a link", onLinkClick: openLink, dx: len("Visit "), dy: -1},
+		{name: "blank row below a link", onLinkClick: openLink, dx: len("Visit "), dy: 1},
+		{name: "links not clickable", dx: len("Visit ")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			comp := NewComponent(ComponentConfig{OnLinkClick: tc.onLinkClick})
+			h, tx, _ := Handler(context.Background(), new(sync.Mutex), comp, term.NopInterrupter())
+			defer close(tx)
+			h.Resize(width, height)
+			comp.AddReceiveMessage("Read this:\n\nVisit [Rune](https://github.com/unstablebuild/rune)\n\nThanks")
+			w := term.NewStringWriter(width, height)
+			h.Draw(w)
+
+			at := findText(t, w, width, "Visit Rune")
+			pointer := new(term.Pointer)
+			ev := mouseEv(at.X+tc.dx, at.Y+tc.dy, 0)
+			ev.Context = term.ContextWithPointer(context.Background(), pointer)
+			h.Handle(ev)
+
+			shape, set := pointer.Shape()
+			assert.Equal(t, tc.wantSet, set)
+			assert.Equal(t, tc.want, shape)
 		})
 	}
 }

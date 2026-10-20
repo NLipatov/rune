@@ -2989,6 +2989,222 @@ func TestTileEdgeResizeDrag(t *testing.T) {
 		wm.Draw(term.NewStringWriter(30, 12))
 		assert.Equal(t, 9, tw.Height())
 	})
+	t.Run("edges of the manager do not resize", func(t *testing.T) {
+		for _, press := range []term.Coordinates{xy(29, 5), xy(5, 11), xy(29, 11)} {
+			lh, rh := handler.NewTestHandler(), handler.NewTestHandler()
+			var presses []term.Coordinates
+			for _, h := range []*handler.TestHandler{lh, rh} {
+				h.HandleOverride = func(ev term.Event) (bool, bool) {
+					presses = append(presses, xy(ev.MouseX, ev.MouseY))
+					return false, true
+				}
+			}
+			wm := NewWindowManager(lh, DefaultWindowManagerConfig())
+			wm.Resize(30, 12)
+			_, ok := wm.SplitVertical(wm.Focus(), rh)
+			require.True(t, ok)
+
+			wm.Handle(mouseEv(term.MouseLeft, press.X, press.Y))
+			assert.Zero(t, wm.winDrag, "press at %v", press)
+			assert.Len(t, presses, 1, "the press at %v reaches the content", press)
+		}
+	})
+}
+
+func setsTextPointer(ev term.Event) (bool, bool) {
+	term.SetPointerShape(ev, term.PointerText)
+	return false, false
+}
+
+func textPointerHandler() *handler.TestHandler {
+	h := handler.NewTestHandler()
+	h.HandleOverride = setsTextPointer
+	return h
+}
+
+// handleWithPointer dispatches ev to wm carrying a fresh Pointer, as the
+// runtime does, and returns it.
+func handleWithPointer(wm *WindowManager, ev term.Event) *term.Pointer {
+	p := new(term.Pointer)
+	ev.Context = term.ContextWithPointer(context.Background(), p)
+	wm.Handle(ev)
+	return p
+}
+
+func TestWindowManagerPointerShape(t *testing.T) {
+	tiles := func(
+		split func(*WindowManager, Window, tui.Handler) (Window, bool),
+	) func(*testing.T) *WindowManager {
+		return func(t *testing.T) *WindowManager {
+			wm := NewWindowManager(textPointerHandler(), DefaultWindowManagerConfig())
+			wm.Resize(30, 12)
+			_, ok := split(wm, wm.Focus(), textPointerHandler())
+			require.True(t, ok)
+			return wm
+		}
+	}
+	vsplit := tiles((*WindowManager).SplitVertical)
+	hsplit := tiles((*WindowManager).SplitHorizontal)
+	// grid splits the left tile of vsplit, so the bottom-right corner of
+	// the top-left tile at (14, 5) sits between two dividers.
+	grid := func(t *testing.T) *WindowManager {
+		wm := vsplit(t)
+		_, ok := wm.SplitHorizontal(wm.Focus(), textPointerHandler())
+		require.True(t, ok)
+		return wm
+	}
+	// floatOverSplit is vsplit with a focused 8x5 float at (0, 0).
+	floatOverSplit := func(t *testing.T) *WindowManager {
+		wm := vsplit(t)
+		win := wm.FloatingWindow(
+			handler.StaticFloating(textPointerHandler(), 6, 3), component.FloatingConfig{})
+		wm.SetFocus(win)
+		require.Equal(t, xy(0, 0), win.Position())
+		return wm
+	}
+	// float is the 8x5 float of prepareWindowBarTest at (0, 0), focused
+	// over a single tile.
+	floatWith := func(cfg component.FloatingConfig) func(*testing.T) *WindowManager {
+		return func(t *testing.T) *WindowManager {
+			wm, root, _, _, _ := prepareWindowBarTest(t)
+			root.HandleOverride = setsTextPointer
+			wm.Iterate(func(win Window) {
+				if win.IsFloating() {
+					require.NoError(t, win.Close())
+				}
+			})
+			win := wm.FloatingWindow(
+				handler.StaticFloating(textPointerHandler(), 6, 3), cfg)
+			wm.SetFocus(win)
+			require.Equal(t, xy(0, 0), win.Position())
+			return wm
+		}
+	}
+	float := floatWith(component.FloatingConfig{})
+	noBarFloat := floatWith(component.FloatingConfig{NoBar: true})
+	minimizedFloat := func(t *testing.T) *WindowManager {
+		wm := float(t)
+		require.True(t, wm.Focus().MinimizeDown(0))
+		require.Equal(t, xy(0, 11), wm.Focus().Position())
+		return wm
+	}
+	scrollBar := func(t *testing.T) *WindowManager {
+		buf := cell.NewBuffer()
+		buf.WriteString("a\nb\nc\nd\ne\nf\n")
+		cfg := DefaultWindowManagerConfig()
+		cfg.ScrollBarChar = '|'
+		wm := NewWindowManager(textPointerHandler(), cfg)
+		wm.Resize(12, 4)
+		rw, ok := wm.SplitVertical(wm.Focus(),
+			scrollableHandler{Scrollable: component.NewScroll(buf)})
+		require.True(t, ok)
+		wm.SetFocus(rw)
+		wm.Draw(term.NewStringWriter(12, 4))
+		frame, ok := rw.Frame()
+		require.True(t, ok)
+		bar, _, ok := frame.ScrollBar()
+		require.True(t, ok)
+		require.Equal(t, xy(11, 1), xy(rw.Position().X+bar.X, rw.Position().Y+bar.Y))
+		return wm
+	}
+	hover := func(x, y int) term.Event { return mouseEv(0, x, y) }
+	press := func(x, y int) term.Event { return mouseEv(term.MouseLeft, x, y) }
+
+	suite := []struct {
+		name  string
+		setup func(*testing.T) *WindowManager
+		// The shape is the one of the last event.
+		events []term.Event
+		want   term.PointerShape
+		set    bool
+	}{
+		{"tile column divider", vsplit, []term.Event{hover(14, 5)},
+			term.PointerColResize, true},
+		{"tile row divider", hsplit, []term.Event{hover(5, 5)},
+			term.PointerRowResize, true},
+		{"tile corner between dividers", grid, []term.Event{hover(14, 5)},
+			term.PointerResizeNWSE, true},
+		{"tile corner on the bottom edge of the manager", vsplit,
+			[]term.Event{hover(14, 11)}, term.PointerColResize, true},
+		{"tile corner on the right edge of the manager", hsplit,
+			[]term.Event{hover(29, 5)}, term.PointerRowResize, true},
+		{"tile on the right edge of the manager", vsplit, []term.Event{hover(29, 5)},
+			term.PointerText, true},
+		{"tile on the bottom edge of the manager", vsplit, []term.Event{hover(5, 11)},
+			term.PointerText, true},
+		{"tile on the outer corner of the manager", vsplit, []term.Event{hover(29, 11)},
+			term.PointerText, true},
+		{"tile left edge", vsplit, []term.Event{hover(15, 5)}, term.PointerText, true},
+		{"tile top edge", hsplit, []term.Event{hover(5, 6)}, term.PointerText, true},
+		{"tile content", vsplit, []term.Event{hover(5, 5)}, term.PointerText, true},
+		{"tile divider past a focused float", floatOverSplit, []term.Event{hover(14, 8)},
+			term.PointerColResize, true},
+		{"tile edge of the manager past a focused float", float,
+			[]term.Event{hover(29, 8)}, term.PointerDefault, false},
+		{"float left edge", float, []term.Event{hover(0, 2)}, term.PointerResizeEW, true},
+		{"float right edge", float, []term.Event{hover(7, 2)}, term.PointerResizeEW, true},
+		{"float bottom edge", float, []term.Event{hover(3, 4)}, term.PointerResizeNS, true},
+		{"float top edge without a bar", noBarFloat, []term.Event{hover(3, 0)},
+			term.PointerResizeNS, true},
+		{"float top-left corner without a bar", noBarFloat, []term.Event{hover(0, 0)},
+			term.PointerResizeNWSE, true},
+		{"float bar left corner", float, []term.Event{hover(0, 0)},
+			term.PointerResizeNWSE, true},
+		{"float bar right corner", float, []term.Event{hover(7, 0)},
+			term.PointerResizeNESW, true},
+		{"float bottom-left corner", float, []term.Event{hover(0, 4)},
+			term.PointerResizeNESW, true},
+		{"float bottom-right corner", float, []term.Event{hover(7, 4)},
+			term.PointerResizeNWSE, true},
+		{"float bar", float, []term.Event{hover(4, 0)}, term.PointerMove, true},
+		{"float bar close icon", float,
+			[]term.Event{hover(component.WindowBarCloseIconX, 0)}, term.PointerLink, true},
+		{"float content", float, []term.Event{hover(3, 2)}, term.PointerText, true},
+		{"minimized float", minimizedFloat, []term.Event{hover(0, 11)},
+			term.PointerText, true},
+		{"scroll bar", scrollBar, []term.Event{hover(11, 1)}, term.PointerDefault, false},
+		{"frame press", float, []term.Event{press(7, 2)}, term.PointerResizeEW, true},
+		{"resize drag past the edge", float, []term.Event{press(7, 2), press(20, 2)},
+			term.PointerResizeEW, true},
+		{"resize drag release", float,
+			[]term.Event{press(7, 2), press(20, 2), mouseEv(term.MouseRelease, 20, 2)},
+			term.PointerResizeEW, true},
+		{"move drag", float, []term.Event{press(4, 0), press(10, 5)},
+			term.PointerMove, true},
+		{"content drag onto the frame", vsplit, []term.Event{press(5, 5), press(14, 5)},
+			term.PointerText, true},
+	}
+	for _, test := range suite {
+		t.Run(test.name, func(t *testing.T) {
+			wm := test.setup(t)
+			var p *term.Pointer
+			for _, ev := range test.events {
+				p = handleWithPointer(wm, ev)
+			}
+			shape, set := p.Shape()
+			assert.Equal(t, test.want.String(), shape.String())
+			assert.Equal(t, test.set, set)
+		})
+	}
+}
+
+func TestWindowManagerFramePointerIgnoresLateChildShapes(t *testing.T) {
+	var child *term.Pointer
+	lh := handler.NewTestHandler()
+	lh.HandleOverride = func(ev term.Event) (bool, bool) {
+		child, _ = term.PointerFromContext(ev.Context)
+		return false, false
+	}
+	wm := NewWindowManager(lh, DefaultWindowManagerConfig())
+	wm.Resize(30, 12)
+	_, ok := wm.SplitVertical(wm.Focus(), handler.NewTestHandler())
+	require.True(t, ok)
+
+	p := handleWithPointer(wm, mouseEv(0, 14, 5))
+	require.NotNil(t, child)
+	child.SetShape(term.PointerText)
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerColResize, shape)
 }
 
 func TestWindowBarScrollBarPrecedence(t *testing.T) {

@@ -6470,9 +6470,8 @@ func TestComponentOnTabsClickIntegration(t *testing.T) {
 	assert.Equal(t, 1, called)
 	m.Handle(term.Event{Type: term.EventMouse, Key: term.MouseRelease})
 
-	// the bottom row is a window resize grip: handled, but no tab click
-	_, handled = m.Handle(term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseY: 7})
-	assert.True(t, handled)
+	// the bottom row is the frame of the only window, not a tab
+	m.Handle(term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseY: 7})
 	assert.Equal(t, 1, called)
 
 	m.mu.Unlock()

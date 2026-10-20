@@ -363,6 +363,16 @@ func (t *Component) mouseModes() (m mouseModes) {
 	return m
 }
 
+// pointTo sets the terminal's pointer shape on p, the Pointer of a mouse
+// event that reaches the program, and keeps it current as the program
+// changes it until the next call. A nil p stops updating the last one.
+func (t *Component) pointTo(p *term.Pointer) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.parserHandler.pointer = p
+	t.parserHandler.showPointerShape()
+}
+
 // CursorVisible returns whether the cursor should be rendered or not.
 func (t *Component) CursorVisible() bool {
 	t.mu.Lock()

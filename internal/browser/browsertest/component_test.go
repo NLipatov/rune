@@ -17,6 +17,7 @@
 package browsertest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1154,6 +1155,56 @@ func TestComponentOnTabIconClick(t *testing.T) {
 		assert.Len(t, f.c.Tabs(), 3)
 		assertWindowContent(t, f.c.Focus(), f.tabs[1])
 	})
+
+	t.Run("the pointer is a finger over the icons", func(t *testing.T) {
+		f := setup(t, browser.DefaultConfig(), remove)
+		hover := func(pos term.Coordinates) (term.PointerShape, bool) {
+			p := new(term.Pointer)
+			f.c.Handle(term.Event{
+				Type: term.EventMouse, MouseX: pos.X, MouseY: pos.Y,
+				Context: term.ContextWithPointer(context.Background(), p),
+			})
+			return p.Shape()
+		}
+		icon := iconOf(t, f.c, 'B')
+
+		shape, _ := hover(icon)
+		assert.Equal(t, term.PointerLink, shape)
+		_, set := hover(name(icon))
+		assert.False(t, set, "the name sets no shape")
+	})
+}
+
+func TestComponentPromptPointerShape(t *testing.T) {
+	const width, height = 60, 20
+	c := browser.NewComponent(browser.DefaultConfig())
+	c.Resize(width, height)
+	c.Prompt("Proceed?", []string{"Yes", "No"}, nil, handler.NopPromptHandler())
+	w := term.NewStringWriter(width, height)
+	c.Draw(w)
+	require.NoError(t, w.Flush())
+	at := func(ch rune) term.Coordinates {
+		t.Helper()
+		for i, cell := range w.Cells() {
+			if cell.Ch == ch {
+				return term.Coordinates{X: i % width, Y: i / width}
+			}
+		}
+		require.Failf(t, "not drawn", "%q in:\n%s", ch, w.String())
+		return term.Coordinates{}
+	}
+	hover := func(pos term.Coordinates) term.PointerShape {
+		p := new(term.Pointer)
+		c.Handle(term.Event{
+			Type: term.EventMouse, MouseX: pos.X, MouseY: pos.Y,
+			Context: term.ContextWithPointer(context.Background(), p),
+		})
+		shape, _ := p.Shape()
+		return shape
+	}
+
+	assert.Equal(t, term.PointerLink, hover(at('Y')), "over a button")
+	assert.Equal(t, term.PointerDefault, hover(at('P')), "over the message")
 }
 
 func TestComponentSplitNil(t *testing.T) {

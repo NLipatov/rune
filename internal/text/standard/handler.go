@@ -371,6 +371,7 @@ func (h *standardHandler) Handle(ev term.Event) (exit, handled bool) {
 
 	switch ev.Type {
 	case term.EventMouse:
+		term.SetPointerShape(ev, term.PointerText)
 		return h.mouse.Handle(ev)
 	case term.EventPasteStart:
 		h.pasteBuf.Reset()

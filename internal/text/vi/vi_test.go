@@ -1074,6 +1074,19 @@ func TestMatchBraceAfterClick(t *testing.T) {
 	assert.Equal(t, term.Coordinates{Y: 7, X: 0}, pos)
 }
 
+func TestViMouseSetsTheTextPointer(t *testing.T) {
+	buf := cell.NewBuffer()
+	buf.ReadFrom(strings.NewReader(snippet))
+	vi := New(buf, uri)
+	vi.Resize(20, 10)
+
+	p := new(term.Pointer)
+	vi.Handle(term.Event{Type: term.EventMouse, MouseX: 1,
+		Context: term.ContextWithPointer(context.Background(), p)})
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerText, shape)
+}
+
 func TestCopyDelete(t *testing.T) {
 	tsuite := []struct {
 		desc     string

@@ -1057,6 +1057,54 @@ func TestFileExplorerClickOnHintRowIsNoop(t *testing.T) {
 	require.Empty(t, host.errs)
 }
 
+func TestFileExplorerPointerShape(t *testing.T) {
+	files := []explorerMockEntry{{name: "src", isDir: true}}
+	for i := range 20 {
+		files = append(files, explorerMockEntry{name: fmt.Sprintf("file%02d.go", i)})
+	}
+	small := map[string][]explorerMockEntry{
+		"/project":     files[:3],
+		"/project/src": {{name: "main.go"}},
+	}
+	tall := map[string][]explorerMockEntry{"/project": files}
+	// With a height of 6 the tree takes rows 0 to 4 and the hint row 5.
+	for _, tc := range []struct {
+		name   string
+		dirs   map[string][]explorerMockEntry
+		scroll int
+		key    term.Key
+		y      int
+		want   term.PointerShape
+	}{
+		{name: "hover over a directory", dirs: small, y: 0, want: term.PointerLink},
+		{name: "hover over a file", dirs: small, y: 2, want: term.PointerLink},
+		{name: "press on a file", dirs: small, key: term.MouseLeft, y: 1,
+			want: term.PointerLink},
+		{name: "wheel over a file", dirs: small, key: term.MouseWheelDown, y: 1,
+			want: term.PointerLink},
+		{name: "hover below the tree", dirs: small, y: 4, want: term.PointerDefault},
+		{name: "hover over the hint", dirs: small, y: 5, want: term.PointerDefault},
+		{name: "hover over a scrolled tree", dirs: tall, scroll: 10, y: 4,
+			want: term.PointerLink},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newTestFileExplorerHandler(t, tc.dirs)
+			h.Resize(20, 6)
+			for range tc.scroll {
+				require.True(t, h.SeekDown())
+			}
+
+			p := new(term.Pointer)
+			h.Handle(term.Event{
+				Type: term.EventMouse, Key: tc.key, MouseY: tc.y,
+				Context: term.ContextWithPointer(context.Background(), p),
+			})
+			shape, _ := p.Shape()
+			require.Equal(t, tc.want.String(), shape.String())
+		})
+	}
+}
+
 func sendExplorerKeys(t *testing.T, h *fileExplorerHandler, seq string) {
 	t.Helper()
 	keys, err := term.ParseKeys(seq)

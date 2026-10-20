@@ -366,6 +366,11 @@ func (s *dialogueHandler) Handle(ev term.Event) (exit, handled bool) {
 		pos = s.comp.MessagesPosition()
 		ev.MouseY -= pos.Y
 		ev.MouseX -= pos.X
+		if s.comp.cfg.OnLinkClick != nil {
+			if link := s.comp.LinkAt(term.Coordinates{X: ev.MouseX, Y: ev.MouseY}); link != nil && link.URL != "" {
+				term.SetPointerShape(ev, term.PointerLink)
+			}
+		}
 		return s.mouse.Handle(ev)
 	}
 

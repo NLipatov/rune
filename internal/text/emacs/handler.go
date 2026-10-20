@@ -676,6 +676,7 @@ func (h *emacsHandler) Handle(ev term.Event) (exit, handled bool) {
 		// intervening command in GNU Emacs.
 		h.closeUndoRun()
 		h.breakUndoSequence()
+		term.SetPointerShape(ev, term.PointerText)
 		return h.mouse.Handle(ev)
 	case term.EventPasteStart:
 		h.closeUndoRun()

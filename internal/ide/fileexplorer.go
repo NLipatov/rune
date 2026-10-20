@@ -172,6 +172,11 @@ func (h *fileExplorerHandler) SetTargetWindow(win browser.Window) {
 }
 
 func (h *fileExplorerHandler) Handle(ev term.Event) (exit, handled bool) {
+	if ev.Type == term.EventMouse {
+		// After any forwarding, so the editor's text pointer never shows:
+		// rows are clicked rather than selected.
+		defer term.SetPointerShape(ev, h.pointerShapeAt(ev.MouseY))
+	}
 	if h.readOnly && ev.Type == term.EventKey &&
 		ev.Key == h.cfg.EditKey.Key && ev.Ch == h.cfg.EditKey.Ch &&
 		ev.Mod == h.cfg.EditKey.Mod {
@@ -482,9 +487,7 @@ func (h *fileExplorerHandler) enterAtCursor() bool {
 // ExpandNodeAt. Cursor placement bypasses the editor's mouse handler
 // so no visual-mode selection is started.
 func (h *fileExplorerHandler) enterAtClick(windowY int) bool {
-	winCur, _, _ := h.ed.Cursor()
-	scrollCur := h.ed.CursorAtScroll()
-	pos := term.Coordinates{Y: max(0, windowY+(scrollCur.Y-winCur.Y))}
+	pos := h.scrollPos(windowY)
 	// Moving the cursor with the editor's autoCenter on would recenter
 	// the viewport, jerking the tree out from under the pointer. The
 	// clicked row is already visible, so preserve the scroll offset
@@ -494,6 +497,24 @@ func (h *fileExplorerHandler) enterAtClick(windowY int) bool {
 	handled := h.enterAt(pos)
 	h.restoreOffset(offset)
 	return handled
+}
+
+// scrollPos translates a window row to the start of its buffer row.
+func (h *fileExplorerHandler) scrollPos(windowY int) term.Coordinates {
+	winCur, _, _ := h.ed.Cursor()
+	scrollCur := h.ed.CursorAtScroll()
+	return term.Coordinates{Y: max(0, windowY+(scrollCur.Y-winCur.Y))}
+}
+
+// pointerShapeAt returns the link pointer over the rows a click opens or
+// toggles, and the default pointer elsewhere.
+func (h *fileExplorerHandler) pointerShapeAt(windowY int) term.PointerShape {
+	if windowY < h.contentHeight() {
+		if _, known := h.comp.NodeAt(h.scrollPos(windowY)); known {
+			return term.PointerLink
+		}
+	}
+	return term.PointerDefault
 }
 
 // restoreOffset seeks the editor back to a previously captured vertical

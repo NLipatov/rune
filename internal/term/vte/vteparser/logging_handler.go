@@ -19,6 +19,7 @@ package vteparser
 import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/blue/logging"
+	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/term/graphemecluster"
 	"unstable.build/rune/internal/term/programstatus"
 )
@@ -446,6 +447,16 @@ func (h loggingHandler) ProgramStatusQuery(terminator string) {
 func (h loggingHandler) PromptStart() {
 	h.log("PromptStart")
 	h.h.PromptStart()
+}
+
+func (h loggingHandler) SetPointerShape(shape term.PointerShape) {
+	h.log("SetPointerShape %v", shape)
+	h.h.SetPointerShape(shape)
+}
+
+func (h loggingHandler) ResetPointerShape() {
+	h.log("ResetPointerShape")
+	h.h.ResetPointerShape()
 }
 
 func (h loggingHandler) log(line string, params ...any) {

@@ -22,7 +22,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	ebiten "github.com/hajimehoshi/ebiten/v2"
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/cell"
@@ -396,8 +395,7 @@ func hasHost(u []byte) bool {
 // frame, so it is agnostic to which handler drew the text.
 type linkScanner struct {
 	observer func(*url.URL)
-	// setShape is the window's cursor-shape setter, replaced in tests.
-	setShape func(ebiten.CursorShapeType)
+	pointer  *pointer
 	scanner  rowScanner
 	spans    []linkSpan
 	valid    bool
@@ -405,19 +403,16 @@ type linkScanner struct {
 	// clicking records that a meta-click already opened a link, so the
 	// rest of that gesture is swallowed too.
 	clicking bool
-	// pointing records that the window is currently showing the link
-	// cursor, so the shape is only pushed on a transition.
-	pointing bool
 	// rows is the underlined view of the frame; only rows carrying a
 	// span are copied into buf, the rest alias the source rows.
 	rows [][]term.Cell
 	buf  [][]term.Cell
 }
 
-func newLinkScanner() linkScanner {
+func newLinkScanner(p *pointer) linkScanner {
 	return linkScanner{
 		observer: func(*url.URL) {},
-		setShape: ebiten.SetCursorShape,
+		pointer:  p,
 	}
 }
 
@@ -435,30 +430,17 @@ func (l *linkScanner) setMeta(held bool) bool {
 	l.meta = held
 	l.valid = false
 	if !held {
-		l.point(false)
+		l.pointer.setLink(false)
 	}
 	return true
 }
 
-// pointAt offers the link cursor while the mouse rests on a link. The
-// GUI is the only owner of the window's cursor shape, so nothing else
-// has to arbitrate with it.
+// pointAt offers the link cursor while the mouse rests on a link,
+// overriding whatever shape the handler under it asked for.
 func (l *linkScanner) pointAt(pos term.Coordinates, cells [][]term.Cell) {
 	l.scan(cells)
 	_, over := l.at(pos.X, pos.Y)
-	l.point(over)
-}
-
-func (l *linkScanner) point(over bool) {
-	if over == l.pointing {
-		return
-	}
-	l.pointing = over
-	if over {
-		l.setShape(ebiten.CursorShapePointer)
-		return
-	}
-	l.setShape(ebiten.CursorShapeDefault)
+	l.pointer.setLink(over)
 }
 
 // armed reports whether links are being offered, which is only while the

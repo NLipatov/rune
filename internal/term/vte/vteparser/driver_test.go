@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vtescanner"
 )
@@ -42,6 +43,53 @@ func (h *programStatusHandler) ProgramStatusQuery(terminator string) {
 }
 
 func (h *programStatusHandler) PromptStart() { h.prompts++ }
+
+type pointerShapeHandler struct {
+	nopHandler
+	calls []string
+}
+
+func (h *pointerShapeHandler) SetPointerShape(shape term.PointerShape) {
+	h.calls = append(h.calls, shape.String())
+}
+
+func (h *pointerShapeHandler) ResetPointerShape() {
+	h.calls = append(h.calls, "reset")
+}
+
+func TestOSCDispatchPointerShape(t *testing.T) {
+	t.Parallel()
+	osc := func(body string) string { return "\x1b]22;" + body + "\x1b\\" }
+	cases := []struct {
+		name   string
+		stream string
+		want   []string
+	}{
+		{"name", osc("pointer"), []string{"pointer"}},
+		{"BEL terminated", "\x1b]22;text\x07", []string{"text"}},
+		{"case insensitive", osc("Col-Resize"), []string{"col-resize"}},
+		{"x11 name", osc("xterm"), []string{"text"}},
+		{"set operation", osc("=move"), []string{"move"}},
+		{"push operation", osc(">ns-resize"), []string{"ns-resize"}},
+		{"first known name of a list", osc("wait,pointer,text"), []string{"pointer"}},
+		{"explicit default", osc("default"), []string{"default"}},
+		{"pop resets", osc("<"), []string{"reset"}},
+		{"empty name resets", osc(""), []string{"reset"}},
+		{"missing name resets", "\x1b]22\x1b\\", []string{"reset"}},
+		{"set operation without a name resets", osc("="), []string{"reset"}},
+		{"unknown names are ignored", osc("wait,progress"), nil},
+		{"queries are ignored", osc("?pointer"), nil},
+		{"sequences apply in order", osc("text") + osc(""), []string{"text", "reset"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := new(pointerShapeHandler)
+			NewParser(h, new(StdTimeout)).AdvanceBytes([]byte(tc.stream))
+			assert.Equal(t, tc.want, h.calls)
+		})
+	}
+}
 
 func TestOSCDispatchProgramStatus(t *testing.T) {
 	t.Parallel()

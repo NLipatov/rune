@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -420,5 +421,45 @@ func TestTabsIconPressHandled(t *testing.T) {
 		quit, handled := h.Handle(ev)
 		assert.False(t, quit)
 		assert.True(t, handled, "%+v", ev)
+	}
+}
+
+func TestTabsPointerShape(t *testing.T) {
+	// Icons sit at A:0, B:9 and C:17 on row 1, as in TestTabsOnIconClick.
+	for _, tc := range []struct {
+		name        string
+		noIconClick bool
+		key         term.Key
+		x           int
+		want        term.PointerShape
+		set         bool
+	}{
+		{name: "hover over an icon", x: 9, want: term.PointerLink, set: true},
+		{name: "press on an icon", key: term.MouseLeft, x: 17, want: term.PointerLink, set: true},
+		{name: "hover over a name", x: 11},
+		{name: "hover past the tabs", x: 28},
+		{name: "hover over an icon that does not close", noIconClick: true, x: 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewTabs()
+			h.SetBorder(false)
+			h.Resize(30, 2)
+			for i, name := range []string{"alpha", "beta", "gamma"} {
+				h.Add('A'+rune(i), name)
+			}
+			if !tc.noIconClick {
+				h.OnIconClick = func(int) {}
+			}
+			handlertest.DrawHandler(h, 30, 2)
+
+			p := new(term.Pointer)
+			h.Handle(term.Event{
+				Type: term.EventMouse, Key: tc.key, MouseX: tc.x, MouseY: 1,
+				Context: term.ContextWithPointer(context.Background(), p),
+			})
+			shape, set := p.Shape()
+			assert.Equal(t, tc.set, set)
+			assert.Equal(t, tc.want, shape)
+		})
 	}
 }

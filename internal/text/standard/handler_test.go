@@ -422,6 +422,21 @@ func TestStandardCursorCorrectionsDisabled(t *testing.T) {
 	assert.Equal(t, want, pos)
 }
 
+func TestStandardMouseSetsTheTextPointer(t *testing.T) {
+	uri, err := workspaceapi.ParseURI("test:///text-pointer")
+	require.NoError(t, err)
+	buf := cell.NewBuffer()
+	buf.ReadFrom(strings.NewReader("text"))
+	h := NewHandler(buf, uri, text.IndentRuneTab, 0)
+	h.Resize(20, 10)
+
+	p := new(term.Pointer)
+	h.Handle(term.Event{Type: term.EventMouse, MouseX: 1,
+		Context: term.ContextWithPointer(context.Background(), p)})
+	shape, _ := p.Shape()
+	assert.Equal(t, term.PointerText, shape)
+}
+
 func TestStandardMoveToBoundsReportsCorrection(t *testing.T) {
 	uri, err := workspaceapi.ParseURI("test:///move-to-bounds-result")
 	require.NoError(t, err)

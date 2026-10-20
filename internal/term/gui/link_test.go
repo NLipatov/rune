@@ -1083,11 +1083,11 @@ func linkGrid(rows ...string) [][]term.Cell {
 }
 
 func heldScanner(observer func(*url.URL)) *linkScanner {
-	l := newLinkScanner()
+	p, _ := recordingPointer()
+	l := newLinkScanner(p)
 	if observer != nil {
 		l.observer = observer
 	}
-	l.setShape = func(ebiten.CursorShapeType) {}
 	l.setMeta(true)
 	return &l
 }
@@ -1280,7 +1280,8 @@ func TestLinkScannerUnderlinesEveryRowOfAWrappedURL(t *testing.T) {
 }
 
 func TestLinkScannerSetMetaReportsTransitions(t *testing.T) {
-	l := newLinkScanner()
+	p, _ := recordingPointer()
+	l := newLinkScanner(p)
 	assert.False(t, l.setMeta(false), "no transition")
 	assert.False(t, l.armed())
 	assert.True(t, l.setMeta(true))
@@ -1306,11 +1307,10 @@ func TestLinkScannerScanCachesUntilInvalidated(t *testing.T) {
 // recordingScanner is a meta-held scanner capturing every cursor shape
 // it pushes to the window.
 func recordingScanner() (*linkScanner, *[]ebiten.CursorShapeType) {
-	var shapes []ebiten.CursorShapeType
-	l := newLinkScanner()
-	l.setShape = func(s ebiten.CursorShapeType) { shapes = append(shapes, s) }
+	p, shapes := recordingPointer()
+	l := newLinkScanner(p)
 	l.setMeta(true)
-	return &l, &shapes
+	return &l, shapes
 }
 
 func TestLinkScannerPointAtOffersTheLinkCursor(t *testing.T) {
@@ -1354,7 +1354,7 @@ func TestGUIMetaHoverSetsLinkCursor(t *testing.T) {
 	}
 	g, input := newTestGUI(t, &mock)
 	var shapes []ebiten.CursorShapeType
-	g.links.setShape = func(s ebiten.CursorShapeType) { shapes = append(shapes, s) }
+	g.pointer.setShape = func(s ebiten.CursorShapeType) { shapes = append(shapes, s) }
 	g.drawHandler(g.ctx)
 
 	// The headless cursor rests at cell 0,0, inside the link.

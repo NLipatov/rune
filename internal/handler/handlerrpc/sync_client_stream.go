@@ -138,6 +138,9 @@ func (s *SyncClientStream[T]) Handle(ev term.Event) (exit, handled bool) {
 	}
 
 	handle := recvMsg.GetHandle()
+	if ev.Type == term.EventMouse && handle.PointerShape != nil {
+		term.SetPointerShape(ev, term.PointerShape(handle.GetPointerShape()))
+	}
 	exit = handle.GetQuit()
 	handled = handle.GetHandled()
 	return

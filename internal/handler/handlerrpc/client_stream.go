@@ -55,6 +55,25 @@ type ClientStream[T handlerrpc.StreamMessage] struct {
 	respPending    atomic.Bool
 	respPendingMsg *handlerrpc.ServerMessage
 
+	// pointer is the Pointer of the last mouse event sent, which was the
+	// mouseSent-th. Responses arrive in request order, so only the
+	// mouseSent-th mouse response may set its shape.
+	//
+	// The pointer usually stays over the same thing from one mouse event
+	// to the next, so each Pointer starts with lastShape, the shape of the
+	// last mouse response, instead of flickering to what it held until its
+	// own response arrives. preset is whether pointer was given lastShape,
+	// and unpreset what it showed before, which a response that sets no
+	// shape puts back.
+	pointerMu     sync.Mutex
+	pointer       *term.Pointer
+	mouseSent     uint64
+	mouseAnswered uint64
+	lastShape     term.PointerShape
+	lastShapeSet  bool
+	preset        bool
+	unpreset      term.PointerShape
+
 	// these are all cached when client calls Draw
 	mu             sync.Mutex
 	contextPayload string
@@ -189,6 +208,9 @@ func (s *ClientStream[T]) Handle(ev term.Event) (exit, handled bool) {
 	}
 	req := handlerrpc.HandleStreamRequest{Event: &tev}
 	sendMsg := handlerrpc.ServerMessage{Type: handlerrpc.MessageType_Handle, Handle: &req}
+	if ev.Type == term.EventMouse {
+		s.presetPointerShape(ev)
+	}
 	if err := s.stream.SendMsg(&sendMsg); err != nil {
 		s.closeStream(fmt.Errorf("send handle message: %w", err))
 		return
@@ -548,6 +570,9 @@ func (s *ClientStream[T]) receiveMessages() (ret error) {
 			s.mu.Unlock()
 		case handlerrpc.MessageType_Handle:
 			handle := recvMsg.GetHandle()
+			if handle.GetRequest().GetType() == termrpc.Event_TypeMouse {
+				s.applyPointerShape(handle)
+			}
 			if handle.GetQuit() {
 				s.exit.Store(true)
 				// handle response might arrive late, and EventNone
@@ -599,6 +624,50 @@ func (s *ClientStream[T]) receiveMessages() (ret error) {
 			ret = fmt.Errorf("received extraneous message type: %d", recvMsg.GetType())
 			return
 		}
+	}
+}
+
+// presetPointerShape makes the Pointer of the mouse event ev the one the
+// next mouse response sets, and gives it the shape of the last response.
+func (s *ClientStream[T]) presetPointerShape(ev term.Event) {
+	p, _ := term.PointerFromContext(ev.Context)
+	s.pointerMu.Lock()
+	defer s.pointerMu.Unlock()
+	s.mouseSent++
+	s.pointer = p
+	s.preset = p != nil && s.lastShapeSet
+	if s.preset {
+		s.unpreset, _ = p.Shape()
+		p.SetShape(s.lastShape)
+	}
+}
+
+// applyPointerShape sets the shape the extension reported for a mouse
+// event on that event's Pointer, if it is still the last one sent, or puts
+// back what the preset replaced if it reported none. The answer arrives
+// after the event was dispatched, so a changed shape needs an interrupt to
+// be shown.
+func (s *ClientStream[T]) applyPointerShape(handle *handlerrpc.HandleStreamResponse) {
+	s.pointerMu.Lock()
+	s.mouseAnswered++
+	s.lastShape = term.PointerShape(handle.GetPointerShape())
+	s.lastShapeSet = handle.PointerShape != nil
+	p, shape := s.pointer, s.lastShape
+	apply := p != nil && s.mouseAnswered == s.mouseSent && (s.lastShapeSet || s.preset)
+	if !s.lastShapeSet {
+		shape = s.unpreset
+	}
+	s.pointerMu.Unlock()
+	if !apply {
+		return
+	}
+	prev, _ := p.Shape()
+	p.SetShape(shape)
+	if prev == shape {
+		return
+	}
+	if err := s.publisher(term.Event{Type: term.EventInterrupt}); err != nil {
+		s.log(log.DebugLevel, "publish pointer shape interrupt: %v", err)
 	}
 }
 

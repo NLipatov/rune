@@ -17,6 +17,7 @@
 package markdown
 
 import (
+	"context"
 	"net/url"
 	"testing"
 
@@ -266,6 +267,38 @@ func TestLocalAnchorScrolling(t *testing.T) {
 
 	if handled {
 		assert.NotEqual(t, initialOffset, h.SeekOffset(), "Anchor should scroll to header")
+	}
+}
+
+func TestHandleMouseSetsTheLinkPointer(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		key     term.Key
+		want    bool
+	}{
+		{"hover over a link", "[Click me](http://example.com)", 0, true},
+		{"press on a link", "[Click me](http://example.com)", term.MouseLeft, true},
+		{"hover over text", "Plain text", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comp, err := markdown.New(tt.content)
+			require.NoError(t, err)
+			h := New(comp, WithOnLinkClick(func(*url.URL) bool { return true }))
+			h.Resize(40, 5)
+
+			p := new(term.Pointer)
+			h.Handle(term.Event{
+				Type: term.EventMouse, Key: tt.key, MouseX: 3,
+				Context: term.ContextWithPointer(context.Background(), p),
+			})
+			shape, set := p.Shape()
+			assert.Equal(t, tt.want, set)
+			if tt.want {
+				assert.Equal(t, term.PointerLink, shape)
+			}
+		})
 	}
 }
 

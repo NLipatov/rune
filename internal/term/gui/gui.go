@@ -117,7 +117,8 @@ type GUI struct {
 	// the event loop.
 	cellPixelSize atomic.Uint64
 
-	links linkScanner
+	pointer *pointer
+	links   linkScanner
 
 	// echoLikely arms the once-per-tick echo wait. It is learned, not
 	// configured: an interrupt pending at tick entry right after a
@@ -170,7 +171,8 @@ func New(handler tui.Handler, options ...Option) (*GUI, error) {
 	ret.input = newInput(ret.fontManager)
 	ret.mouse = newMouse(ret.fontManager)
 	ret.drag = newDragPoller(ret.mouse)
-	ret.links = newLinkScanner()
+	ret.pointer = newPointer()
+	ret.links = newLinkScanner(ret.pointer)
 	ret.ctx = context.Background()
 	ret.ctx, ret.cancelCtx = context.WithCancel(ret.ctx)
 
@@ -405,6 +407,9 @@ func (g *GUI) Update() error {
 	if g.links.armed() {
 		g.links.pointAt(g.mouse.clampedCoordinates(), g.writer.RawCells())
 	}
+	// Before the idle return: a handler may have set the shape of the
+	// last mouse event after it was dispatched.
+	g.pointer.sync()
 
 	interruptPending := g.interruptPending.Swap(false)
 	for len(g.updateChan) > 0 {
@@ -470,6 +475,10 @@ func (g *GUI) Update() error {
 			if g.links.handleMouse(ev, g.writer.RawCells()) {
 				continue
 			}
+			if ev.Context == nil {
+				ev.Context = context.Background()
+			}
+			ev.Context = term.ContextWithPointer(ev.Context, g.pointer.next())
 			fallthrough
 		default:
 			if ev.Type == term.EventKey {
@@ -488,6 +497,7 @@ func (g *GUI) Update() error {
 			}
 		}
 	}
+	g.pointer.sync()
 	g.prevTickKey = keyEvents == 1
 	// A lone keystroke on an echoing handler misses its own frame by
 	// microseconds: the echo arrives right after this loop. Waiting is

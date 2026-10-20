@@ -652,6 +652,7 @@ func (h *Handler) handleMouse(ev term.Event, outH int) (exit, handled bool) {
 		if ev.Key == term.MouseRelease {
 			h.mouseDragInOutput = false
 		}
+		term.SetPointerShape(ev, term.PointerText)
 		return h.mouse.Handle(ev)
 	}
 	if h.mouseDragInInput {
@@ -670,6 +671,7 @@ func (h *Handler) handleMouse(ev term.Event, outH int) (exit, handled bool) {
 	if ev.Key == term.MouseLeft {
 		h.mouseDragInOutput = true
 	}
+	term.SetPointerShape(ev, term.PointerText)
 	return h.mouse.Handle(ev)
 }
 
