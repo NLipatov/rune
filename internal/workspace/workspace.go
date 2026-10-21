@@ -83,22 +83,9 @@ type WorkspaceManager interface {
 	SchemeManager
 	AddWorkspace(context.Context, workspaceapi.URI) (Workspace, error)
 	Workspace(workspaceapi.URI) (Workspace, bool, error)
-	// IncrementReference bumps the reference count of the workspace
-	// registered under uri. A workspace whose reference count has
-	// ever been incremented is owned by its callers and will be
-	// closed when DecrementReference brings the count back to zero.
-	// Workspaces that are never incremented (e.g. the IDE-owned
-	// active workspace) are not subject to refcount teardown.
 	IncrementReference(workspaceapi.URI)
-	// DecrementReference decrements the reference count of the
-	// workspace registered under uri and closes the workspace when
-	// the count reaches zero. Decrementing a uri that was never
-	// incremented is a no-op.
 	DecrementReference(workspaceapi.URI) error
-	// RemoveWorkspace unregisters uri and returns the underlying
-	// Workspace so the caller can close it off the event loop. The
-	// manager's maps are only ever touched on the event loop.
-	RemoveWorkspace(workspaceapi.URI) (Workspace, bool)
+	ReleaseWorkspace(workspaceapi.URI) (Workspace, bool)
 }
 
 var ErrOpenInOtherWorkspace = errors.New("file should be opened in another workspace")

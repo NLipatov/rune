@@ -142,7 +142,7 @@ func (m *mockManager) IncrementReference(workspaceapi.URI) {}
 
 func (m *mockManager) DecrementReference(workspaceapi.URI) error { return nil }
 
-func (m *mockManager) RemoveWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
+func (m *mockManager) ReleaseWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
 	panic("should not be called")
 }
 
@@ -348,6 +348,6 @@ func (h hidingManager) DecrementReference(uri workspaceapi.URI) error {
 	return h.m.DecrementReference(uri)
 }
 
-func (h hidingManager) RemoveWorkspace(uri workspaceapi.URI) (workspace.Workspace, bool) {
-	return h.m.RemoveWorkspace(uri)
+func (h hidingManager) ReleaseWorkspace(uri workspaceapi.URI) (workspace.Workspace, bool) {
+	return h.m.ReleaseWorkspace(uri)
 }

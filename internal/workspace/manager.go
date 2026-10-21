@@ -201,36 +201,31 @@ func (m *Manager) IncrementReference(uri workspaceapi.URI) {
 // uri and closes it once the count reaches zero. See
 // [WorkspaceManager.DecrementReference].
 func (m *Manager) DecrementReference(uri workspaceapi.URI) error {
-	key := uri.String()
-	count, referenced := m.refs[key]
-	if !referenced {
-		return nil
-	}
-	count--
-	if count > 0 {
-		m.refs[key] = count
-		return nil
-	}
-	w, ok := m.workspaces[key]
+	w, ok := m.ReleaseWorkspace(uri)
 	if !ok {
-		delete(m.refs, key)
 		return nil
 	}
 	return w.Close()
 }
 
-// RemoveWorkspace unregisters uri and returns the underlying
-// Workspace, unwrapped so closing it cannot touch the manager's maps.
-// Callers are responsible for calling Close on the returned
-// workspace. Stale wrapped handles from before the remove stay
-// harmless: their Close only evicts the entry they correspond to.
-func (m *Manager) RemoveWorkspace(uri workspaceapi.URI) (Workspace, bool) {
-	w, ok := m.workspaces[uri.String()]
-	if !ok {
+// ReleaseWorkspace drops one reference to the workspace registered
+// under uri. See [WorkspaceManager.ReleaseWorkspace]. The returned
+// workspace is unwrapped so closing it cannot touch the manager's
+// maps. Stale wrapped handles from before the release stay harmless:
+// their Close only evicts the entry they correspond to.
+func (m *Manager) ReleaseWorkspace(uri workspaceapi.URI) (Workspace, bool) {
+	key := uri.String()
+	w, ok := m.workspaces[key]
+	count := m.refs[key]
+	if !ok || count == 0 {
+		return nil, false
+	}
+	if count > 1 {
+		m.refs[key] = count - 1
 		return nil, false
 	}
 	m.removeWorkspace(uri)
-	m.log(log.DebugLevel, "RemoveWorkspace(%q)", uri.String())
+	m.log(log.DebugLevel, "ReleaseWorkspace(%q)", key)
 	return w.Workspace, true
 }
 

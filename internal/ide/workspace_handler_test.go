@@ -6986,7 +6986,23 @@ func newTestWorkspaceManagerHandlerWithManagerMu(
 ) *testWorkspaceManagerHandler {
 	homeURI, err := workspaceapi.ParseURI("memory:///home")
 	require.NoError(t, err)
+	return newTestWorkspaceManagerHandlerWithHome(t, homeURI, manager, mu,
+		drainSched, uri, cfg, runner, extensions, dir, onTabsClick,
+		shutdownShaderCfg, prepare...)
+}
 
+// newTestWorkspaceManagerHandlerWithHome is like
+// newTestWorkspaceManagerHandlerWithManagerMu but registers homeURI as
+// the home workspace instead of memory:///home.
+func newTestWorkspaceManagerHandlerWithHome(
+	t *testing.T, homeURI workspaceapi.URI, manager *workspace.Manager,
+	mu *sync.Mutex, drainSched func() uint64,
+	uri *workspaceapi.URI, cfg ideConfig, runner ExtensionsRunner,
+	extensions map[string]Extension, dir string,
+	onTabsClick func(int) bool,
+	shutdownShaderCfg shutdownShaderConfig,
+	prepare ...func(*workspaceManagerHandler),
+) *testWorkspaceManagerHandler {
 	m := new(testWorkspaceManagerHandler)
 	m.workspaceManagerHandler = new(workspaceManagerHandler)
 	// ensure that command manual is never shown while preserving any
@@ -7056,7 +7072,7 @@ func newTestWorkspaceManagerHandlerWithManagerMu(
 	for _, fn := range prepare {
 		fn(m.workspaceManagerHandler)
 	}
-	err = m.workspaceManagerHandler.init(uri, homeURI, manager,
+	err := m.workspaceManagerHandler.init(uri, homeURI, manager,
 		notiConfig, cfg, storage, dir, publish, runner, pkgtrust.NewStore(dir, nil), mu, extensions,
 		func() (ideConfig, error) {
 			// Like a real reload, every workspace build records its
@@ -7576,6 +7592,96 @@ func TestCloseWorkspaceClosesScheme(t *testing.T) {
 		t.Fatal("subprocess survived :workspaceclose: the scheme " +
 			"ctx was not canceled, so spawned commands leak")
 	}
+}
+
+// newHomeSharingTestHandler builds a handler whose home workspace is a
+// real directory on disk, so files and workspaces under it resolve to
+// the same manager entry as the home workspace.
+func newHomeSharingTestHandler(
+	t *testing.T, home string, uri workspaceapi.URI,
+) (*testWorkspaceManagerHandler, *workspace.Manager, workspaceapi.URI) {
+	cfg := defaultCfg()
+	mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
+	manager := workspace.NewManager(config.NopConfig(), sched)
+	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
+		workspace.NewMemoryScheme))
+	require.NoError(t, manager.RegisterScheme(workspace.FileScheme,
+		workspace.NewFileScheme))
+
+	homeURI, err := workspaceapi.ParseURI("file://" + home)
+	require.NoError(t, err)
+
+	runner := FuncExtensionsRunner(testRunnerFn)
+	m := newTestWorkspaceManagerHandlerWithHome(t, homeURI, manager, mu,
+		drain, &uri, cfg, runner, nil, t.TempDir(), nil,
+		nopShutdownShaderConfig())
+	t.Cleanup(func() { _ = m.Close() })
+	return m, manager, homeURI
+}
+
+// requireHomeSchemeOpen fails when the home workspace's scheme has been
+// closed. Starting a missing executable is rejected by exec without
+// spawning anything, but only after the scheme checks its own ctx.
+func requireHomeSchemeOpen(
+	t *testing.T, m *testWorkspaceManagerHandler, manager *workspace.Manager,
+	homeURI workspaceapi.URI, home string,
+) {
+	t.Helper()
+	require.True(t, manager.HasWorkspace(homeURI),
+		"home workspace must stay registered with the manager")
+	_, err := m.homeWorkspace.StartCommand(context.Background(),
+		workspaceapi.Cmd{Path: filepath.Join(home, "does-not-exist")})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.Canceled,
+		"home workspace scheme was closed: every home terminal now fails")
+}
+
+func TestHomeWorkspaceSurvivesClosingHomeFileOpenedFromWorkspace(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	require.NoError(t, os.Mkdir(proj, 0o755))
+	file := filepath.Join(home, "script.md")
+	require.NoError(t, os.WriteFile(file, []byte("# script\n"), 0o644))
+
+	uri, err := workspaceapi.ParseURI("file://" + proj)
+	require.NoError(t, err)
+	m, manager, homeURI := newHomeSharingTestHandler(t, home, uri)
+
+	fileURI, err := workspaceapi.ParseURI("file://" + file)
+	require.NoError(t, err)
+
+	m.mu.Lock()
+	ex := m.workspaces[m.focus].ex
+	tab, err := ex.editFileURI(fileURI, ex.invokeWindow(), false)
+	if err == nil {
+		tabWindow, ok := tab.Window()
+		require.True(t, ok)
+		_, err = ex.comp.SetFocus(tabWindow)
+	}
+	if err == nil {
+		err = ex.dispatchCommand("tabclose")
+	}
+	m.mu.Unlock()
+	require.NoError(t, err)
+	m.quiesce()
+
+	requireHomeSchemeOpen(t, m, manager, homeURI, home)
+}
+
+func TestClosingHomeDirWorkspaceKeepsHomeWorkspaceAlive(t *testing.T) {
+	home := t.TempDir()
+	uri, err := workspaceapi.ParseURI("file://" + home)
+	require.NoError(t, err)
+	m, manager, homeURI := newHomeSharingTestHandler(t, home, uri)
+
+	m.mu.Lock()
+	err = m.commandCloseWorkspace()
+	m.mu.Unlock()
+	require.NoError(t, err)
+	m.quiesce()
+	require.Equal(t, 0, m.workspaceCount)
+
+	requireHomeSchemeOpen(t, m, manager, homeURI, home)
 }
 
 func TestReloadWorkspaceClosesAndReopensScheme(t *testing.T) {

@@ -157,7 +157,7 @@ func TestManager(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("RemoveWorkspace removes the entry and returns the raw workspace", func(t *testing.T) {
+	t.Run("ReleaseWorkspace removes the entry and returns the raw workspace", func(t *testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
@@ -166,14 +166,15 @@ func TestManager(t *testing.T) {
 		w, err := m.AddWorkspace(ctx, uri)
 		require.NoError(t, err)
 		require.NotNil(t, w)
+		m.IncrementReference(uri)
 
-		detached, ok := m.RemoveWorkspace(uri)
+		detached, ok := m.ReleaseWorkspace(uri)
 		require.True(t, ok)
 		require.NotNil(t, detached)
 		assert.False(t, m.HasWorkspace(uri),
 			"detach must unregister the uri from the manager")
 
-		_, ok = m.RemoveWorkspace(uri)
+		_, ok = m.ReleaseWorkspace(uri)
 		assert.False(t, ok, "second detach must return false")
 
 		// A new workspace registered under the same uri must survive
@@ -190,6 +191,92 @@ func TestManager(t *testing.T) {
 		require.NoError(t, m.Close())
 	})
 
+	t.Run("ReleaseWorkspace keeps a shared entry open until the last reference", func(t *testing.T) {
+		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
+		closes := new(int)
+		require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
+
+		uri := parseURI(t, "test:///tmp/")
+		_, err := m.AddWorkspace(ctx, uri)
+		require.NoError(t, err)
+		m.IncrementReference(uri)
+		m.IncrementReference(uri)
+
+		detached, ok := m.ReleaseWorkspace(uri)
+		assert.False(t, ok, "release with another holder must not detach")
+		assert.Nil(t, detached)
+		assert.True(t, m.HasWorkspace(uri))
+		assert.Zero(t, *closes, "release with another holder must not close")
+
+		detached, ok = m.ReleaseWorkspace(uri)
+		require.True(t, ok, "the last release must detach")
+		require.NotNil(t, detached)
+		assert.False(t, m.HasWorkspace(uri))
+		assert.Zero(t, *closes, "the caller owns closing the detached workspace")
+
+		require.NoError(t, detached.Close())
+		assert.Equal(t, 1, *closes)
+	})
+
+	t.Run("ReleaseWorkspace leaves an unreferenced entry registered and open", func(t *testing.T) {
+		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
+		closes := new(int)
+		require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
+
+		uri := parseURI(t, "test:///tmp/")
+		_, err := m.AddWorkspace(ctx, uri)
+		require.NoError(t, err)
+
+		detached, ok := m.ReleaseWorkspace(uri)
+		assert.False(t, ok)
+		assert.Nil(t, detached)
+		assert.True(t, m.HasWorkspace(uri))
+		assert.Zero(t, *closes)
+
+		require.NoError(t, m.Close())
+	})
+
+	t.Run("an entry shared by a workspace and a file closes once both release", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			fileFirst bool
+		}{
+			{name: "workspace released first"},
+			{name: "file released first", fileFirst: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				m := workspace.NewManager(config.NopConfig(), inlineSchedule)
+				closes := new(int)
+				require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
+
+				uri := parseURI(t, "test:///tmp/")
+				_, err := m.AddWorkspace(ctx, uri)
+				require.NoError(t, err)
+				m.IncrementReference(uri)
+				m.IncrementReference(uri)
+
+				releaseWorkspace := func() {
+					if detached, ok := m.ReleaseWorkspace(uri); ok {
+						require.NoError(t, detached.Close())
+					}
+				}
+				releaseFile := func() { require.NoError(t, m.DecrementReference(uri)) }
+				first, second := releaseWorkspace, releaseFile
+				if tc.fileFirst {
+					first, second = releaseFile, releaseWorkspace
+				}
+
+				first()
+				assert.True(t, m.HasWorkspace(uri))
+				assert.Zero(t, *closes)
+
+				second()
+				assert.False(t, m.HasWorkspace(uri), "the last release must unregister the entry")
+				assert.Equal(t, 1, *closes, "the last release must close the scheme exactly once")
+			})
+		}
+	})
+
 	t.Run("stale wrapped Close does not evict a successor instance", func(t *testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		err := m.RegisterScheme("test", NewNopScheme("test"))
@@ -198,8 +285,9 @@ func TestManager(t *testing.T) {
 		uri := parseURI(t, "test:///tmp/")
 		stale, err := m.AddWorkspace(ctx, uri)
 		require.NoError(t, err)
+		m.IncrementReference(uri)
 
-		_, ok := m.RemoveWorkspace(uri)
+		_, ok := m.ReleaseWorkspace(uri)
 		require.True(t, ok)
 
 		successor, err := m.AddWorkspace(ctx, uri)
@@ -352,6 +440,30 @@ type installRootWorkspace struct {
 
 func (w installRootWorkspace) InstallDataDir(context.Context) (string, error) {
 	return w.root, nil
+}
+
+// newCloseCountingScheme returns nop schemes that count every Close
+// into closes.
+func newCloseCountingScheme(closes *int) schemeapi.SchemeFunc {
+	return func(ctx context.Context, cfg config.Config, uri workspaceapi.URI) (
+		schemeapi.Scheme, error,
+	) {
+		s, err := NewNopScheme("test")(ctx, cfg, uri)
+		if err != nil {
+			return nil, err
+		}
+		return closeCountingScheme{Scheme: s, closes: closes}, nil
+	}
+}
+
+type closeCountingScheme struct {
+	schemeapi.Scheme
+	closes *int
+}
+
+func (s closeCountingScheme) Close() error {
+	*s.closes++
+	return s.Scheme.Close()
 }
 
 func TestIntegrationManagerWithWorkspaceLoad(t *testing.T) {

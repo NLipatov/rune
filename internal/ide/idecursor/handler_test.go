@@ -51,7 +51,7 @@ func (stubWorkspaceManager) IncrementReference(workspaceapi.URI) {}
 func (stubWorkspaceManager) DecrementReference(workspaceapi.URI) error {
 	return nil
 }
-func (stubWorkspaceManager) RemoveWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
+func (stubWorkspaceManager) ReleaseWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
 	return nil, false
 }
 

@@ -299,10 +299,10 @@ func (m visibleWorkspaceManager) DecrementReference(uri workspaceapi.URI) error 
 	return m.manager.DecrementReference(uri)
 }
 
-func (m visibleWorkspaceManager) RemoveWorkspace(
+func (m visibleWorkspaceManager) ReleaseWorkspace(
 	uri workspaceapi.URI,
 ) (workspace.Workspace, bool) {
-	return m.manager.RemoveWorkspace(uri)
+	return m.manager.ReleaseWorkspace(uri)
 }
 
 func (h *workspaceManagerHandler) newEditor(
@@ -719,6 +719,11 @@ func (h *workspaceManagerHandler) init(
 	if err != nil {
 		return fmt.Errorf("add home workspace: %v", err)
 	}
+	// Files and workspaces under the home directory share this manager
+	// entry and reference-count it; holding a reference for the IDE's
+	// lifetime keeps their release from closing the home scheme.
+	// Manager.Close still tears it down at shutdown.
+	h.workspace.IncrementReference(homeDirUri)
 
 	h.homeURI = homeDirUri
 	h.homeWorkspace = homeWorkspace
@@ -1754,7 +1759,7 @@ func (h *workspaceManagerHandler) beginPendingWorkspaceTeardown(pending *pending
 			return
 		}
 
-		detached, ok := h.workspace.RemoveWorkspace(pending.uri)
+		detached, ok := h.workspace.ReleaseWorkspace(pending.uri)
 		if !ok {
 			return
 		}
@@ -1840,6 +1845,11 @@ func (h *workspaceManagerHandler) createWorkspaceScheme(uri workspaceapi.URI) (
 	if err != nil {
 		return nil, fmt.Errorf("create new workspace for %q: %w", uri, err)
 	}
+	// The entry may be shared, e.g. with the home workspace; the
+	// reference keeps another holder's release from closing it under
+	// this workspace, and this workspace's release from closing it
+	// under them.
+	h.workspace.IncrementReference(uri)
 	return cwd, nil
 }
 
@@ -3103,10 +3113,9 @@ func (h *workspaceManagerHandler) closeWorkspace() (
 	}
 	h.status.dropWorkspace(uri)
 	// Detach the raw workspace so the background managerWorkspace.Close
-	// cannot write the manager maps off-loop.
-	if raw, ok := h.workspace.RemoveWorkspace(hm.uri); ok {
-		hm.cwd = raw
-	}
+	// cannot write the manager maps off-loop. While other holders share
+	// the entry nothing is detached, and cwd must not be closed.
+	hm.cwd, _ = h.workspace.ReleaseWorkspace(hm.uri)
 	done := make(chan struct{})
 	h.closing[uri.String()] = done
 	h.closeWG.Add(1)

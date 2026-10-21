@@ -787,19 +787,19 @@ func (mr *MockWorkspaceManagerMockRecorder) RegisterScheme(arg0, arg1 any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RegisterScheme", reflect.TypeOf((*MockWorkspaceManager)(nil).RegisterScheme), arg0, arg1)
 }
 
-// RemoveWorkspace mocks base method.
-func (m *MockWorkspaceManager) RemoveWorkspace(arg0 workspaceapi.URI) (workspace.Workspace, bool) {
+// ReleaseWorkspace mocks base method.
+func (m *MockWorkspaceManager) ReleaseWorkspace(arg0 workspaceapi.URI) (workspace.Workspace, bool) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RemoveWorkspace", arg0)
+	ret := m.ctrl.Call(m, "ReleaseWorkspace", arg0)
 	ret0, _ := ret[0].(workspace.Workspace)
 	ret1, _ := ret[1].(bool)
 	return ret0, ret1
 }
 
-// RemoveWorkspace indicates an expected call of RemoveWorkspace.
-func (mr *MockWorkspaceManagerMockRecorder) RemoveWorkspace(arg0 any) *gomock.Call {
+// ReleaseWorkspace indicates an expected call of ReleaseWorkspace.
+func (mr *MockWorkspaceManagerMockRecorder) ReleaseWorkspace(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveWorkspace", reflect.TypeOf((*MockWorkspaceManager)(nil).RemoveWorkspace), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseWorkspace", reflect.TypeOf((*MockWorkspaceManager)(nil).ReleaseWorkspace), arg0)
 }
 
 // UnregisterScheme mocks base method.
