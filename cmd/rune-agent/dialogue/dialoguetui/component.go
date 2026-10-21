@@ -307,7 +307,7 @@ func (c *Component) Init(cfg ComponentConfig) {
 
 	if cfg.StatusBar.Enabled {
 		// The interrupter only reaches the Component once Handler
-		// wraps it, which is where the repaint ticker starts.
+		// wraps it, which is where the bar starts repainting.
 		c.statusBar = NewStatusBar(cfg.StatusBar, nil)
 		c.shadedBar.root = c.statusBar
 		c.shadedBar.name = cfg.StatusBar.Shader
@@ -1986,6 +1986,16 @@ func (c *Component) barHeight() int {
 		return 0
 	}
 	return 1
+}
+
+// drawStatusBarImages draws the status bar's images over the dialogue
+// drawn to w, cut off at its edges unless they overflow. Draw leaves
+// them out.
+func (c *Component) drawStatusBarImages(w term.Writer) {
+	if c.barHeight() == 0 {
+		return
+	}
+	c.statusBar.drawImages(term.BoundsCheckWriter(c.width, c.height, w), c.height)
 }
 
 // SetStatusBarState applies fn to the status bar state. It is a no-op

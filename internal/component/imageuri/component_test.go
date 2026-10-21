@@ -464,10 +464,12 @@ func TestCloseCancelsTheRequest(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name    string
-		uri     string
-		ttl     time.Duration
-		wantErr string
+		name          string
+		uri           string
+		ttl           time.Duration
+		noStorage     bool
+		noInterrupter bool
+		wantErr       string
 	}{
 		{name: "file", uri: "file:///tmp/a.png", ttl: time.Hour},
 		{name: "http with zero ttl", uri: "http://example.com/a.png"},
@@ -478,16 +480,25 @@ func TestNew(t *testing.T) {
 		{name: "no scheme", uri: "/tmp/a.png", wantErr: `unsupported scheme ""`},
 		{name: "http without host", uri: "http:///a.png", wantErr: "no host"},
 		{name: "file without path", uri: "file:a.png", wantErr: "no path"},
+		{name: "nil storage", uri: "file:///tmp/a.png", noStorage: true, wantErr: "nil storage"},
+		{name: "nil interrupter", uri: "file:///tmp/a.png", noInterrupter: true, wantErr: "nil interrupter"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := imageuri.New(tt.uri, tt.ttl,
-				storagestub.NewInMemoryService(), make(interrupts, 1), viewerStyle)
+			var storage storageapi.Service = storagestub.NewInMemoryService()
+			if tt.noStorage {
+				storage = nil
+			}
+			var irq term.Interrupter = make(interrupts, 1)
+			if tt.noInterrupter {
+				irq = nil
+			}
+			c, err := imageuri.New(tt.uri, tt.ttl, storage, irq, viewerStyle)
 			uriErr := imageuri.ValidateURI(tt.uri)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				assert.Nil(t, c)
-				if tt.ttl >= 0 {
+				if tt.ttl >= 0 && !tt.noStorage && !tt.noInterrupter {
 					assert.ErrorContains(t, uriErr, tt.wantErr,
 						"ValidateURI rejects what New rejects for the URI")
 				}

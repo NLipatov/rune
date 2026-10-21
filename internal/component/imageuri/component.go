@@ -18,6 +18,7 @@ package imageuri
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"log/slog"
@@ -79,18 +80,25 @@ type Style struct {
 // signalled whenever the displayed state changes, including every frame
 // of the loading animation. style selects how the image is placed.
 //
-// It fails when ValidateURI rejects uri, or when ttl < 0. The image is
-// fetched on the first Draw with a non-empty size, and the progress
-// animation is drawn centered until the fetch settles. If the image
-// cannot be loaded, or the writer cannot draw images, style.ProblemArt
-// is drawn centered instead. The fetch is not retried, and an expired
-// image stays on screen until the component is recreated.
+// It fails when ValidateURI rejects uri, when ttl < 0, or when storage or
+// interrupter is nil. The image is fetched on the first Draw with a
+// non-empty size, and the progress animation is drawn centered until the
+// fetch settles. If the image cannot be loaded, or the writer cannot draw
+// images, style.ProblemArt is drawn centered instead. The fetch is not
+// retried, and an expired image stays on screen until the component is
+// recreated.
 func New(
 	uri string, ttl time.Duration, storage storageapi.Service,
 	interrupter term.Interrupter, style Style,
 ) (*Component, error) {
 	if ttl < 0 {
 		return nil, fmt.Errorf("imageuri: negative ttl %s", ttl)
+	}
+	if storage == nil {
+		return nil, errors.New("imageuri: nil storage")
+	}
+	if interrupter == nil {
+		return nil, errors.New("imageuri: nil interrupter")
 	}
 	u, err := parseURI(uri)
 	if err != nil {

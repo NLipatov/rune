@@ -42,6 +42,9 @@ var defaultStatusBarConfig = dialoguetui.StatusBarConfig{
 	CacheGaugeFill:   dialoguetui.DefaultCacheGaugeFill,
 }
 
+// statusBarImagesPartition caches the images status bar layouts download.
+const statusBarImagesPartition = "status_bar_images"
+
 // statusBarConfig reads the status_bar block from the extension
 // config. Every key is optional: a missing or malformed value falls
 // back to the built-in default so a bad theme never costs the user

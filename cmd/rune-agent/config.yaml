@@ -88,10 +88,46 @@ extensions:
         # Spinner, Status, Conversation, Elapsed, Model, Provider,
         # Effort, MaxTokens, TokensSent, TokensReceived, ContextTokens,
         # ContextWindow, ContextPct, Cache, CachePct, ContextGauge,
-        # CacheGauge, and ShiftRight. Pipe operators support bg, fg,
-        # bold, italic, underline, reverse, and dim. Spinner and Status
-        # take their colors from status below, so naming one here
+        # CacheGauge, Image, and ShiftRight. Pipe operators support bg,
+        # fg, bold, italic, underline, reverse, and dim. Spinner and
+        # Status take their colors from status below, so naming one here
         # only sets the fallback for a status the palette does not cover.
+        #
+        # Image draws a picture centered on the cell where it sits in the
+        # bar (an even side lands half a cell left or up), extending over
+        # the conversation above when it is taller than the bar, and cut
+        # off outside the chat unless it overflows. It requires src, a
+        # file:// or http(s):// URI, and takes:
+        #   width           cells, or a percentage of the bar such as
+        #                   "100%" (2)
+        #   height          rows (1)
+        #   reserve         cells it takes up in the bar (the width in
+        #                   cells, or 0 for a percentage)
+        #   x_offset        cells to move it right, negative for left, or
+        #                   a percentage of the bar such as "50%" (0)
+        #   y_offset        rows to move it down, negative for up (0)
+        #   x_pixel_offset  device pixels to move it further right,
+        #                   negative for left, to align it to the pixel (0)
+        #   y_pixel_offset  device pixels to move it further down,
+        #                   negative for up (0)
+        #   fit             "contain" keeps the aspect ratio, "fill"
+        #                   stretches
+        #   z_index         stacking, as in kitty (0): 0 or more over the
+        #                   text, negative under it, under -1073741824
+        #                   also under the backgrounds; the higher one is
+        #                   on top where images overlap, the later one in
+        #                   the layout on ties
+        #   overflow        extends it over the windows, frames and bars
+        #                   around the chat; floating windows still cover it
+        #   alt             drawn over the text when the image can't be
+        #                   shown ("" for nothing); pixel offsets don't
+        #                   move it
+        #   ttl             how long a download is reused ("24h")
+        # Sizes and cell offsets are at most 4096 and pixel offsets at most
+        # 65536, offsets in either direction; alt takes no control
+        # characters but newlines.
+        # A badge after the model, nudged 3 pixels up:
+        #   {{ .Model | fg "white" }}  {{ .Image | src "file:///path/to/logo.png" | y_pixel_offset -3 }}
         layout: ' {{ .Spinner }} {{ .Status | bold }} █▓▒░  {{ .Model | fg "white" }}  {{ .Effort }}{{ .ShiftRight }}󰗂 {{ .Cache }}  {{ .Elapsed }}  {{ .Conversation | bold | fg "white" }}  {{ .ContextGauge }} '
         # Effect drawn over the whole bar while a turn runs. One of
         # blaze, burn, inferno, pulse, shine. Off by

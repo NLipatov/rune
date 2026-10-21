@@ -17,11 +17,9 @@
 package text
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/ernestrc/go-multierror"
 	log "github.com/sirupsen/logrus"
@@ -201,7 +199,7 @@ type StatusBar struct {
 	barLeftItems  []component.Floating
 	barRightItems []component.Floating
 	// images are in the order they are drawn: by z_index, then layout.
-	images                     []*statusBarImage
+	images                     []*template.ImageElement
 	status                     *component.FloatingReference
 	statusTemplate             StatusBarComponent
 	relpath                    *component.FloatingReference
@@ -330,7 +328,7 @@ func (b *StatusBar) Draw(w term.Writer) {
 	if len(b.images) > 0 {
 		iw := term.BoundsCheckWriter(b.width, b.height, w)
 		for _, img := range b.images {
-			img.drawImage(iw, shifted)
+			img.DrawImage(iw, shifted)
 		}
 	}
 	if shifted {
@@ -625,27 +623,15 @@ func (b *StatusBar) doRebuildBar() int {
 	return barHeight
 }
 
-// layoutImages places every image from where its element is laid out,
-// which follows how component.Inline lays out the bar's elements: left
-// to right, each cut to the width left.
+// layoutImages places every image over the editor and its bar.
 func (b *StatusBar) layoutImages(barLeftWidth, barRightWidth, barHeight int) {
 	rows := b.height
 	if barHeight == 0 {
 		rows = 0
 	}
-	place := func(items []component.Floating, x, width int) {
-		for _, item := range items {
-			if img, ok := item.(*statusBarImage); ok {
-				img.place(x, b.width, rows)
-			}
-			w, _ := item.Dimensions()
-			w = min(w, width)
-			x += w
-			width -= w
-		}
-	}
-	place(b.barLeftItems, 0, barLeftWidth)
-	place(b.barRightItems, b.width-barRightWidth, barRightWidth)
+	template.PlaceImages(b.barLeftItems, 0, barLeftWidth, b.width, rows)
+	template.PlaceImages(b.barRightItems, b.width-barRightWidth, barRightWidth,
+		b.width, rows)
 }
 
 func (b *StatusBar) log(level log.Level, msg string, args ...any) {
@@ -767,8 +753,8 @@ func (b *StatusBar) initLayout(cfg StatusBarConfig) {
 			toappend = b.totalLines
 			b.totalLinesTemplate = comp
 		case StatusBarImage:
-			img, err := newStatusBarImage(comp, cfg.BackgroundColor, cfg.Storage,
-				cfg.Interrupter)
+			img, err := template.NewImageElement(comp.Image, comp.Template,
+				comp.Attributes, cfg.BackgroundColor, cfg.Storage, cfg.Interrupter)
 			if err != nil {
 				b.log(log.WarnLevel, "status bar image: %v", err)
 				continue
@@ -786,9 +772,7 @@ func (b *StatusBar) initLayout(cfg StatusBarConfig) {
 	b.barLeft.C = component.Inline(barLeft, component.AlignmentLeft)
 	b.barRight.C = component.Inline(barRight, component.AlignmentRight)
 	b.barLeftItems, b.barRightItems = barLeft, barRight
-	slices.SortStableFunc(b.images, func(a, c *statusBarImage) int {
-		return cmp.Compare(a.spec.ZIndex, c.spec.ZIndex)
-	})
+	template.SortImages(b.images)
 }
 
 func calculateGitStats(diff vctrl.FileDiff) (added, deleted int) {

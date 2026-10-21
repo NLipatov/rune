@@ -127,7 +127,7 @@ func Handler(
 	c.interrupter = interrupter
 	c.mu = locker
 	if c.statusBar != nil {
-		c.statusBar.startTicker(interrupter)
+		c.statusBar.start(interrupter)
 	}
 	ch1 := make(chan SubmitMessage)
 	ch2 := make(chan MessageEvent)
@@ -249,6 +249,9 @@ func (s *dialogueHandler) Draw(w term.Writer) {
 		}
 	}
 	s.grid.Dump(w, sel)
+	// The grid keeps cells only, and the cells dumped after a placement
+	// would cover it anyway.
+	s.comp.drawStatusBarImages(w)
 }
 
 func (s *dialogueHandler) Resize(width, height int) {

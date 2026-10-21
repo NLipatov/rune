@@ -655,6 +655,7 @@ func newCommandEventHandler(
 	}
 
 	ret.db = db
+	ret.cfg.StatusBar.Storage = storageapi.WithPartition(db, statusBarImagesPartition)
 	if auditEnabled, _ := pconfig.GetBool("audit_enabled"); auditEnabled {
 		ret.auditStore = audit.NewStore(ret.db)
 	}

@@ -19,6 +19,8 @@ package dialoguetui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"image"
 	"strings"
 	"sync"
 	"testing"
@@ -26,10 +28,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/unstablebuild/rune-go-sdk/api/storageapi/storagestub"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
+	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
 )
 
 var _ tui.Handler = (*dialogueHandler)(nil)
@@ -1769,4 +1773,125 @@ func TestHandlerCommandWithoutPhaseLeavesStatusBar(t *testing.T) {
 		return comp.StatusBarState().Active
 	}, 200*time.Millisecond, 10*time.Millisecond)
 	assert.Equal(t, "sonnet", comp.StatusBarState().Model)
+}
+
+func TestHandlerDrawsStatusBarImagesAfterTheDialogue(t *testing.T) {
+	tests := []struct {
+		name       string
+		directives string
+		shader     string
+		// expected is the clip of the image, which is cut off at the
+		// dialogue's edges.
+		expected image.Rectangle
+	}{
+		{
+			name:       "cut off at the dialogue's edges",
+			directives: `| width 4 | height 3`,
+			// The bar is the last of 6 rows, and the image is centered
+			// on its first cell.
+			expected: image.Rect(0, 4, 2, 6),
+		},
+		{
+			name:       "overflowing the dialogue's edges",
+			directives: `| width 4 | height 3 | overflow`,
+		},
+		{
+			name:       "while the shader runs over the bar",
+			directives: `| width 4 | height 3`,
+			shader:     "pulse",
+			expected:   image.Rect(0, 4, 2, 6),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			irq := make(interrupts, 1)
+			h, comp := newImageDialogue(t,
+				`{{ .Image | src %q `+tt.directives+` }}`, tt.shader, irq)
+			comp.SetStatusBarState(func(s *StatusBarState) { s.Active = true })
+			h.Resize(20, 6)
+
+			rec := drawLoadedDialogue(t, h, irq)
+			require.Len(t, rec.Images, 1)
+			img := rec.Images[0]
+			assert.Equal(t, tt.expected, img.Clip)
+			assert.True(t, img.VerticalRenderOffset)
+			assert.NotZero(t, rec.Cells)
+			assert.Zero(t, rec.CellsAfterImage, "the dialogue covers the image")
+		})
+	}
+}
+
+func TestHandlerHidesStatusBarImagesWithTheBar(t *testing.T) {
+	h, _ := newImageDialogue(t, `{{ .Image | src %q }}`, "", make(interrupts, 1))
+	h.Resize(20, minMessagesRows)
+	rec := &handlerrpctest.ImageRecorder{}
+	h.Draw(rec)
+	assert.Empty(t, rec.Images)
+}
+
+func TestHandlerDrawsStatusBarImageAltTextOverTheDialogue(t *testing.T) {
+	irq := make(interrupts, 1)
+	h, _ := newImageDialogue(t,
+		`{{ .Image | src %q | width 1 | y_offset -2 | alt "x" }}`, "", irq)
+	h.Resize(20, 6)
+
+	w := term.NewStringWriter(20, 6)
+	timeout := time.After(5 * time.Second)
+	for {
+		require.NoError(t, w.Clear(term.Attributes{}))
+		h.Draw(w)
+		require.NoError(t, w.Flush())
+		if strings.HasPrefix(strings.Split(w.String(), "\n")[3], "x") {
+			return
+		}
+		select {
+		case <-irq:
+		case <-timeout:
+			t.Fatalf("timed out waiting for the alt text:\n%s", w.String())
+		}
+	}
+}
+
+// newImageDialogue returns a dialogue whose status bar layout is
+// formatted with the URI of a picture and runs shader, and which
+// repaints through irq.
+func newImageDialogue(
+	t *testing.T, layout, shader string, irq interrupts,
+) (tui.Handler, *Component) {
+	t.Helper()
+	parsed, err := ParseStatusBarLayout(fmt.Sprintf(layout, samplePictureURI(t)))
+	require.NoError(t, err)
+	comp := NewComponent(ComponentConfig{StatusBar: StatusBarConfig{
+		Enabled: true,
+		Layout:  parsed,
+		Shader:  shader,
+		Storage: storagestub.NewInMemoryService(),
+	}})
+	h, tx, _ := Handler(context.Background(), new(sync.Mutex), comp, irq)
+	t.Cleanup(func() {
+		close(tx)
+		assert.NoError(t, comp.Close())
+	})
+	return h, comp
+}
+
+// drawLoadedDialogue draws h until its status bar image has loaded, and
+// returns what that draw recorded.
+func drawLoadedDialogue(
+	t *testing.T, h tui.Handler, irq interrupts,
+) *handlerrpctest.ImageRecorder {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		rec := &handlerrpctest.ImageRecorder{}
+		h.Draw(rec)
+		if len(rec.Images) > 0 {
+			return rec
+		}
+		select {
+		case <-irq:
+		case <-timeout:
+			t.Fatal("timed out waiting for the image to load")
+		}
+	}
 }

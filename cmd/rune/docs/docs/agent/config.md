@@ -420,6 +420,7 @@ the right.
 | `Cache` | The prompt cache hit rate, as `87%`. Drops out until the conversation has sent something to report a rate on. |
 | `ContextGauge` | Fixed-width context gauge: the numbers centered on top, bracketed by `gauge_start_rune` and `gauge_end_rune`, with a color boundary marking how full the window is. |
 | `CacheGauge` | The same gauge for the prompt cache hit rate. |
+| `Image` | A picture drawn over the bar. See [Images](#images). |
 
 A gauge marks its fill with color rather than with a texture, so the numbers
 stay readable on both sides of the boundary.
@@ -450,6 +451,43 @@ space belongs to the element on its left.
 
 The two gauges are fixed-width fields that already centre their label, so they
 need less padding around them than the text elements do.
+
+### Images
+
+`{{ .Image | src "file:///path/to/logo.png" }}` draws a picture over the bar.
+The element takes up `reserve` cells in the row, and the picture is centered
+on the first of them, or on the next element's first cell when it reserves
+none. The bar is the chat's last row, so a picture taller than one row
+extends over the conversation above it, and whatever falls outside the chat
+is cut off unless the picture overflows. Images never drop out of a narrow
+row. With `rune --tui`, which cannot draw pictures, the `alt` text is drawn
+instead.
+
+| Directive | Default | What it does |
+| --- | --- | --- |
+| `src` | required | The `file://`, `http://` or `https://` URI of the picture. |
+| `width` | `2` | Cells wide, or a percentage of the bar such as `"100%"`. |
+| `height` | `1` | Rows tall. |
+| `reserve` | the width | Cells the element takes up in the row: the width in cells, or `0` for a percentage. |
+| `x_offset` | `0` | Cells to move the picture right, negative for left, or a percentage of the bar such as `"50%"`. |
+| `y_offset` | `0` | Rows to move the picture down, negative for up. |
+| `x_pixel_offset` / `y_pixel_offset` | `0` | Device pixels to move the picture further right and down, negative for left and up, to align it with the text around it. |
+| `fit` | `contain` | `contain` keeps the picture's proportions, `fill` stretches it over its cells. |
+| `z_index` | `0` | Stacking, as in the kitty graphics protocol: `0` or more draws over the text, negative under it, and under `-1073741824` under the backgrounds too. Where pictures overlap, the higher one is on top, and the later one in the layout on ties. |
+| `overflow` | off | Lets the picture extend past the chat, over the windows, frames and bars around it. Floating windows still cover it. |
+| `alt` | a cross | Drawn over the picture's cells when it cannot be shown. `""` draws nothing. Pixel offsets do not move it. |
+| `ttl` | `24h` | How long a downloaded picture is reused before it is fetched again. |
+
+Sizes and cell offsets are at most 4096 cells, and pixel offsets at most 65536
+pixels, offsets in either direction. The `alt` text takes no control
+characters except newlines, which break it into lines. Control characters in
+the literals around the picture, such as tabs, are drawn as spaces.
+
+A badge after the model, nudged 3 pixels up:
+
+```yaml
+layout: ' {{ .Spinner }} {{ .Status | bold }} █▓▒░  {{ .Model | fg "white" }}  {{ .Image | src "file:///path/to/logo.png" | y_pixel_offset -3 }}{{ .ShiftRight }}{{ .ContextGauge }} '
+```
 
 ### Narrow terminals
 
