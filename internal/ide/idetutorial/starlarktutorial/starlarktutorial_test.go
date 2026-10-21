@@ -30,6 +30,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
 
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/ide/idetutorial"
 )
 
@@ -901,6 +902,99 @@ tutorial(entry=run)
 	move(x, y)
 	_, _ = tut.Handle(term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseX: x, MouseY: y})
 	assert.Equal(t, clicked, beta(), "the button pressed until the release selects it")
+	move(-1, y)
+	assert.Equal(t, "choice", activeKindFor(tut), "leaving must not select the button")
+	_, _ = tut.Handle(term.Event{Type: term.EventMouse, Key: term.MouseRelease, MouseX: 0, MouseY: 0})
+	assert.Equal(t, text, beta(), "a release away from the pressed button lets it go")
+	assert.Equal(t, "choice", activeKindFor(tut), "a release away from the button selects nothing")
+}
+
+func TestTutorialPointerLeaves(t *testing.T) {
+	t.Parallel()
+	copyWithLinks := `## Links\n\nSee [the docs](https://rune.build/docs) and ` +
+		`[the guide](https://rune.build/guide).\n\n` + strings.Repeat(`More copy with a [link](https://rune.build).\n\n`, 20)
+	cases := []struct {
+		name string
+		src  string
+		kind string
+		back bool
+	}{
+		{
+			name: "wait screen with links",
+			src:  `wait_event(event="open", title="Read", text="` + copyWithLinks + `")`,
+			kind: "wait_event",
+		},
+		{
+			name: "choice",
+			src: `for _ in range(100000):
+        choice(message="pick one of these", options=["Alpha", "Beta", "Gamma", "Delta"])`,
+			kind: "choice",
+		},
+		{
+			name: "confirm",
+			src: `for _ in range(100000):
+        confirm(message="` + copyWithLinks + `")`,
+			kind: "confirm",
+		},
+		{
+			name: "screen paged back to",
+			src: `wait_command(command="alpha", text="` + copyWithLinks + `")
+    wait_command(command="bravo", text="second")`,
+			kind: "wait_command",
+			back: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tut, _ := newTutorial(t, "def run():\n    "+tc.src+"\ntutorial(entry=run)\n")
+			resetAndWait(t, tut, time.Second)
+			defer tut.Stop()
+			require.Equal(t, tc.kind, activeKindFor(tut))
+			if tc.back {
+				tut.ObserveCommand("alpha", "alpha", nil, nil)
+				waitNextActive(t, tut, "wait_command", time.Second)
+				require.True(t, tut.Back())
+			}
+			for _, size := range []struct{ w, h int }{{60, 15}, {bodyW, bodyH}, {1, 1}} {
+				handlertest.RunPointerLeaves(t, tut, size.w, size.h)
+			}
+			tile := idetutorial.NewTile(tut, idetutorial.TileStyle{Frame: true}, func() {}, func() {}, func() {})
+			for _, size := range []struct{ w, h int }{{60, 15}, {idetutorial.MinTileWidth, 6}, {1, 1}} {
+				handlertest.RunPointerLeaves(t, tile, size.w, size.h)
+			}
+		})
+	}
+}
+
+func TestWaitScreenPointerLeaveKeepsSelectionAndScroll(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat(`See [the docs](https://rune.build/docs) for more.\n\n`, 30)
+	tut, _ := newTutorial(t, "def run():\n    wait_event(event=\"open\", text=\""+long+"\")\ntutorial(entry=run)\n")
+	resetAndWait(t, tut, time.Second)
+	defer tut.Stop()
+	require.Equal(t, "wait_event", activeKindFor(tut))
+	mouse := func(key term.Key, x, y int) {
+		_, _ = tut.Handle(term.Event{Type: term.EventMouse, Key: key, MouseX: x, MouseY: y})
+	}
+	require.True(t, tut.SeekDown())
+	mouse(term.MouseLeft, 1, 1)
+	mouse(term.MouseLeft, bodyW-2, 3)
+	mouse(term.MouseRelease, bodyW-2, 3)
+	sel, ok := tut.Selection()
+	require.True(t, ok)
+	require.NotEmpty(t, sel)
+	offset := tut.SeekOffset()
+	for _, off := range []term.Coordinates{
+		{X: -1, Y: 2}, {X: bodyW, Y: 2}, {X: 2, Y: -1}, {X: 2, Y: bodyH}, {X: -500, Y: 500},
+	} {
+		mouse(0, off.X, off.Y)
+		got, ok := tut.Selection()
+		assert.True(t, ok, "leave to %+v", off)
+		assert.Equal(t, sel, got, "leave to %+v must keep the selection", off)
+		assert.Equal(t, offset, tut.SeekOffset(), "leave to %+v must not scroll", off)
+		assert.Equal(t, "wait_event", activeKindFor(tut))
+	}
 }
 
 func TestChoiceOnSelectResolvesResult(t *testing.T) {

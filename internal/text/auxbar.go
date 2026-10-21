@@ -231,8 +231,12 @@ func (b *auxBar) Draw(w term.Writer) {
 }
 
 func (b *auxBar) Handle(ev term.Event) (quit, handled bool) {
+	// A parent that captures a drag keeps sending it, button held, once
+	// the pointer leaves the bar; that is a drag for the editor, not a
+	// click on a fold.
 	fold := b.foldsEnabled && ev.Type == term.EventMouse && ev.Key == term.MouseLeft &&
-		ev.MouseX >= b.linesWidth && ev.MouseX < b.linesWidth+foldsWidth
+		ev.MouseX >= b.linesWidth && ev.MouseX < b.linesWidth+foldsWidth &&
+		ev.MouseY >= 0 && ev.MouseY < b.height
 	if !fold {
 		quit, handled = b.vhandler.Handle(ev)
 		prevCursor := b.prevCursor

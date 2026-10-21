@@ -41,6 +41,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/debug"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/handler/search"
 	"unstable.build/rune/internal/ide/vctrl"
 	"unstable.build/rune/internal/workspace"
@@ -444,4 +445,40 @@ func (stubNotifications) NotifyOnce(browserapi.NotificationLevel, string, ...any
 }
 func (stubNotifications) UpdateNotificationProgress(string, string, int64, int64) error {
 	return nil
+}
+
+func TestFuzzyFinderHandlerPointerLeaves(t *testing.T) {
+	files := make([]string, 300)
+	for i := range files {
+		files[i] = fmt.Sprintf("some/deeply/nested/directory/file-%03d.go", i)
+	}
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		clients := Clients{
+			ResourceOpener: stubResourceOpener{},
+			WindowManager:  stubWindowManager{},
+			Interrupter:    term.NopInterrupter(),
+			Notifications:  stubNotifications{},
+		}
+		listCfg := search.ListConfig{
+			Algo:        search.FuzzyMatch,
+			Interrupter: term.NopInterrupter(),
+			SyncSearch:  true,
+		}
+		rh, err := NewWithListConfig(
+			context.Background(), clients, stubWindow(0),
+			term.KeyComb{}, "", "", 0, listCfg,
+			func(workspaceapi.FileSystem, context.Context) (iterator.Iterator[string], error) {
+				return iterator.FromSlice(files), nil
+			},
+			func(workspaceapi.FileSystem, string) (workspaceapi.URI, term.Coordinates, bool) {
+				return workspaceapi.URI{}, term.Coordinates{}, false
+			},
+		)
+		require.NoError(t, err)
+		h := rh.(*fuzzyFinderHandler)
+		waitForScanWithTimeout(t, h, 5*time.Second)
+		h.Handle(term.Event{Type: term.EventKey, Ch: '1'})
+		rhandlertest.RunPointerLeaves(t, rh, size[0], size[1])
+		require.NoError(t, rh.Close())
+	}
 }

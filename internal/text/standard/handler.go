@@ -356,6 +356,14 @@ func (h *standardHandler) linuxChord(ev term.Event) (term.Event, bool) {
 func (h *standardHandler) Handle(ev term.Event) (exit, handled bool) {
 	ctx := context.Background()
 
+	// A buttonless motion, a hover or the pointer leaving the window, is not
+	// a command: it must not end a paste-history cycle or drop a pending
+	// cursor position.
+	if ev.Type == term.EventMouse && ev.Key == 0 {
+		term.SetPointerShape(ev, term.PointerText)
+		return h.mouse.Handle(ev)
+	}
+
 	// Track whether the current event is a paste-related action.
 	// Reset lastPaste at the end unless the handler explicitly sets it.
 	pastedThisTurn := false

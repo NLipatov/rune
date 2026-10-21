@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/tcell/v3"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/ide"
 	"unstable.build/rune/internal/ide/starlarkconfig"
 	"unstable.build/rune/internal/term/gui"
@@ -114,6 +115,71 @@ func TestBootstrapHandlerDelegates(t *testing.T) {
 	require.Equal(t, ev, inner.lastEv)
 	require.False(t, exit)
 	require.True(t, handled)
+}
+
+func TestBootstrapHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		realIDE *ide.IDE
+	}{
+		{name: "bootstrapping"},
+		{name: "configured", realIDE: &ide.IDE{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, size := range [][2]int{{60, 15}, {1, 1}} {
+				inner := &fakeHandler{handleHandled: true}
+				b := &bootstrapHandler{inner: inner, realIDE: tt.realIDE}
+				handlertest.RunPointerLeaves(t, b, size[0], size[1])
+			}
+		})
+	}
+}
+
+func TestBootstrapHandlerPointerLeavesConfiguredIDE(t *testing.T) {
+	b := newConfiguredBootstrapForEnvTest(t, configFilename,
+		"editor:\n  mode: modal\n", t.TempDir())
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		handlertest.RunPointerLeaves(t, b, size[0], size[1])
+	}
+}
+
+func TestBootstrapHandlerForwardsPointerLeave(t *testing.T) {
+	t.Parallel()
+	leaves := []term.Event{
+		{Type: term.EventMouse, MouseX: -1, MouseY: 5},
+		{Type: term.EventMouse, MouseX: 60, MouseY: 5},
+		{Type: term.EventMouse, MouseX: 30, MouseY: -340},
+		{Type: term.EventMouse, MouseX: 340, MouseY: 340},
+	}
+	tests := []struct {
+		name    string
+		realIDE *ide.IDE
+	}{
+		{name: "bootstrapping"},
+		{name: "configured", realIDE: &ide.IDE{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			for _, leave := range leaves {
+				inner := &fakeHandler{handleHandled: true}
+				b := &bootstrapHandler{inner: inner, realIDE: tt.realIDE}
+				b.Resize(60, 15)
+				exit, handled := b.Handle(leave)
+				require.False(t, exit, "a pointer leave must not exit")
+				require.True(t, handled)
+				require.Equal(t, 1, inner.handleCalls,
+					"the leave must reach the inner handler")
+				require.Equal(t, leave, inner.lastEv,
+					"the leave must be forwarded unchanged")
+			}
+		})
+	}
 }
 
 func TestBootstrapHandlerSwapInner(t *testing.T) {

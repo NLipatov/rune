@@ -17,11 +17,17 @@
 package browser
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
+	"github.com/unstablebuild/rune-go-sdk/tui"
+	"unstable.build/rune/internal/component/markdown"
+	thandler "unstable.build/rune/internal/handler"
+	"unstable.build/rune/internal/handler/handlertest"
+	mdhandler "unstable.build/rune/internal/handler/markdown"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -208,5 +214,47 @@ func TestTabStatusReportRoundTrip(t *testing.T) {
 		got, err := ReportFromTabStatus(TabStatusFromReport(r), r.App)
 		require.NoError(t, err, "%+v", r)
 		assert.Equal(t, r, got)
+	}
+}
+
+func TestHandlerWrappersPointerLeaves(t *testing.T) {
+	nop := func() error { return nil }
+	markdownHandler := func(t *testing.T) *mdhandler.Handler {
+		comp, err := markdown.New(strings.Repeat("A paragraph with a [link](http://example.com).\n\n", 60))
+		require.NoError(t, err)
+		return mdhandler.New(comp)
+	}
+	for _, tc := range []struct {
+		name string
+		new  func(t *testing.T) tui.Handler
+	}{
+		{"FuncHandler", func(t *testing.T) tui.Handler { return FuncHandler(newPointerLess(t), nop) }},
+		{"NopHandler", func(t *testing.T) tui.Handler { return NopHandler(newPointerLess(t)) }},
+		{"StaticFloating", func(t *testing.T) tui.Handler {
+			return StaticFloating(NopHandler(newPointerLess(t)), 20, 6)
+		}},
+		{"NopFloatingHandler", func(t *testing.T) tui.Handler {
+			l := newPointerLess(t)
+			return NopFloatingHandler(thandler.FloatingBuffer(l, l.Buffer()))
+		}},
+		{"FuncFloatingHandler", func(t *testing.T) tui.Handler {
+			l := newPointerLess(t)
+			return FuncFloatingHandler(thandler.FloatingBuffer(l, l.Buffer()), nop)
+		}},
+		{"NopScrollableFloatingHandler", func(t *testing.T) tui.Handler {
+			return NopScrollableFloatingHandler(markdownHandler(t))
+		}},
+		{"FuncScrollableFloatingHandler", func(t *testing.T) tui.Handler {
+			return FuncScrollableFloatingHandler(markdownHandler(t), nop)
+		}},
+		{"FuncFloating", func(t *testing.T) tui.Handler {
+			return FuncFloating(NopHandler(newPointerLess(t)), func() (int, int) { return 20, 6 })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, size := range [][2]int{{60, 15}, {1, 1}} {
+				handlertest.RunPointerLeaves(t, tc.new(t), size[0], size[1])
+			}
+		})
 	}
 }

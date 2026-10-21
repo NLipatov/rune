@@ -3364,3 +3364,25 @@ func TestWindowBarScrollBarPrecedence(t *testing.T) {
 	assert.True(t, wm.prevMouseScrollBarDrag)
 	wm.Handle(mouseEv(term.MouseRelease, pos.X+barPos.X, pos.Y+barPos.Y))
 }
+
+func TestWindowManagerPointerLeavesBattery(t *testing.T) {
+	for _, frame := range []bool{false, true} {
+		for _, size := range [][2]int{{60, 15}, {8, 4}} {
+			cfg := DefaultWindowManagerConfig()
+			cfg.Frame = frame
+			cfg.WindowBar = true
+			wm := NewWindowManager(newPointerLess(t), cfg)
+			wm.Resize(60, 15)
+			left := wm.Focus()
+			var clicks, iconClicks int
+			right, ok := wm.SplitVertical(left, newPointerTabs(&clicks, &iconClicks))
+			require.True(t, ok)
+			_, ok = wm.SplitHorizontal(right, newPointerLess(t))
+			require.True(t, ok)
+			wm.FloatingWindow(handler.StaticFloating(newPointerLess(t), 20, 6),
+				component.FloatingConfig{})
+			wm.SetFocus(left)
+			handlertest.RunPointerLeaves(t, wm, size[0], size[1])
+		}
+	}
+}

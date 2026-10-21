@@ -19,6 +19,7 @@ package standard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -2602,4 +2603,91 @@ func TestHandleMouseWindowCoordinates(t *testing.T) {
 
 		assert.Equal(t, term.Coordinates{X: offset + 2}, h.CursorAtScroll())
 	})
+}
+
+const pointerLeavesContent = "short\n" +
+	"a long line that runs well past the right edge of a forty column window\n" +
+	"日本語 wide 😀 emoji 日本語 wide 😀 emoji 日本語 wide 😀 emoji\n" +
+	"\tindented\n\n" +
+	"line 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n"
+
+// pointerLeaveEvents returns the Context-less, buttonless motions a parent
+// router sends a width by height child when the pointer moves off it.
+func pointerLeaveEvents(width, height int) []term.Event {
+	far := 4*max(width, height) + 100
+	var events []term.Event
+	for _, at := range []term.Coordinates{
+		{X: -1, Y: height / 2}, {X: width, Y: height / 2},
+		{X: width / 2, Y: -1}, {X: width / 2, Y: height},
+		{X: -1, Y: -1}, {X: width, Y: height},
+		{X: -far, Y: -far}, {X: far, Y: far}, {X: far, Y: -far}, {X: -far, Y: far},
+	} {
+		events = append(events, term.Event{Type: term.EventMouse, MouseX: at.X, MouseY: at.Y})
+	}
+	return events
+}
+
+type standardPointerState struct {
+	cursor, from, to, offset term.Coordinates
+	selected, find, metaK    bool
+	lastPaste                bool
+	historyIdx               int
+}
+
+func snapshotStandardPointerState(h *standardHandler) standardPointerState {
+	from, to, selected := h.SelectionBounds()
+	return standardPointerState{
+		cursor: h.CursorAtScroll(), from: from, to: to, offset: h.less.Scroll().Offset(),
+		selected: selected, find: h.find.active, metaK: h.metaK,
+		lastPaste: h.lastPaste, historyIdx: h.historyIdx,
+	}
+}
+
+func TestStandardHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	uri, err := workspaceapi.ParseURI("memory:///pointer.txt")
+	require.NoError(t, err)
+	tests := []struct {
+		name string
+		keys string
+	}{
+		{name: "idle"},
+		{name: "selection on a wide line", keys: "<down><down><shift-right><shift-right><shift-down>"},
+		{name: "scrolled to the end", keys: "<meta-down><meta-right>"},
+		{name: "end of a long line", keys: "<down><meta-right>"},
+		{name: "find active", keys: "<meta-f>wide"},
+		{name: "meta-k prefix pending", keys: "<meta-k>"},
+		{name: "pasted from history", keys: "<meta-v><alt-meta-v>"},
+	}
+	for _, tt := range tests {
+		for _, size := range []term.Coordinates{{X: 40, Y: 10}, {X: 1, Y: 1}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", tt.name, size.X, size.Y), func(t *testing.T) {
+				t.Parallel()
+				newHandler := func() *standardHandler {
+					reg := registerhistory.NewClipboard(registerset.New(clipboard.NewInMemory()))
+					for _, entry := range []string{"日本", "😀"} {
+						require.NoError(t, reg.Copy(clipboard.DefaultRegisterID,
+							clipboard.Data{Text: entry, Metadata: text.StandardSelection}))
+					}
+					buf := cell.NewBuffer()
+					buf.ReadFrom(strings.NewReader(pointerLeavesContent))
+					h := NewHandler(buf, uri, text.IndentRuneTab, 0,
+						WithKeymap(KeymapMacOS), WithClipboard(reg)).(*standardHandler)
+					h.Resize(size.X, size.Y)
+					feedKeys(t, h, tt.keys)
+					return h
+				}
+
+				h := newHandler()
+				want := snapshotStandardPointerState(h)
+				for _, ev := range pointerLeaveEvents(size.X, size.Y) {
+					h.Handle(ev)
+					require.Equal(t, want, snapshotStandardPointerState(h),
+						"leave to (%d, %d)", ev.MouseX, ev.MouseY)
+				}
+
+				handlertest.RunPointerLeaves(t, newHandler(), size.X, size.Y)
+			})
+		}
+	}
 }

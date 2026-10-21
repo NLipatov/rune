@@ -886,6 +886,73 @@ func newActivityTestManager(t *testing.T, cfg ideConfig) (*testWorkspaceManagerH
 	return nil, 0
 }
 
+func TestWorkspaceManagerHandlerPointerLeaves(t *testing.T) {
+	for _, size := range []term.Coordinates{{X: 100, Y: 30}, {X: 2, Y: 2}} {
+		m, _ := newActivityTestManager(t, defaultConfigWithWrap(false))
+		h := newSafeHandler(m)
+		h.mu.Lock()
+		focus := m.focus
+		h.mu.Unlock()
+		handlertest.RunPointerLeaves(t, h, size.X, size.Y)
+		h.mu.Lock()
+		workspaces := m.workspaceCount
+		h.mu.Unlock()
+		assert.Equal(t, 2, workspaces, "a leave closes no workspace")
+		if size.X == 2 {
+			h.mu.Lock()
+			assert.Equal(t, focus, m.focus)
+			h.mu.Unlock()
+		}
+		require.NoError(t, m.Close())
+	}
+}
+
+// pointerProbe records the events its window is sent.
+type pointerProbe struct {
+	*browsertest.TestHandler
+	events        []term.Event
+	width, height int
+}
+
+func (p *pointerProbe) Resize(width, height int) {
+	p.width, p.height = width, height
+	p.TestHandler.Resize(width, height)
+}
+
+func (p *pointerProbe) Handle(ev term.Event) (bool, bool) {
+	p.events = append(p.events, ev)
+	return p.TestHandler.Handle(ev)
+}
+
+func TestWorkspaceManagerHandlerTellsTheWorkspaceThePointerLeftForTheBar(t *testing.T) {
+	m, _ := newActivityTestManager(t, defaultConfigWithWrap(false))
+	t.Cleanup(func() { _ = m.Close() })
+	probe := &pointerProbe{TestHandler: browsertest.NewTestHandler()}
+	h := newSafeHandler(m)
+	h.Resize(30, 9)
+	h.mu.Lock()
+	win, err := m.focusEx().comp.Focus()
+	if err == nil {
+		err = win.SetContent(probe)
+	}
+	// The bar's first row is the frame it shares with the workspace.
+	barTabsRow := m.height - m.barSize() + 1
+	h.mu.Unlock()
+	require.NoError(t, err)
+	m.quiesce()
+
+	_, _ = h.Handle(term.Event{Type: term.EventMouse, MouseX: 15, MouseY: 4})
+	require.NotEmpty(t, probe.events, "sanity: the window is under the pointer")
+	probe.events = nil
+	_, _ = h.Handle(term.Event{Type: term.EventMouse, MouseX: 15, MouseY: barTabsRow})
+	require.Len(t, probe.events, 1, "the window is told the pointer left it")
+	leave := probe.events[0]
+	assert.Zero(t, leave.Key)
+	assert.False(t, leave.MouseX >= 0 && leave.MouseX < probe.width &&
+		leave.MouseY >= 0 && leave.MouseY < probe.height,
+		"off the window: %+v in %dx%d", leave, probe.width, probe.height)
+}
+
 func TestWorkspaceBarShadesActiveWorkspaces(t *testing.T) {
 	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
 	chat, err := workspaceapi.ParseURI("rune-agent://model/rolling-fox")

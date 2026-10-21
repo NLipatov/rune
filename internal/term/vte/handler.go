@@ -311,6 +311,12 @@ func (e *Handler) Draw(w term.Writer) {
 func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 	exit = e.exit.Load()
 	if exit {
+		// A parent reports the pointer leaving with a motion outside the
+		// screen; that is not the user acting on the dead terminal, so it
+		// must not close it.
+		if e.isPointerLeave(ev) {
+			return false, false
+		}
 		e.log(log.DebugLevel, "Handle: exit")
 		return
 	}
@@ -402,6 +408,11 @@ func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 		e.log(log.TraceLevel, "written cltr-c to pty: %q", raw)
 	}
 	return
+}
+
+func (e *Handler) isPointerLeave(ev term.Event) bool {
+	return ev.Type == term.EventMouse && ev.Key == 0 &&
+		(ev.MouseX < 0 || ev.MouseY < 0 || ev.MouseX >= e.width || ev.MouseY >= e.height)
 }
 
 // copyPassesThrough reports whether ev is cmd+c with nothing selected to

@@ -33,6 +33,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 
 	"unstable.build/rune/internal/cell"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/ide/idetutorial"
 	"unstable.build/rune/internal/ide/idetutorial/starlarktutorial"
 	"unstable.build/rune/internal/text"
@@ -416,6 +417,53 @@ func TestTutorialRunnerKeysAlwaysReachTheWorkspace(t *testing.T) {
 	_, _ = r.Handle(term.Event{Type: term.EventKey, Ch: testCommandKey.Ch, Mod: testCommandKey.Mod})
 	assert.NotNil(t, e.cmd, "the command prompt opens from a focused tile")
 	assert.True(t, r.tileFocused(), "and the tile keeps the focus it was given")
+}
+
+const pointerLeavesTutorial = `
+def run():
+    wait_command(command="windowcloseall", text="clear the layout")
+    wait_command(command="edit", text="now edit")
+tutorial(entry=run)
+`
+
+func TestTutorialRunnerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, size := range []term.Coordinates{{X: 120, Y: 30}, {X: 2, Y: 2}} {
+		tut := newStarlarkTutorial(t, pointerLeavesTutorial)
+		r, _ := newTestRunner(t, map[string]idetutorial.Tutorial{"basics": tut})
+		startTutorial(t, r, "basics")
+		require.True(t, tut.WaitActive("wait_command", time.Second))
+		handlertest.RunPointerLeaves(t, r, size.X, size.Y)
+		assert.True(t, r.running())
+	}
+
+	t.Run("a leave moves no focus", func(t *testing.T) {
+		tut := newStarlarkTutorial(t, pointerLeavesTutorial)
+		r, _ := newTestRunner(t, map[string]idetutorial.Tutorial{"basics": tut})
+		startTutorial(t, r, "basics")
+		require.True(t, tut.WaitActive("wait_command", time.Second))
+		top, _ := r.Handler.(*ex).windowRows()
+		tileX := 120 - tileColumn(120) + 5
+		for _, out := range []term.Coordinates{{X: 120, Y: top + 3}, {X: tileX, Y: -1}, {X: tileX, Y: 30}, {X: 500, Y: 500}} {
+			_, _ = r.Handle(term.Event{Type: term.EventMouse, MouseX: tileX, MouseY: top + 3})
+			_, _ = r.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+		}
+		assert.False(t, r.tileFocused())
+		assert.True(t, r.running())
+	})
+}
+
+func TestTilePanePointerLeaves(t *testing.T) {
+	t.Parallel()
+	tut := newStarlarkTutorial(t, pointerLeavesTutorial)
+	r, _ := newTestRunner(t, map[string]idetutorial.Tutorial{"basics": tut})
+	startTutorial(t, r, "basics")
+	require.True(t, tut.WaitActive("wait_command", time.Second))
+	top, rows := r.Handler.(*ex).windowRows()
+	r.pane.align(top, rows)
+	handlertest.RunPointerLeaves(t, &r.pane, tileColumn(120), 30)
+	handlertest.RunPointerLeaves(t, &r.pane, 2, 2)
+	assert.True(t, r.running())
 }
 
 // recordingEditor is a texttest.TestEditor whose handlers record the

@@ -423,6 +423,56 @@ func TestTileFooterButtonsHover(t *testing.T) {
 	})
 }
 
+func TestTilePointerLeaves(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		style idetutorial.TileStyle
+		inset int
+		tut   *fakeTutorial
+	}{
+		{name: "unframed", tut: &fakeTutorial{max: 5, handled: true}},
+		{name: "framed", style: framedStyle(), tut: &fakeTutorial{max: 5, cursor: true}},
+		{name: "framed with an inset", style: framedStyle(), inset: 4, tut: &fakeTutorial{viewingPast: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tile := idetutorial.NewTile(tc.tut, tc.style, func() {}, func() {}, func() {})
+			tile.SetRightInset(tc.inset)
+			for _, size := range []struct{ w, h int }{{60, 15}, {idetutorial.MinTileWidth, 6}, {1, 1}} {
+				handlertest.RunPointerLeaves(t, tile, size.w, size.h)
+			}
+		})
+	}
+}
+
+func TestTilePointerLeaveClicksNoButton(t *testing.T) {
+	t.Parallel()
+	const width, height, footerY = 30, 6, 4
+	var clicks int
+	click := func() { clicks++ }
+	tile := idetutorial.NewTile(&fakeTutorial{}, framedStyle(), click, click, click)
+	tile.Resize(width, height)
+	row := strings.Split(handlertest.DrawHandler(tile, width, height), "\n")[footerY]
+	stopX := strings.Index(row, "Stop")
+	require.GreaterOrEqual(t, stopX, 0)
+	for _, off := range []term.Coordinates{
+		{X: -1, Y: footerY}, {X: width, Y: footerY}, {X: stopX, Y: height}, {X: stopX, Y: -400},
+	} {
+		_, _ = tile.Handle(term.Event{Type: term.EventMouse, MouseX: stopX, MouseY: footerY})
+		_, _ = tile.Handle(term.Event{
+			Type: term.EventMouse, Key: term.MouseLeft, MouseX: stopX, MouseY: footerY,
+		})
+		_, _ = tile.Handle(term.Event{Type: term.EventMouse, MouseX: off.X, MouseY: off.Y})
+		assert.Zero(t, clicks, "a leave to %+v must not click the pressed button", off)
+		_, _ = tile.Handle(term.Event{
+			Type: term.EventMouse, Key: term.MouseRelease, MouseX: 0, MouseY: 0,
+		})
+		assert.Zero(t, clicks, "a release away from the button must not click it")
+	}
+}
+
 func TestTileRoutesKeysAndBodyMouseToTheTutorial(t *testing.T) {
 	t.Parallel()
 	tut := &fakeTutorial{handled: true}

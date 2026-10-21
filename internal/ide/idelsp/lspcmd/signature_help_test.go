@@ -31,6 +31,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/component/comptest"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	runehandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 func testSignatureHelp(sigs []semanticapi.SignatureInformation, activeSig, activeParam uint32) *semanticapi.SignatureHelp {
@@ -988,5 +989,25 @@ func TestFormatSignatureMessage(t *testing.T) {
 			got := FormatSignatureMessage(tt.help)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestSignatureHelpFloatingPointerLeaves(t *testing.T) {
+	t.Parallel()
+	result := testSignatureHelp([]semanticapi.SignatureInformation{
+		{
+			Label: "func Open(ctx context.Context, name string, flag int, perm os.FileMode) (*File, error)",
+			Parameters: []semanticapi.ParameterInformation{
+				{Label: "ctx context.Context", Documentation: &semanticapi.MarkupContent{Value: "the context bounding the open"}},
+				{Label: "name string", Documentation: &semanticapi.MarkupContent{Value: "the path of the file to open"}},
+			},
+		},
+		{Label: "func Open(name string) (*File, error)"},
+	}, 0, 1)
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig(), &mockWindowManager{})
+		f.activeIdx = 1
+		runehandlertest.RunPointerLeaves(t, f, size.w, size.h)
+		assert.Equal(t, 1, f.activeIdx, "the pointer must not change the signature")
 	}
 }

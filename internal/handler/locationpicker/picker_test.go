@@ -19,6 +19,7 @@ package locationpicker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -35,6 +36,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 func TestPickerRender(t *testing.T) {
@@ -555,4 +557,31 @@ func runPickerSequence(
 ) {
 	t.Helper()
 	handlertest.RunHandlerSequence(t, p, w, ht, cases)
+}
+
+func TestPickerPointerLeaves(t *testing.T) {
+	uri := parseURI(t, "file:///a.go")
+	var entries []Entry
+	for i := range 40 {
+		entries = append(entries, Entry{
+			URI:     uri,
+			Display: fmt.Sprintf("a.go:%d a rather long display for entry %d", i*3, i),
+			Range: semanticapi.Range{
+				Start: semanticapi.Position{Line: uint32(i * 3), Character: 2},
+				End:   semanticapi.Position{Line: uint32(i * 3), Character: 8},
+			},
+		})
+	}
+	src := strings.Repeat("func someFunctionWithALongName(argument int) error { return nil }\n", 150)
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		p := testPicker(entries, fileContent{"/a.go": src})
+		var selected []int
+		p.SetOnSelect(func(i int) { selected = append(selected, i) })
+		p.Handle(term.Event{Type: term.EventKey, Key: term.KeyArrowDown})
+		before, _ := p.Selection()
+		rhandlertest.RunPointerLeaves(t, p, size[0], size[1])
+		after, _ := p.Selection()
+		assert.Equal(t, before, after, "the pointer does not move the focus")
+		assert.Empty(t, selected, "the pointer does not pick an entry")
+	}
 }

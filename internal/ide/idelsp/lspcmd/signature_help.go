@@ -411,6 +411,9 @@ func (f *signatureHelpFloating) Draw(w term.Writer) {
 
 	x := 0
 	for _, r := range label {
+		if x >= f.width || f.height < 1 {
+			break
+		}
 		cell := term.Cell{Ch: r, Width: 1}
 		if paramStart >= 0 && x >= paramStart && x < paramEnd {
 			cell.SetAttributes(term.AttributesUnion(cell.Attributes(), f.cfg.ActiveParamAttr))
@@ -422,16 +425,22 @@ func (f *signatureHelpFloating) Draw(w term.Writer) {
 	if counter != "" {
 		grayAttr := term.Attributes{Fg: term.ColorGray}
 		for _, r := range counter {
+			if x >= f.width || f.height < 1 {
+				break
+			}
 			w.SetCell(term.Coordinates{X: x, Y: 0}, term.NewCell(r, 1, grayAttr))
 			x++
 		}
 	}
 
 	paramDoc := activeParamDoc(sig, paramIdx)
-	if paramDoc != "" {
+	if paramDoc != "" && f.height > 1 {
 		grayAttr := term.Attributes{Fg: term.ColorGray}
 		dx := 0
 		for _, r := range paramDoc {
+			if dx >= f.width {
+				break
+			}
 			w.SetCell(term.Coordinates{X: dx, Y: 1}, term.NewCell(r, 1, grayAttr))
 			dx++
 		}

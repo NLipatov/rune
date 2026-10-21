@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
@@ -30,6 +32,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	runehandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 // codeActionLSP returns a scripted set of code actions and records the
@@ -534,5 +537,23 @@ func TestCodeActionLoneNoopActionNotifiesHint(t *testing.T) {
 			assert.Equal(t, tt.wantEdits, applied)
 			assert.Equal(t, tt.wantNotify, notify.messages())
 		})
+	}
+}
+
+func TestCodeActionPickerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	var actions []semanticapi.CodeAction
+	for i := range 30 {
+		actions = append(actions, semanticapi.CodeAction{
+			Title: fmt.Sprintf("Extract to function in package scope #%d", i),
+		})
+	}
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		ch := make(chan int, 1)
+		picker := newCodeActionPicker(actions, ch)
+		picker.list.FocusDown()
+		runehandlertest.RunPointerLeaves(t, picker, size.w, size.h)
+		assert.Equal(t, 1, picker.list.FocusOffset(), "the pointer must not move the focus")
+		assert.Empty(t, ch, "the pointer must not pick an action")
 	}
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/handler/searchbox"
 	"unstable.build/rune/internal/text/standard"
 )
@@ -713,4 +714,33 @@ func TestFloatingCopyShortcutFallsThroughWithNoOwnSelection(t *testing.T) {
 	selected, ok := f.Selection()
 	assert.True(t, ok)
 	assert.Equal(t, "from the host", selected)
+}
+
+func TestFloatingPointerLeaves(t *testing.T) {
+	for _, mode := range []searchbox.Mode{searchbox.ModeFind, searchbox.ModeReplace} {
+		for _, size := range [][2]int{{48, 9}, {60, 15}, {1, 1}} {
+			cfg := testConfig()
+			cfg.WindowManager = new(testWindowManager)
+			ctrl := new(replaceController)
+			box := searchbox.New(ctrl, cfg)
+			openMode(t, box, mode)
+			f := box.Floating()
+			require.NotNil(t, f)
+			f.Resize(48, 9)
+			if f.HasReplacement() {
+				f.HandleReplacement(term.Event{Type: term.EventKey, Ch: 'x'})
+			}
+			r := f.UpgradeRect()
+			if mode == searchbox.ModeReplace {
+				r = f.NextRect()
+			}
+			f.Handle(mouseEvent(0, r.X, r.Y))
+			require.NotEqual(t, searchbox.ButtonNone, f.Hover())
+			f.Handle(mouseEvent(0, -1, r.Y))
+			assert.Equal(t, searchbox.ButtonNone, f.Hover(), "a leave drops the hover")
+			assert.Equal(t, mode, f.Mode())
+
+			rhandlertest.RunPointerLeaves(t, f, size[0], size[1])
+		}
+	}
 }

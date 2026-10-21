@@ -13463,3 +13463,54 @@ func TestViOperatorLeftStartWordKeepsCharUnderCursor(t *testing.T) {
 		})
 	}
 }
+
+func TestViHandlerImplPointerLeaves(t *testing.T) {
+	t.Parallel()
+	const width, height = 40, 10
+	newHandler := func(wrap bool) *viHandlerImpl {
+		buf := cell.NewBuffer()
+		buf.ReadFrom(strings.NewReader(pointerLeaveContent))
+		cfg := defaultviHandlerImplConfig()
+		cfg.wrap = wrap
+		h := new(viHandlerImpl)
+		h.init(buf, cfg)
+		return h
+	}
+	for _, wrap := range []bool{true, false} {
+		for _, mode := range pointerLeaveModes() {
+			t.Run(fmt.Sprintf("%s wrap=%v", mode.name, wrap), func(t *testing.T) {
+				t.Parallel()
+				enter := func(h *viHandlerImpl) {
+					t.Helper()
+					for _, ev := range mode.keys {
+						quit, _ := h.Handle(ev)
+						require.False(t, quit)
+					}
+					require.Equal(t, mode.want, h.mode())
+				}
+
+				t.Run("leave keeps state", func(t *testing.T) {
+					h := newHandler(wrap)
+					h.Resize(width, height)
+					enter(h)
+					want := snapshotPointerLeave(h, width, height)
+					require.NotZero(t, want.seek, "the mode keys must scroll the window")
+					for _, out := range pointerLeaveOutside(width, height) {
+						h.Handle(pointerLeave(out))
+						assert.Equal(t, want, snapshotPointerLeave(h, width, height),
+							"a leave to %v must not change the editor", out)
+					}
+				})
+
+				for _, size := range [][2]int{{width, height}, {1, 1}} {
+					t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
+						h := newHandler(wrap)
+						h.Resize(size[0], size[1])
+						enter(h)
+						handlertest.RunPointerLeaves(t, h, size[0], size[1])
+					})
+				}
+			})
+		}
+	}
+}

@@ -3620,3 +3620,56 @@ func expectFocusEvent(
 			return false
 		})
 }
+
+func TestComponentPointerLeaves(t *testing.T) {
+	t.Parallel()
+	uri, err := workspaceapi.ParseURI("memory:///tmp/日本語🙂.go")
+	require.NoError(t, err)
+	inline := func(fn func()) bool { fn(); return true }
+	// open shows uri in a standard editor with every bar, in a
+	// component 40x10.
+	open := func(t *testing.T) (*text.Component, browserapi.Handler) {
+		ed := standard.Editor(
+			standard.WithScheduleNextTick(inline),
+			standard.WithAuxiliaryBar(true, text.AuxBarConfig{
+				LinesEnabled: true, FoldsEnabled: true, ScheduleNextTick: inline,
+			}),
+			standard.WithIconsBar(true, text.IconsBarConfig{ScheduleNextTick: inline}),
+			standard.WithStatusBarConfig(true, text.StatusBarConfig{
+				ScheduleNextTick: inline, Publisher: &TestEditor{},
+			}),
+		)
+		c, loader := newTestComponent(t, ed)
+		loader.content = pointerContent
+		win, err := c.Focus()
+		require.NoError(t, err)
+		c.Resize(40, 10)
+		h, err := c.OpenFileTab(uri, false)
+		require.NoError(t, err)
+		require.NoError(t, win.SetContent(h))
+		return c, h
+	}
+	for _, size := range pointerSizes {
+		c, _ := open(t)
+		handlertest.RunPointerLeaves(t, componentHandler{c}, size.width, size.height)
+		_, h := open(t)
+		handlertest.RunPointerLeaves(t, h, size.width, size.height)
+	}
+	c, _ := open(t)
+	requirePointerLeavesKeepState(t, componentHandler{c}, 40, 10,
+		term.Coordinates{X: 12, Y: 4}, term.Coordinates{X: 18, Y: 6}, nil)
+	_, h := open(t)
+	require.Contains(t, pointerStateOf(h, 40, 10).Screen, "package main")
+	requirePointerLeavesKeepState(t, h, 40, 10,
+		term.Coordinates{X: 10, Y: 2}, term.Coordinates{X: 16, Y: 4}, nil)
+}
+
+// componentHandler lets the pointer leave helpers drive a text.Component,
+// which draws its windows' cursors itself instead of reporting one.
+type componentHandler struct{ *text.Component }
+
+func (componentHandler) Cursor() (term.Coordinates, term.CursorStyle, bool) {
+	return term.Coordinates{}, term.CursorStyleDefault, false
+}
+
+func (componentHandler) Selection() (string, bool) { return "", false }

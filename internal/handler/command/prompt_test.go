@@ -3594,3 +3594,20 @@ func TestKeyBindingHintHistoryMode(t *testing.T) {
 	require.NoError(t, w.Flush())
 	assert.False(t, called, "history mode must not query key hints")
 }
+
+func TestPromptPointerLeaves(t *testing.T) {
+	commands := make([]string, 40)
+	for i := range commands {
+		commands[i] = fmt.Sprintf("command-with-a-long-name-%02d", i)
+	}
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		for _, typed := range []string{"", "c", "command-with-a-long-name-01<space>"} {
+			b := newLineEditingPrompt(t, commands)
+			b.Resize(size[0], size[1])
+			feedKeys(t, b, typed)
+			before := b.buf.String()
+			handlertest.RunPointerLeaves(t, b, size[0], size[1])
+			assert.Equal(t, before, b.buf.String(), "the pointer does not edit the prompt")
+		}
+	}
+}

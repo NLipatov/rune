@@ -19,15 +19,19 @@ package handlerrpc
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkhandler "github.com/unstablebuild/rune-go-sdk/handler"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlerrpc"
+	"github.com/unstablebuild/rune-go-sdk/term"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 // pipeEnd is one end of an in-memory stream: a grpc.ServerStream for the
@@ -153,4 +157,53 @@ func TestSyncClientStreamWithoutGraphics(t *testing.T) {
 	assert.Equal(t, 8, w.Cells)
 	assert.Equal(t, []handlerrpctest.CellPixelSize{{}}, h.CellPixelSizes(), "the extension is not told the cell size")
 	assert.Equal(t, []bool{false}, h.Shown())
+}
+
+// mouseRecorder is an extension's handler that records the mouse events
+// it is sent.
+type mouseRecorder struct {
+	*sdkhandler.TestHandler
+	mu     sync.Mutex
+	events []term.Event
+}
+
+func newMouseRecorder() *mouseRecorder {
+	r := &mouseRecorder{TestHandler: sdkhandler.NewTestHandler()}
+	r.HandleOverride = func(ev term.Event) (bool, bool) {
+		if ev.Type == term.EventMouse {
+			r.mu.Lock()
+			r.events = append(r.events, ev)
+			r.mu.Unlock()
+		}
+		return false, true
+	}
+	return r
+}
+
+func (r *mouseRecorder) Close() error { return nil }
+
+func (r *mouseRecorder) last() (term.Event, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.events) == 0 {
+		return term.Event{}, false
+	}
+	return r.events[len(r.events)-1], true
+}
+
+func TestSyncClientStreamPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		h := newMouseRecorder()
+		client := newSyncExtension(t, h)
+		handlertest.RunPointerLeaves(t, client, size[0], size[1])
+
+		_, handled := client.Handle(term.Event{Type: term.EventMouse, MouseX: -7, MouseY: size[1] + 3})
+		assert.True(t, handled)
+		got, ok := h.last()
+		require.True(t, ok)
+		assert.Equal(t, term.Key(0), got.Key)
+		assert.Equal(t, -7, got.MouseX, "the leave reaches the extension outside it")
+		assert.Equal(t, size[1]+3, got.MouseY)
+		assert.NoError(t, client.Close())
+	}
 }

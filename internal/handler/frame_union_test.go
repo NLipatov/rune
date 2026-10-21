@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/unstablebuild/rune-go-sdk/handler"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 // unionMember records every event delivered to it as a dispatch.
@@ -266,4 +267,16 @@ func TestFrameUnionKeysGoToMain(t *testing.T) {
 		to("T", term.MouseLeft, 3, 1),
 		to("M", 0, 0, 0),
 	}, got)
+}
+
+func TestFrameUnionPointerLeavesBattery(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		var clicks, iconClicks int
+		tabs := newPointerTabs(&clicks, &iconClicks)
+		u := NewFrameUnion(newPointerLess(t))
+		u.UnionTopFrame(tabs, 1, false)
+		u.UnionBottomFrame(newPointerLess(t), 2, false)
+		u.CaptureDrags(tabs)
+		rhandlertest.RunPointerLeaves(t, u, size[0], size[1])
+	}
 }

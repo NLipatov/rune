@@ -251,6 +251,9 @@ func (h *Prompt) SeparatorY() (int, bool) {
 
 // Draw satisfies tui.Handler
 func (h *Prompt) Draw(w term.Writer) {
+	// The input wraps to as many rows as it needs, which a parent may
+	// not have given the prompt: truncate instead of drawing past it.
+	w = &component.VirtualWriter{Writer: w, Width: h.width, Height: h.height}
 	if h.config.ShowManual && h.manualComponent != nil {
 		manHeight, separatorHeight, listHeight := h.calculateSplitHeights(h.width, h.height)
 		if separatorHeight != 0 {

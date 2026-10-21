@@ -25,6 +25,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 func TestSubscribeCommentCommands(t *testing.T) {
@@ -103,4 +104,23 @@ func TestCommentCommandBlockWithoutSpecReturnsError(t *testing.T) {
 	err = registry.sub[cwd.String()][CommandToggleBlockComment].HandleCommand(
 		context.Background(), textapi.Command{URI: uri, Name: CommandToggleBlockComment})
 	require.EqualError(t, err, "block comment not available at the current position")
+}
+
+func TestCommentCommandHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	cwd, err := workspaceapi.ParseURI("memory:///")
+	require.NoError(t, err)
+	uri := workspaceapi.Join(cwd, "comment.go")
+	wrap := func() Handler {
+		fileRegistry := NewFileCommandRegistry(cwd, newIndentTestWorkspaceRegistry())
+		ed := newPointerEditor(t, uri)
+		h, err := SubscribeCommentCommands(uri, fileRegistry, ed.cursor, ed)
+		require.NoError(t, err)
+		return h
+	}
+	for _, size := range []struct{ width, height int }{{40, 10}, {1, 1}} {
+		handlertest.RunPointerLeaves(t, wrap(), size.width, size.height)
+	}
+	requirePointerLeavesKeepState(t, wrap(), 40, 10,
+		term.Coordinates{X: 3, Y: 2}, term.Coordinates{X: 12, Y: 4})
 }

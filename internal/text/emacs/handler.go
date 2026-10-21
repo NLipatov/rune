@@ -653,6 +653,14 @@ func (h *emacsHandler) startGotoLine() {
 func (h *emacsHandler) Handle(ev term.Event) (exit, handled bool) {
 	ctx := context.Background()
 
+	// A buttonless motion, a hover or the pointer leaving the window, is not
+	// a command in GNU Emacs: it must not break the kill, yank-pop, undo or
+	// amalgamation chains, nor drop a pending cursor position.
+	if ev.Type == term.EventMouse && ev.Key == 0 {
+		term.SetPointerShape(ev, term.PointerText)
+		return h.mouse.Handle(ev)
+	}
+
 	// Track whether the current event is a paste-related action.
 	// Reset lastPaste at the end unless the handler explicitly sets it.
 	pastedThisTurn := false

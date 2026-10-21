@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -29,11 +30,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/storageapi/storagestub"
+	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
+	"unstable.build/rune/internal/handler/handlertest"
+	"unstable.build/rune/internal/text/standard"
 )
 
 var _ tui.Handler = (*dialogueHandler)(nil)
@@ -1892,6 +1896,178 @@ func drawLoadedDialogue(
 		case <-irq:
 		case <-timeout:
 			t.Fatal("timed out waiting for the image to load")
+		}
+	}
+}
+
+type pointerLeaveChat struct {
+	h           tui.Handler
+	comp        *Component
+	tools       *recordingToolOpener
+	attachments *recordingOpener
+	links       *int
+	clip        clipboard.Register
+}
+
+// newPointerLeaveChat builds a handler over a transcript with every kind
+// of mouse target: sent attachment chips, reasoning, tool rows with
+// children and results, a code block copy icon and a link, plus a
+// multi-line draft with a pending attachment.
+func newPointerLeaveChat(t *testing.T) pointerLeaveChat {
+	t.Helper()
+	links := new(int)
+	clip := clipboard.NewInMemory()
+	comp := NewComponent(ComponentConfig{
+		Clipboard:   clip,
+		OnLinkClick: func(*url.URL) bool { *links++; return true },
+		Editor:      standard.Editor(standard.WithClipboard(clipboard.NewInMemory())),
+	})
+	tools, attachments := &recordingToolOpener{}, &recordingOpener{}
+	h, tx, _ := Handler(context.Background(), new(sync.Mutex), comp, term.NopInterrupter(),
+		WithToolCallOpener(tools), WithAttachmentOpener(attachments))
+	t.Cleanup(func() { close(tx) })
+
+	comp.AddSendMessageAttachments("Fix the off-by-one in alpha.go",
+		[]Attachment{NewWorkspaceFileAttachment("alpha.go")})
+	comp.AddReasoningChunk("I should read **alpha.go** before editing it.")
+	comp.AddToolCall("read", "read_file", `{"path":"alpha.go"}`, "alpha.go")
+	comp.CompleteToolCall("read", "read_file", `{"path":"alpha.go"}`, "alpha.go",
+		"package alpha\n\nfunc Last(s []int) int { return s[len(s)] }", false)
+	comp.AddToolCall("agent", "agent", `{"description":"find callers"}`, "find callers")
+	comp.AddChildToolCall("agent", "refs", "find_references", `{"symbol":"Last"}`, "Last")
+	comp.CompleteChildToolCall("agent", "refs", "find_references", `{"symbol":"Last"}`, "Last",
+		"beta.go:12: alpha.Last(xs)", false)
+	comp.CompleteToolCall("agent", "agent", `{"description":"find callers"}`, "find callers",
+		"One caller in beta.go", false)
+	comp.AddReceiveMessage("The index is off by one:\n\n```go\nfunc Last(s []int) int {\n" +
+		"\treturn s[len(s)-1]\n}\n```\n\nSee [the spec](https://go.dev/ref/spec#Index_expressions).")
+	comp.Input().SetText("Also add a test\nfor the empty slice\ncase.")
+	comp.AddAttachment(NewWorkspaceFileAttachment("beta.go"))
+	return pointerLeaveChat{
+		h: h, comp: comp, tools: tools, attachments: attachments, links: links, clip: clip,
+	}
+}
+
+func TestDialogueHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, size := range []struct{ width, height int }{{60, 15}, {80, 30}, {1, 1}} {
+		t.Run(fmt.Sprintf("%dx%d", size.width, size.height), func(t *testing.T) {
+			t.Parallel()
+			handlertest.RunPointerLeaves(t, newPointerLeaveChat(t).h, size.width, size.height)
+		})
+	}
+}
+
+func TestDialogueHandlerPointerLeaveKeepsState(t *testing.T) {
+	t.Parallel()
+	const width, height = 100, 70
+	press := func(at term.Coordinates) []term.Event {
+		return []term.Event{mouseEv(at.X, at.Y, term.MouseLeft)}
+	}
+	gestures := []struct {
+		name   string
+		events func(at term.Coordinates) []term.Event
+	}{
+		{name: "hover", events: func(at term.Coordinates) []term.Event {
+			return []term.Event{mouseEv(at.X, at.Y, 0)}
+		}},
+		{name: "click", events: func(at term.Coordinates) []term.Event {
+			return []term.Event{
+				mouseEv(at.X, at.Y, 0), mouseEv(at.X, at.Y, term.MouseLeft),
+				mouseEv(at.X, at.Y, term.MouseRelease), mouseEv(at.X, at.Y, 0),
+			}
+		}},
+		{name: "drag", events: func(at term.Coordinates) []term.Event {
+			return clickDrag(at.X, at.Y, at.X+3, at.Y)
+		}},
+		{name: "press", events: press},
+		{name: "wheel", events: func(at term.Coordinates) []term.Event {
+			return []term.Event{mouseEv(at.X, at.Y, term.MouseWheelUp)}
+		}},
+	}
+	targets := []struct {
+		name string
+		find func(t *testing.T, c pointerLeaveChat, w *term.StringWriter) term.Coordinates
+	}{
+		{name: "tool name", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			at := findText(t, w, width, "read_file")
+			return term.Coordinates{X: at.X + 1, Y: at.Y}
+		}},
+		{name: "child tool name", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			return findText(t, w, width, "find_references")
+		}},
+		{name: "sent chip", find: func(t *testing.T, c pointerLeaveChat, _ *term.StringWriter) term.Coordinates {
+			return chipScreenPos(t, c.comp)
+		}},
+		{name: "copy icon", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			return findText(t, w, width, string(DefaultMarkdownConfig().CodeBlockCopyIcon))
+		}},
+		{name: "link", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			return findText(t, w, width, "the spec")
+		}},
+		{name: "message text", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			return findText(t, w, width, "index is off")
+		}},
+		{name: "draft", find: func(t *testing.T, _ pointerLeaveChat, w *term.StringWriter) term.Coordinates {
+			return findText(t, w, width, "empty slice")
+		}},
+	}
+	leaves := []term.Coordinates{
+		{X: -1, Y: height / 2}, {X: width, Y: height / 2}, {X: width / 2, Y: -1},
+		{X: width / 2, Y: height}, {X: -500, Y: -500}, {X: 500, Y: 500},
+	}
+	type state struct {
+		exit, inputFocused, dragging      bool
+		selection                         string
+		selected                          bool
+		cursor                            term.Coordinates
+		cursorStyle                       term.CursorStyle
+		cursorVisible                     bool
+		offset, tools, attachments, links int
+		toolPressed, toolCanceled         bool
+		clipboard                         string
+	}
+	snapshot := func(c pointerLeaveChat, exit bool) state {
+		dh := c.h.(*dialogueHandler)
+		sel, selected := c.h.Selection()
+		cursor, shape, visible := c.h.Cursor()
+		data, _ := c.clip.Paste(clipboard.DefaultRegisterID)
+		return state{
+			exit: exit, inputFocused: dh.inputFocused, dragging: dh.messagesDragging,
+			selection: sel, selected: selected,
+			cursor: cursor, cursorStyle: shape, cursorVisible: visible,
+			offset: c.comp.messages.Offset(), tools: len(c.tools.opened),
+			attachments: len(c.attachments.opened), links: *c.links,
+			toolPressed: dh.toolCallPressed, toolCanceled: dh.toolCallCanceled,
+			clipboard: data.Text,
+		}
+	}
+	for _, target := range targets {
+		for _, gesture := range gestures {
+			for _, leave := range leaves {
+				t.Run(fmt.Sprintf("%s %s then %v", gesture.name, target.name, leave), func(t *testing.T) {
+					t.Parallel()
+					c := newPointerLeaveChat(t)
+					c.h.Resize(width, height)
+					w := term.NewStringWriter(width, height)
+					c.h.Draw(w)
+					var exit bool
+					for _, ev := range gesture.events(target.find(t, c, w)) {
+						exit, _ = c.h.Handle(ev)
+						c.h.Draw(term.NewStringWriter(width, height))
+					}
+					before := snapshot(c, exit)
+
+					exit, _ = c.h.Handle(mouseEv(leave.X, leave.Y, 0))
+					c.h.Draw(term.NewStringWriter(width, height))
+
+					assert.Equal(t, before, snapshot(c, exit))
+					off := term.Coordinates{X: -1, Y: -1}
+					assert.False(t, c.comp.HoverToolCall(off), "a tool row stays hovered")
+					assert.False(t, c.comp.HoverSentAttachment(off), "a sent chip stays hovered")
+					assert.False(t, c.comp.hoverCodeCopy(off), "a copy icon stays hovered")
+				})
+			}
 		}
 	}
 }

@@ -25,8 +25,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/unstablebuild/rune-go-sdk/handler/inputbox"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/debug"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 )
 
@@ -109,6 +111,22 @@ func TestPromptChoiceCompletion(t *testing.T) {
 		assert.Equal(t, -1, got)
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
+}
+
+func TestSSHInputFloatingPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, size := range []term.Coordinates{{X: 60, Y: 1}, {X: 2, Y: 2}} {
+		result := make(chan promptResult, 1)
+		s := &sshInputFloating{
+			ib:     inputbox.New(inputbox.WithPrompt("Password:"), inputbox.WithRedact(true), inputbox.WithText("hunter2")),
+			label:  "Password:",
+			result: result,
+		}
+		handlertest.RunPointerLeaves(t, s, size.X, size.Y)
+		assert.False(t, s.sent, "a leave neither submits nor dismisses the prompt")
+		assert.Empty(t, result)
+		assert.Equal(t, "hunter2", s.ib.Text())
+	}
 }
 
 func TestPromptChoiceBrowserLifecycle(t *testing.T) {

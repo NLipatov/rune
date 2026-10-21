@@ -226,6 +226,10 @@ func (h *Handler) Resize(w, height int) {
 // Draw refreshes the preview from the focused selection then renders
 // the preview, separator and inner list into w.
 func (h *Handler) Draw(w term.Writer) {
+	// The list keeps at least one row even when the preview and the
+	// separator already fill the handler: truncate instead of drawing
+	// past it.
+	w = &component.VirtualWriter{Writer: w, Width: h.innerW, Height: h.innerH}
 	sel, _ := h.inner.Selection()
 	if sel != h.prevLine {
 		h.loadPreview(sel)

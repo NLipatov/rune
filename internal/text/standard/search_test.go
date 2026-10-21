@@ -19,6 +19,7 @@ package standard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -32,6 +33,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/cell"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/handler/searchbox"
 )
 
@@ -581,4 +583,51 @@ func TestSearchFloatingReportsEditorSelection(t *testing.T) {
 	selected, ok := wm.floating.Selection()
 	assert.True(t, ok)
 	assert.Equal(t, "two", selected)
+}
+
+func TestSearchHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		open func(t *testing.T, h *searchSequenceHarness)
+	}{
+		{name: "box closed", open: func(*testing.T, *searchSequenceHarness) {}},
+		{name: "find box open", open: func(t *testing.T, h *searchSequenceHarness) {
+			h.open(t, searchbox.ModeFind)
+			for _, ch := range "wide" {
+				h.Handle(term.Event{Type: term.EventKey, Ch: ch})
+			}
+		}},
+		{name: "replace box open", open: func(t *testing.T, h *searchSequenceHarness) {
+			h.open(t, searchbox.ModeReplace)
+		}},
+	}
+	for _, tt := range tests {
+		for _, size := range []term.Coordinates{{X: 40, Y: 10}, {X: 1, Y: 1}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", tt.name, size.X, size.Y), func(t *testing.T) {
+				t.Parallel()
+				newHandler := func() (*searchSequenceHarness, *standardHandler) {
+					h := newSearchSequenceHarness(t, pointerLeavesContent, searchbox.ModeFind)
+					h.Resize(size.X, size.Y)
+					tt.open(t, h)
+					return h, h.owner.Handler.(*standardHandler)
+				}
+
+				h, root := newHandler()
+				open := h.floating != nil
+				want := snapshotStandardPointerState(root)
+				for _, ev := range pointerLeaveEvents(size.X, size.Y) {
+					h.owner.Handle(ev)
+					require.Equal(t, want, snapshotStandardPointerState(root),
+						"leave to (%d, %d)", ev.MouseX, ev.MouseY)
+					require.Equal(t, open, h.floating != nil,
+						"leave to (%d, %d) toggled the search box", ev.MouseX, ev.MouseY)
+				}
+
+				h, _ = newHandler()
+				rhandlertest.RunPointerLeaves(t, h.owner, size.X, size.Y)
+				require.NoError(t, h.closeErr)
+			})
+		}
+	}
 }

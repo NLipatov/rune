@@ -39,6 +39,7 @@ import (
 	"unstable.build/rune/internal/component/shader"
 	"unstable.build/rune/internal/component/shader/glslshader"
 	"unstable.build/rune/internal/component/shader/shaderloop"
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 // fakeLoadingShader returns a deterministic, cheap shader factory
@@ -779,6 +780,15 @@ func TestShaderRunnerScreensaverInputWhileArmed(t *testing.T) {
 	ir.fire()
 	assert.Nil(t, ir.screensaver)
 	assert.Equal(t, []time.Duration{testIdleTimeout, 3 * time.Minute}, ir.timers)
+}
+
+func TestShaderRunnerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, size := range []term.Coordinates{{X: 100, Y: 30}, {X: 2, Y: 2}} {
+		ir := newIdleRunner(t, "nop")
+		ir.startScreensaver(t)
+		handlertest.RunPointerLeaves(t, ir, size.X, size.Y)
+	}
 }
 
 func TestShaderRunnerScreensaverAfterClose(t *testing.T) {

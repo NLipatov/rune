@@ -35,6 +35,7 @@ import (
 	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
 	thandler "unstable.build/rune/internal/handler"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -3714,4 +3715,115 @@ func TestComponentWallpaperOnABackgroundKeepsItsPictures(t *testing.T) {
 	assert.Equal(t, background.Bg, united.Bg, "the wallpaper is united on the background")
 	assert.Equal(t, background.Bg, cells[mark.Y][mark.X+2].Bg,
 		"the background fills what the wallpaper does not draw")
+}
+
+// newPointerLess returns a less over more lines than any test size, some
+// longer than its width.
+func newPointerLess(t *testing.T) *thandler.Less {
+	t.Helper()
+	l := thandler.NewLess(thandler.DefaultLessConfig())
+	var b strings.Builder
+	for i := range 200 {
+		b.WriteString(strings.Repeat(string(rune('a'+i%26)), i%90))
+		b.WriteString("\n")
+	}
+	_, err := l.Buffer().ReadFrom(strings.NewReader(b.String()))
+	require.NoError(t, err)
+	return l
+}
+
+// newPointerComponent returns a browser with several tabs in split
+// windows, a floating window, a prompt, bars on two sides and a
+// reserved right column.
+func newPointerComponent(t *testing.T, tabBarOffset int) *Component {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.ActiveTabShader = "pulse"
+	cfg.RightInset = 2
+	cfg.TabBarOffset = tabBarOffset
+	cfg.WindowManagerConfig.WindowBar = true
+	cfg.OnTabIconClick = func(*Tab) {}
+	b := NewComponent(cfg)
+	b.SetInterrupter(term.NopInterrupter())
+	b.Resize(60, 15)
+	t.Cleanup(func() { _ = b.Close() })
+
+	var tabs []*Tab
+	for i := range 8 {
+		uri, err := workspaceapi.ParseURI(fmt.Sprintf("file:///tab-with-a-long-name-%d", i))
+		require.NoError(t, err)
+		h := NopHandler(newPointerLess(t))
+		tabs = append(tabs, b.NewTab(uri, 'o', fmt.Sprintf("tab-with-a-long-name-%d", i), h, h))
+	}
+	left := b.Focus()
+	require.NoError(t, left.SetContent(tabs[0]))
+	right, ok := b.Split(browserapi.OrientationRight, left, tabs[1])
+	require.True(t, ok)
+	_, ok = b.Split(browserapi.OrientationBottom, right, NopHandler(newPointerLess(t)))
+	require.True(t, ok)
+	require.True(t, b.SetTabStatus(tabs[2].URI(), programstatus.Report{
+		State: programstatus.Working, Progress: -1,
+	}))
+
+	b.Bar(browserapi.BarConfig{Orientation: browserapi.OrientationBottom, Size: 1},
+		NopHandler(newPointerLess(t)))
+	b.Bar(browserapi.BarConfig{Orientation: browserapi.OrientationLeft, Size: 3},
+		NopHandler(newPointerLess(t)))
+	b.Floating(StaticFloating(NopHandler(newPointerLess(t)), 20, 6), browserapi.FloatingConfig{})
+	b.Prompt("Proceed with a rather long question?", []string{"Yes", "No"}, nil,
+		handler.NopPromptHandler())
+	b.SetFocus(left)
+	return b
+}
+
+func TestComponentPointerLeaves(t *testing.T) {
+	for _, offset := range []int{0, 4} {
+		for _, size := range [][2]int{{60, 15}, {1, 1}} {
+			b := newPointerComponent(t, offset)
+			focus, floats := b.Focus(), b.FloatingWindows()
+			for _, at := range []term.Coordinates{{X: 1, Y: 1}, {X: 30, Y: 7}, {X: 10, Y: 13}} {
+				for _, out := range []term.Coordinates{{X: -1, Y: 7}, {X: 60, Y: 7}, {X: 30, Y: -50}} {
+					b.Handle(term.Event{Type: term.EventMouse, MouseX: at.X, MouseY: at.Y,
+						Context: term.ContextWithPointer(context.Background(), new(term.Pointer))})
+					b.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+				}
+			}
+			assert.Equal(t, focus, b.Focus(), "a leave does not move the focus")
+			assert.Equal(t, floats, b.FloatingWindows(), "a leave does not close a window")
+			assert.Len(t, b.prompts, 1, "a leave does not answer the prompt")
+
+			rhandlertest.RunPointerLeaves(t, b, size[0], size[1])
+		}
+	}
+}
+
+func TestComponentContentPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		b := newPointerComponent(t, 0)
+		prompt := b.Prompt("Another long question for the prompt?", []string{"Yes", "No", "Maybe"},
+			nil, handler.NopPromptHandler())
+		var contents []tui.Handler
+		for _, win := range []Window{prompt, b.Focus()} {
+			h, err := win.Content()
+			require.NoError(t, err)
+			contents = append(contents, h)
+		}
+		for _, h := range contents {
+			rhandlertest.RunPointerLeaves(t, h, size[0], size[1])
+		}
+	}
+}
+
+func TestOffsetTabsPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 1}, {60, 15}, {1, 1}} {
+		var tabs thandler.Tabs
+		tabs.Init()
+		for i := range 12 {
+			tabs.Add('A'+rune(i), fmt.Sprintf("tab number %d", i))
+		}
+		tabs.OnClick = func(int) bool { return true }
+		tabs.OnIconClick = func(int) {}
+		v := newOffsetTabs(thandler.NewShadedTabs(&tabs, thandler.ShadedTabsConfig{}), 4)
+		rhandlertest.RunPointerLeaves(t, v, size[0], size[1])
+	}
 }

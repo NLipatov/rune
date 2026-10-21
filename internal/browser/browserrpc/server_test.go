@@ -19,6 +19,7 @@ package browserrpc
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,9 +34,12 @@ import (
 	gomock "go.uber.org/mock/gomock"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/debug"
+	handler "unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/handler/handlerrpc"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/workspace/processctx"
 )
@@ -460,4 +464,35 @@ func TestStreamHandlerResizeDuringStreamSetup(t *testing.T) {
 
 	assert.Equal(t, [2]int{20, 6}, rec.last(),
 		"the window's size must reach the handler behind the stream")
+}
+
+func newPointerLess(t *testing.T) browserapi.Handler {
+	t.Helper()
+	l := handler.NewLess(handler.DefaultLessConfig())
+	_, err := l.Buffer().ReadFrom(strings.NewReader(
+		strings.Repeat("a line of the stream handler content that is long\n", 100)))
+	require.NoError(t, err)
+	return browser.NopHandler(l)
+}
+
+func TestStreamHandlerPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		for _, setup := range []bool{false, true} {
+			h := &streamHandler{Handler: newPointerLess(t), mu: new(sync.Mutex)}
+			if setup {
+				h.doneSetup()
+			}
+			handlertest.RunPointerLeaves(t, h, size[0], size[1])
+		}
+	}
+}
+
+func TestFloatingStreamHandlerPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		for _, setup := range []bool{false, true} {
+			h := &floatingStreamHandler{Floating: browser.StaticFloating(newPointerLess(t), 20, 6)}
+			h.setup.Store(setup)
+			handlertest.RunPointerLeaves(t, h, size[0], size[1])
+		}
+	}
 }

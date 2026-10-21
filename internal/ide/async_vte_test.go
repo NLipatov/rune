@@ -312,6 +312,48 @@ func TestAsyncVTE(t *testing.T) {
 	})
 }
 
+func TestAsyncVTEPointerLeaves(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	for _, tc := range []struct {
+		name    string
+		factory func() (vtereservoir.VTE, error)
+	}{
+		{name: "loading", factory: func() (vtereservoir.VTE, error) {
+			<-release
+			return nil, errors.New("abandoned")
+		}},
+		{name: "failed", factory: func() (vtereservoir.VTE, error) {
+			return nil, errors.New("stalled transport")
+		}},
+		{name: "running", factory: func() (vtereservoir.VTE, error) {
+			return &replayVTE{testVte: newTestVte()}, nil
+		}},
+		{name: "exited with an error", factory: func() (vtereservoir.VTE, error) {
+			return &exitingVTE{
+				testVte: newTestVte(), exitErr: errors.New("exit status 2"),
+				screen: terminalScreen{rows: []string{"$ make", "Error 2", ""}, cursorRow: 2},
+			}, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := newExForTesting(t, texttest.NopEditor())
+			t.Cleanup(func() { _ = b.Close() })
+			av := newAsyncVTE(b.ex, tc.factory)
+			if tc.name != "loading" {
+				b.waitAsyncVTELoads()
+				b.flushScheduled()
+			}
+			unlock := b.lock()
+			defer unlock()
+			handlertest.RunPointerLeaves(t, av, 80, 24)
+			handlertest.RunPointerLeaves(t, av, 2, 2)
+		})
+	}
+}
+
 func TestNewEmulatorHandlerAlwaysAsync(t *testing.T) {
 	t.Run("remote workspace wraps terminals in asyncVTE", func(t *testing.T) {
 		ws := testRemoteWorkspace{

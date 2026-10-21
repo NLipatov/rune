@@ -9129,3 +9129,82 @@ func (w *workspaceManagerMock) addWorkspaceNotification(
 	}
 	w.levels[uri] = append(w.levels[uri], level)
 }
+
+// newPointerLeavesEx builds a workspace with two files open in split
+// windows, a terminal window and the file explorer open with entries.
+func newPointerLeavesEx(t *testing.T) testEx {
+	t.Helper()
+	uri, err := workspaceapi.ParseURI("memory:///")
+	require.NoError(t, err)
+	scheme, err := workspace.NewMemoryScheme(context.Background(), config.NopConfig(), uri)
+	require.NoError(t, err)
+	for _, name := range []string{"alpha.go", "beta.go", "gamma.go"} {
+		touchTestFile(t, scheme, name)
+	}
+	ed := vi.Editor(vi.WithWorkspaceCommandRegistry(uri, texttest.NopWorkspaceRegistry()))
+	b := newExForTestingWithWorkspace(t, workspace.NewSchemeWorkspace(uri, scheme, inlineSchedule),
+		ed, vte.DefaultConfig(), nopPublishEvent,
+		clipboard.NewInMemory(), text.WithCommandKey(testCommandKey),
+		text.WithCommandOverlayConfig(testCommandOverlayConfig()))
+	t.Cleanup(func() { _ = b.Close() })
+	ctx := context.Background()
+	require.NoError(t, b.ex.editFiles(ctx, "alpha.go"))
+	require.NoError(t, b.ex.windownew(ctx))
+	require.NoError(t, b.ex.editFiles(ctx, "beta.go"))
+	require.NoError(t, b.ex.terminalnew(ctx))
+	require.NoError(t, b.fexplorer(ctx))
+	require.NotNil(t, b.fileExplorerWin)
+	b.waitAsyncVTELoads()
+	b.flushScheduled()
+	return b
+}
+
+func TestExPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		prompt bool
+	}{
+		{name: "windows"},
+		{name: "command prompt", prompt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, size := range []term.Coordinates{{X: 100, Y: 30}, {X: 2, Y: 2}} {
+				b := newPointerLeavesEx(t)
+				b.Resize(size.X, size.Y)
+				if tc.prompt {
+					b.ex.openCommandPrompt()
+					require.NotNil(t, b.ex.cmd)
+				}
+				handlertest.RunPointerLeaves(t, b, size.X, size.Y)
+			}
+		})
+	}
+
+	t.Run("a leave changes nothing", func(t *testing.T) {
+		t.Parallel()
+		for _, prompt := range []bool{false, true} {
+			b := newPointerLeavesEx(t)
+			b.Resize(100, 30)
+			if prompt {
+				b.ex.openCommandPrompt()
+			}
+			focus := b.comp.Browser().Focus()
+			tiles := b.comp.Browser().Tiles()
+			cursor, _, _ := b.Cursor()
+			for _, out := range []term.Coordinates{
+				{X: -1, Y: 15}, {X: 100, Y: 15}, {X: 50, Y: -1}, {X: 50, Y: 30}, {X: 500, Y: 500},
+			} {
+				b.Handle(term.Event{Type: term.EventMouse, MouseX: 50, MouseY: 15})
+				b.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+			}
+			after := b.comp.Browser().Focus()
+			assert.Equal(t, focus.WindowID(), after.WindowID(), "prompt %t", prompt)
+			assert.Equal(t, tiles, b.comp.Browser().Tiles(), "prompt %t", prompt)
+			assert.Equal(t, prompt, b.ex.cmd != nil, "prompt %t", prompt)
+			got, _, _ := b.Cursor()
+			assert.Equal(t, cursor, got, "prompt %t", prompt)
+		}
+	})
+}

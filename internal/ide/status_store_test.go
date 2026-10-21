@@ -1535,6 +1535,27 @@ func TestStatusViewMouse(t *testing.T) {
 	assert.Equal(t, a, v.sel, "the wheel selects nothing")
 }
 
+func TestStatusViewPointerLeaves(t *testing.T) {
+	t.Parallel()
+	for _, size := range []term.Coordinates{{X: 100, Y: 30}, {X: 2, Y: 2}} {
+		f := newStatusViewFixture(t)
+		for _, path := range []string{"a", "b", "c"} {
+			f.report(path, statusTestReport(programstatus.Working, "make", 40))
+		}
+		f.tab("chat", statusTestReport(programstatus.Done, "", -1))
+		v := f.store.view()
+		t.Cleanup(func() { require.NoError(t, v.Close()) })
+		sel := v.sel
+		handlertest.RunPointerLeaves(t, v, size.X, size.Y)
+		_, _ = v.Handle(term.Event{Type: term.EventMouse, MouseX: 1, MouseY: 1})
+		_, _ = v.Handle(term.Event{Type: term.EventMouse, MouseX: -1, MouseY: 1})
+		assert.Equal(t, -1, v.hover, "a leave drops the hover")
+		if size.X == 2 {
+			assert.Equal(t, sel, v.sel, "nothing could be clicked")
+		}
+	}
+}
+
 func TestStatusViewSidebarWidth(t *testing.T) {
 	_, store, ws := newStatusStoreTest(t)
 	v := store.view()

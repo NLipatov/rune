@@ -6734,3 +6734,102 @@ func TestEmacsMouseSetsTheTextPointer(t *testing.T) {
 	shape, _ := p.Shape()
 	assert.Equal(t, term.PointerText, shape)
 }
+
+const pointerLeavesContent = "short\n" +
+	"a long line that runs well past the right edge of a forty column window\n" +
+	"日本語 wide 😀 emoji 日本語 wide 😀 emoji 日本語 wide 😀 emoji\n" +
+	"\tindented\n\n" +
+	"line 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n"
+
+// pointerLeaveEvents returns the Context-less, buttonless motions a parent
+// router sends a width by height child when the pointer moves off it.
+func pointerLeaveEvents(width, height int) []term.Event {
+	far := 4*max(width, height) + 100
+	var events []term.Event
+	for _, at := range []term.Coordinates{
+		{X: -1, Y: height / 2}, {X: width, Y: height / 2},
+		{X: width / 2, Y: -1}, {X: width / 2, Y: height},
+		{X: -1, Y: -1}, {X: width, Y: height},
+		{X: -far, Y: -far}, {X: far, Y: far}, {X: far, Y: -far}, {X: -far, Y: far},
+	} {
+		events = append(events, mouseEventAt(0, at.X, at.Y))
+	}
+	return events
+}
+
+type emacsPointerState struct {
+	cursor, from, to, offset                  term.Coordinates
+	selected                                  bool
+	marks                                     []textapi.Location
+	isearch, minibuffer, prefix, queryReplace bool
+	pendingGoto, pendingZap, quotedInsert     bool
+	lastKill, lastPaste                       bool
+	historyIdx, undoRunLen                    int
+	undoRun                                   undoRunKind
+	undoSequence                              undoSequenceState
+}
+
+func snapshotEmacsPointerState(h *emacsHandler) emacsPointerState {
+	from, to, selected := h.SelectionBounds()
+	return emacsPointerState{
+		cursor: h.CursorAtScroll(), from: from, to: to, offset: h.less.Scroll().Offset(),
+		selected: selected, marks: emacsMarks(h),
+		isearch: h.isearch.active, minibuffer: h.minibuffer.active,
+		prefix: h.prefix.active, queryReplace: h.queryReplace.active,
+		pendingGoto: h.pendingGoto, pendingZap: h.pendingZap, quotedInsert: h.pendingQuotedInsert,
+		lastKill: h.lastKill, lastPaste: h.lastPaste,
+		historyIdx: h.historyIdx, undoRunLen: h.undoRunLen,
+		undoRun: h.undoRun, undoSequence: h.undoSequence,
+	}
+}
+
+func TestEmacsHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	setMark := key2(term.KeySpace, term.ModCtrl)
+	tests := []struct {
+		name   string
+		events []term.Event
+	}{
+		{name: "idle"},
+		{name: "mark set with an active region on a wide line",
+			events: []term.Event{ctrl('n'), ctrl('n'), setMark, ctrl('f'), ctrl('f'), ctrl('n')}},
+		{name: "isearch active", events: []term.Event{ctrl('s'), char('w'), char('i'), char('d'), char('e')}},
+		{name: "scrolled to the end", events: []term.Event{alt('>'), ctrl('e')}},
+		{name: "end of a long line", events: []term.Event{ctrl('n'), ctrl('e')}},
+		{name: "kill chain open", events: []term.Event{ctrl('k')}},
+		{name: "yank-pop chain open", events: []term.Event{ctrl('y'), alt('y')}},
+		{name: "insert run open", events: []term.Event{char('x'), char('y')}},
+		{name: "undo sequence open", events: []term.Event{char('x'), ctrl('/')}},
+		{name: "prefix argument pending", events: []term.Event{ctrl('u'), char('3')}},
+		{name: "goto prompt open", events: []term.Event{alt('g'), char('g'), char('4')}},
+	}
+	for _, tt := range tests {
+		for _, size := range []term.Coordinates{{X: 40, Y: 10}, {X: 1, Y: 1}} {
+			t.Run(fmt.Sprintf("%s/%dx%d", tt.name, size.X, size.Y), func(t *testing.T) {
+				t.Parallel()
+				newHandler := func() *emacsHandler {
+					h, _, reg := newEmacsHandlerWithHistory(t, pointerLeavesContent)
+					for _, entry := range []string{"日本", "😀"} {
+						require.NoError(t, reg.Copy(clipboard.DefaultRegisterID,
+							clipboard.Data{Text: entry, Metadata: text.StandardSelection}))
+					}
+					h.Resize(size.X, size.Y)
+					for _, ev := range tt.events {
+						h.Handle(ev)
+					}
+					return h.(*emacsHandler)
+				}
+
+				h := newHandler()
+				want := snapshotEmacsPointerState(h)
+				for _, ev := range pointerLeaveEvents(size.X, size.Y) {
+					h.Handle(ev)
+					require.Equal(t, want, snapshotEmacsPointerState(h),
+						"leave to (%d, %d)", ev.MouseX, ev.MouseY)
+				}
+
+				handlertest.RunPointerLeaves(t, newHandler(), size.X, size.Y)
+			})
+		}
+	}
+}

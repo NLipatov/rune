@@ -22,6 +22,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"fmt"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
@@ -30,6 +32,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	runehandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 var _ browserapi.Floating = (*completionHandler)(nil)
@@ -707,5 +710,22 @@ func TestCompleteHandlerCommand(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, test.wantFloating, floatingCalled)
 		})
+	}
+}
+
+func TestCompletionHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	labels := make([]string, 60)
+	for i := range labels {
+		labels[i] = fmt.Sprintf("ƒ completionCandidate%02d(ctx context.Context) error", i)
+	}
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		ch := newCompletionHandler(labels)
+		ch.list.FocusDown()
+		ch.list.FocusDown()
+		runehandlertest.RunPointerLeaves(t, ch, size.w, size.h)
+		assert.Equal(t, 2, ch.list.FocusOffset(), "the pointer must not move the focus")
+		_, ok := ch.Focus()
+		assert.False(t, ok, "the pointer must not accept a completion")
 	}
 }

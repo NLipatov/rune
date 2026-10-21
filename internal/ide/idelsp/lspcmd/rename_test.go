@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
@@ -35,6 +37,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/handler/inputbox"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	runehandlertest "unstable.build/rune/internal/handler/handlertest"
 	idelsp "unstable.build/rune/internal/ide/idelsp"
 )
 
@@ -794,4 +797,23 @@ func TestE2ERename(t *testing.T) {
 		return true
 	}, 5*time.Second, 100*time.Millisecond,
 		"gopls should no longer know about 'Add' in the workspace after rename")
+}
+
+func TestRenameFloatingHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	var renames atomic.Int32
+	lsp := &mockLSP{
+		renameFn: func(
+			_ context.Context, _ semanticapi.RenameParams,
+		) (*semanticapi.WorkspaceEdit, error) {
+			renames.Add(1)
+			return nil, nil
+		},
+	}
+	for _, size := range []struct{ w, h int }{{60, 15}, {30, 1}, {1, 1}} {
+		h := newTestRenameFloating(t, "someRatherLongIdentifierName", lsp, &mockEditor{})
+		runehandlertest.RunPointerLeaves(t, h, size.w, size.h)
+		assert.Equal(t, "someRatherLongIdentifierName", h.ib.Text())
+		assert.Zero(t, renames.Load(), "the pointer must not confirm the rename")
+	}
 }

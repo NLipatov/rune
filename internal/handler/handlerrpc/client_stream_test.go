@@ -35,6 +35,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/handler/handlerrpc/handlerrpctest"
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 const testTimeout = 5 * time.Second
@@ -539,4 +540,50 @@ func TestClientStreamSurvivesABadUpload(t *testing.T) {
 	client.Draw(frame(context.Background()))
 	req := ext.next(handlerrpc.MessageType_Draw).GetDraw()
 	assert.EqualValues(t, 2, req.GetImageAck(), "a dropped upload is acked like any other")
+}
+
+// newServedClientStream serves h, as an extension does, to the
+// ClientStream it returns.
+func newServedClientStream(
+	t *testing.T, h handlerrpc.Handler,
+) *ClientStream[*handlerrpctest.TestMessage] {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	// Draw sends while holding the lock the receiver needs, so a pipe
+	// that fills up would deadlock where gRPC's buffering does not.
+	toExt, toHost := make(chan proto.Message, 1<<16), make(chan proto.Message, 1<<16)
+	newT := func() *handlerrpctest.TestMessage { return new(handlerrpctest.TestMessage) }
+	client := NewClientStream(ctx, pipeEnd{ctx: ctx, send: toExt, recv: toHost}, newT,
+		func(term.Event) error { return nil })
+	server := handlerrpc.NewServerStream(pipeEnd{ctx: ctx, send: toHost, recv: toExt}, h, newT)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go debug.CapturePanicReport(func() {
+		defer wg.Done()
+		server.ReceiveMessages()
+	})
+	go debug.CapturePanicReport(func() {
+		defer wg.Done()
+		_ = client.ReceiveMessages()
+	})
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+	return client
+}
+
+func TestClientStreamPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		h := newMouseRecorder()
+		client := newServedClientStream(t, h)
+		handlertest.RunPointerLeaves(t, client, size[0], size[1])
+
+		_, handled := client.Handle(term.Event{Type: term.EventMouse, MouseX: -7, MouseY: size[1] + 3})
+		assert.True(t, handled)
+		require.Eventually(t, func() bool {
+			got, ok := h.last()
+			return ok && got.Key == 0 && got.MouseX == -7 && got.MouseY == size[1]+3
+		}, testTimeout, time.Millisecond, "the leave reaches the extension outside it")
+	}
 }

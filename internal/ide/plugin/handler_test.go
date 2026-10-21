@@ -34,6 +34,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component/comptest"
 	"github.com/unstablebuild/rune-go-sdk/handler"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/workspace"
@@ -341,4 +342,94 @@ func (e *pluginTestExecutor) NewPty(context.Context) (workspaceapi.Pty, error) {
 
 func (e *pluginTestExecutor) SetPtySize(p workspaceapi.Pty, size workspaceapi.PtySize) error {
 	return nil
+}
+
+func TestPluginHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	output := strings.Repeat("ok  \tunstable.build/rune/internal/ide/plugin\t0.512s\n--- FAIL: TestSomething (0.01s)\n", 20)
+	cases := []struct {
+		name        string
+		done        bool
+		alignBottom bool
+	}{
+		{name: "running"},
+		{name: "running with the bar at the bottom", alignBottom: true},
+		{name: "done", done: true},
+		{name: "done with the bar at the bottom", done: true, alignBottom: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := new(Handler)
+			h.cfg = defaultConfig().cfg
+			barCfg := DefaultBarConfig()
+			barCfg.AlignBottom = tc.alignBottom
+			h.bar = newPluginHandlerBar("go test ./...", term.NopInterrupter(), barCfg)
+			t.Cleanup(func() { _ = h.bar.Close() })
+			vteh, err := vte.NewHandler(nopBrowser{}, nopBrowser{},
+				&pluginTestExecutor{}, &pluginTestExecutor{}, nopBrowser{}, h.cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = vteh.Close() })
+			h.emulator = vteh
+			h.liveHandler = h.newUnion(vteh)
+			require.NoError(t, h.emulator.RestoreFromSnapshot(vte.Snapshot{
+				Width: 60, Height: 15,
+				Primary: vte.ScreenSnapshot{
+					Cells:  term.StringToCells(output),
+					Cursor: term.Coordinates{Y: 14},
+				},
+			}))
+			if tc.done {
+				h.bar.setDone(nil)
+			}
+			for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+				handlertest.RunPointerLeaves(t, h, size.w, size.h)
+			}
+		})
+	}
+}
+
+func TestPluginHandlerDonePointerLeaveKeepsSelectionAndCursor(t *testing.T) {
+	t.Parallel()
+	h := new(Handler)
+	h.cfg = defaultConfig().cfg
+	h.bar = newPluginHandlerBar("go test ./...", term.NopInterrupter(), DefaultBarConfig())
+	t.Cleanup(func() { _ = h.bar.Close() })
+	vteh, err := vte.NewHandler(nopBrowser{}, nopBrowser{},
+		&pluginTestExecutor{}, &pluginTestExecutor{}, nopBrowser{}, h.cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = vteh.Close() })
+	h.emulator = vteh
+	h.liveHandler = h.newUnion(vteh)
+	require.NoError(t, h.emulator.RestoreFromSnapshot(vte.Snapshot{
+		Width: 30, Height: 10,
+		Primary: vte.ScreenSnapshot{
+			Cells:  term.StringToCells(strings.Repeat("some program output line\n", 30)),
+			Cursor: term.Coordinates{Y: 9},
+		},
+	}))
+	h.bar.setDone(nil)
+	const width, height = 30, 10
+	h.Resize(width, height)
+	mouse := func(key term.Key, x, y int) {
+		_, _ = h.Handle(term.Event{Type: term.EventMouse, Key: key, MouseX: x, MouseY: y})
+	}
+	mouse(term.MouseLeft, 2, 3)
+	mouse(term.MouseLeft, 10, 5)
+	mouse(term.MouseRelease, 10, 5)
+	sel, ok := h.Selection()
+	require.True(t, ok)
+	require.NotEmpty(t, sel)
+	pos, _, show := h.Cursor()
+	for _, off := range []term.Coordinates{
+		{X: -1, Y: 4}, {X: width, Y: 4}, {X: 4, Y: -1}, {X: 4, Y: height}, {X: 500, Y: -500},
+	} {
+		mouse(0, off.X, off.Y)
+		got, gotOK := h.Selection()
+		assert.Equal(t, ok, gotOK, "leave to %+v", off)
+		assert.Equal(t, sel, got, "leave to %+v must keep the selection", off)
+		gotPos, _, gotShow := h.Cursor()
+		assert.Equal(t, pos, gotPos, "leave to %+v must not move the cursor", off)
+		assert.Equal(t, show, gotShow)
+	}
 }

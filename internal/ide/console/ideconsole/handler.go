@@ -790,6 +790,9 @@ func (h *Handler) drawHistory(w term.Writer) {
 	}
 	barY := h.height - 1
 	for i, r := range h.prompt {
+		if i >= h.width {
+			break
+		}
 		w.SetCell(term.Coordinates{X: i, Y: barY},
 			term.Cell{Ch: r})
 	}

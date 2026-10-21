@@ -3369,6 +3369,139 @@ func TestIDETutorialTileLinesUpWithTheWorkspaceWindows(t *testing.T) {
 	assert.Equal(t, " ", cell(top+rows), "so are the workspaces bar's")
 }
 
+func TestIDEPointerLeaves(t *testing.T) {
+	t.Parallel()
+	const width, height = 120, 32
+	configFile, _ := makeTestFiles(t)
+	dataDir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "main.go")
+	require.NoError(t, os.WriteFile(src, []byte(strings.Repeat(
+		"package main // a line long enough to run past the edge of a window ✓✓✓\n", 80)), 0o600))
+	mu := new(sync.Mutex)
+	i, err := New("", configFile.Name(), dataDir,
+		pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
+		WithPublishEvent(nopPublishEvent),
+		WithExtensionsRunner(FuncExtensionsRunner(testRunnerFn)),
+		WithLocker(mu),
+		WithScheduleNextTick(func(fn func()) bool {
+			fn()
+			return true
+		}),
+		WithStarlarkTutorial("basics", `
+def run():
+    choice(message="Which **window** goes next?", options=["Alpha", "Beta", "Gamma"])
+tutorial(entry=run)
+`),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = i.Close() })
+	root := i.Ready()
+	uri, err := workspaceapi.CurrentUserHostURI(src)
+	require.NoError(t, err)
+
+	draw := func(t *testing.T) string {
+		w := term.NewStringWriter(width, height)
+		root.Draw(w)
+		_, _, _ = root.Cursor()
+		_, _ = root.Selection()
+		require.NoError(t, w.Flush())
+		return w.String()
+	}
+	// Every holder of mu unlocks it on the way out, failing or not:
+	// i.Close in the cleanup takes it.
+	func() {
+		mu.Lock()
+		defer mu.Unlock()
+		root.Resize(width, height)
+		require.NoError(t, i.Open(uri))
+		require.NoError(t, i.DispatchCommand("windownew"))
+		require.NoError(t, i.DispatchCommand("windowsplit", "down"))
+		require.NoError(t, i.DispatchCommand("fexplorer"))
+		require.NoError(t, i.DispatchCommand("console"))
+		require.NoError(t, i.DispatchCommand("tutorial", "start", "basics"))
+		// The lesson posts its step from its own goroutine.
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(draw(t), "Gamma") {
+			require.True(t, time.Now().Before(deadline), "the lesson's buttons must be up")
+			mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			mu.Lock()
+		}
+		require.True(t, i.workspaceHandler.drawBar(), "the workspace bar must be up")
+	}()
+	e := i.workspaceHandler.focusEx()
+
+	send := func(t *testing.T, key term.Key, x, y int) {
+		t.Helper()
+		exit, _ := root.Handle(term.Event{
+			Type: term.EventMouse, Key: key, MouseX: x, MouseY: y,
+			Context: term.ContextWithPointer(context.Background(), new(term.Pointer)),
+		})
+		require.False(t, exit, "key=%d x=%d y=%d", key, x, y)
+		draw(t)
+	}
+	tileX := width - idetutorial.TileWidth(width)/2
+	points := []term.Coordinates{
+		{}, {X: width - 1}, {Y: height - 1}, {X: width - 1, Y: height - 1},
+		{X: width / 4, Y: height / 4}, {X: width / 4, Y: 3 * height / 4},
+		{X: width / 2, Y: height / 2}, {X: tileX, Y: height / 2},
+		{X: tileX, Y: height - 4}, {X: width / 2, Y: height - 1},
+	}
+
+	cases := []struct {
+		name  string
+		setup func()
+	}{
+		{name: "split windows, explorer, console, lesson and workspace bar"},
+		{name: "the quit prompt over them", setup: func() {
+			i.workspaceHandler.openConfirmExitPrompt(e, false)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			defer mu.Unlock()
+			if tc.setup != nil {
+				tc.setup()
+			}
+			require.GreaterOrEqual(t, e.comp.Browser().Tiles(), 4)
+			tiles := e.comp.Browser().Tiles()
+			floating := e.comp.Browser().FloatingWindows()
+			focus := e.comp.Browser().Focus().WindowID()
+
+			for y := range height {
+				for x := range width {
+					if y%2 == 1 {
+						x = width - 1 - x
+					}
+					send(t, 0, x, y)
+				}
+			}
+			for _, from := range points {
+				for _, to := range points {
+					send(t, 0, from.X, from.Y)
+					send(t, 0, to.X, to.Y)
+				}
+			}
+			assert.Equal(t, tiles, e.comp.Browser().Tiles(), "hovering closes no window")
+			assert.Equal(t, floating, e.comp.Browser().FloatingWindows(),
+				"hovering closes no floating window")
+			assert.Equal(t, focus, e.comp.Browser().Focus().WindowID(), "hovering moves no focus")
+			assert.True(t, i.tutorial.running(), "hovering ends no lesson")
+
+			for _, from := range points {
+				for _, to := range points[:3] {
+					send(t, term.MouseLeft, from.X, from.Y)
+					send(t, term.MouseLeft, (from.X+to.X)/2, (from.Y+to.Y)/2)
+					send(t, term.MouseLeft, to.X, to.Y)
+					send(t, term.MouseRelease, to.X, to.Y)
+					send(t, 0, from.X, from.Y)
+				}
+			}
+		})
+	}
+}
+
 func TestIDEPlaylistPromptsForNextTutorial(t *testing.T) {
 	newIDE := func(t *testing.T, registerNavigation bool) (*IDE, *sync.Mutex) {
 		t.Helper()

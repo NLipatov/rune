@@ -19,6 +19,8 @@ package vtereservoir
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,6 +35,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser/browsertest"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/workspace/workspacetest"
@@ -899,3 +902,43 @@ func (r *recordingVTE) ClearPrimaryBuffer() bool               { return true }
 func (r *recordingVTE) ExitErr() error                         { return nil }
 func (r *recordingVTE) CursorAtScroll() term.Coordinates       { return term.Coordinates{} }
 func (r *recordingVTE) Close() error                           { r.closed.Store(true); return nil }
+
+func TestVteAdapterPointerLeaves(t *testing.T) {
+	t.Parallel()
+	exe := workspacetest.NewPtyExecutor()
+	cfg := vte.DefaultConfig()
+	cfg.CommandAndArgs = []string{"sh"}
+	cfg.WidthHint, cfg.HeightHint = 60, 15
+	f := New(nopBrowser{}, nopBrowser{}, exe, exe, nopBrowser{}, cfg, 0)
+	t.Cleanup(func() { _ = f.Close() })
+	v, err := f.Get()
+	require.NoError(t, err)
+	adapter := v.(*vteAdapter)
+	t.Cleanup(func() { _ = adapter.Handler.Close() })
+	proc := <-exe.Started()
+	adapter.Resize(60, 15)
+	for i := range 40 {
+		proc.Print(fmt.Sprintf("line %02d: some text in the scrollback\r\n", i))
+	}
+	proc.Print("READY")
+	require.Eventually(t, func() bool {
+		w := term.NewStringWriter(60, 15)
+		adapter.Draw(w)
+		_ = w.Flush()
+		return strings.Contains(w.String(), "READY")
+	}, 5*time.Second, 5*time.Millisecond)
+
+	for _, size := range []term.Coordinates{{X: 60, Y: 15}, {X: 1, Y: 1}} {
+		handlertest.RunPointerLeaves(t, adapter, size.X, size.Y)
+	}
+
+	proc.HangUp()
+	require.Eventually(t, func() bool {
+		exit, _ := adapter.Handle(term.Event{Type: term.EventNone})
+		return exit
+	}, 5*time.Second, 5*time.Millisecond)
+	exit, _ := adapter.Handle(term.Event{Type: term.EventMouse, MouseX: -1, MouseY: 3})
+	assert.False(t, exit, "a pointer leaving must not close the dead terminal")
+	assert.True(t, adapter.exit, "a leave must not forget the terminal exited, "+
+		"or Close would try to pool it")
+}

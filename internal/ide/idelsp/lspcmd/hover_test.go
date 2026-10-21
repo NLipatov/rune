@@ -32,6 +32,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	runehandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 func TestHoverFloatingHandle(t *testing.T) {
@@ -129,4 +130,46 @@ func (m *hoverMockLSP) Hover(ctx context.Context, params semanticapi.HoverParams
 		return m.hoverFn(ctx, params)
 	}
 	return nil, nil
+}
+
+func TestHoverFloatingPointerLeaves(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("func (c *Client) Do(req *Request) (*Response, error) — sends an HTTP request. ", 20)
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		f := newHoverFloating(component.NewString(long), &mockWindowManager{})
+		runehandlertest.RunPointerLeaves(t, f, size.w, size.h)
+	}
+}
+
+func TestHoverMarkdownFloatingPointerLeaves(t *testing.T) {
+	t.Parallel()
+	md := "```go\nfunc (c *Client) Do(req *Request) (*Response, error)\n```\n\n" +
+		strings.Repeat("Do sends an HTTP request and returns an HTTP response, following "+
+			"policy (such as [redirects](https://pkg.go.dev/net/http#Client), cookies, auth) "+
+			"as configured on the client. See [`Request`](https://pkg.go.dev/net/http#Request).\n\n", 8)
+	lsp := &hoverMockLSP{mockLSP: &mockLSP{}, hoverFn: func(
+		context.Context, semanticapi.HoverParams,
+	) (*semanticapi.Hover, error) {
+		return &semanticapi.Hover{Contents: semanticapi.MarkupContent{
+			Kind: semanticapi.MarkupKindMarkdown, Value: md,
+		}}, nil
+	}}
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		var floated browserapi.Floating
+		wm := &mockWindowManager{
+			floatingFn: func(f browserapi.Floating, _ browserapi.FloatingConfig) (browserapi.Window, error) {
+				floated = f
+				return &mockWindow{id: 1}, nil
+			},
+		}
+		h := HoverHandler(lsp, wm, &mockNotifications{}, &mockFileSystem{},
+			workspaceapi.URI{}, syncTick, &mockParser{}, DefaultHoverConfig()).(*hoverHandler)
+		require.NoError(t, h.execute(context.Background(), testURI(t, "file:///a.go"), semanticapi.Position{}))
+		require.NotNil(t, floated)
+		runehandlertest.RunPointerLeaves(t, floated, size.w, size.h)
+		for _, off := range []term.Coordinates{{X: -1, Y: 0}, {X: size.w, Y: 0}, {X: 0, Y: -300}} {
+			exit, _ := floated.Handle(term.Event{Type: term.EventMouse, MouseX: off.X, MouseY: off.Y})
+			assert.False(t, exit, "a leave to %+v must not close the hover", off)
+		}
+	}
 }

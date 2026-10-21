@@ -32,6 +32,8 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/handler/repl"
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
+
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 const (
@@ -1332,6 +1334,92 @@ func TestHandlerMouseLeavingKeepsTheSelection(t *testing.T) {
 			got, ok := hd.Selection()
 			assert.True(t, ok)
 			assert.Equal(t, want, got)
+		})
+	}
+}
+
+func TestHandlerPointerLeaves(t *testing.T) {
+	lines := make([]string, 40)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("output line %02d with enough text to wrap the console width", i)
+	}
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		for _, searching := range []bool{false, true} {
+			hd, out := newMouseTestHandler(t, mouseTestWidth, mouseTestHeight, lines)
+			y := rowOf(t, out, mouseTestWidth, 'o')
+			for _, ev := range clickDrag(0, y, 6, y+1) {
+				hd.Handle(ev)
+			}
+			for _, c := range "echo hello" {
+				hd.Handle(term.Event{Type: term.EventKey, Ch: c})
+			}
+			if searching {
+				hd.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'r'})
+				require.True(t, hd.searching)
+			}
+			handlertest.RunPointerLeaves(t, hd, size.w, size.h)
+		}
+	}
+}
+
+func TestHandlerCompletionOverlayPointerLeaves(t *testing.T) {
+	candidates := make([]string, 40)
+	for i := range candidates {
+		candidates[i] = fmt.Sprintf("candidate-%02d", i)
+	}
+	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
+		h := newTestHandlerFull(t, nil, 100, func(r *CommandRegistry) {
+			r.Register("g", "", iterCmd{iter: func() iterator.Iterator[string] {
+				return iterator.FromSlice(candidates)
+			}})
+		})
+		h.Resize(testWidthH, testHeight)
+		feedRunes(h, "g ")
+		h.Handle(term.Event{Type: term.EventKey, Key: term.KeyTab})
+		h.WaitCompletion()
+		drainTicks(h)
+		require.Equal(t, modeCompletion, h.mode)
+		handlertest.RunPointerLeaves(t, h, size.w, size.h)
+		assert.True(t, h.searching, "the pointer must not close the overlay")
+		assert.Equal(t, "g ", h.editBuf.String(), "the pointer must not accept a candidate")
+	}
+}
+
+func TestHandlerPointerLeaveAfterAPressKeepsTheSelectionAndInput(t *testing.T) {
+	const w, h = mouseTestWidth, mouseTestHeight
+	for _, band := range []string{"output", "input"} {
+		t.Run(band, func(t *testing.T) {
+			hd, out := newMouseTestHandler(t, w, h, []string{"alpha bravo"})
+			for _, c := range "echo hello" {
+				hd.Handle(term.Event{Type: term.EventKey, Ch: c})
+			}
+			y := rowOf(t, out, w, 'a')
+			for _, ev := range clickDrag(0, y, 4, y) {
+				hd.Handle(ev)
+			}
+			wantSel, wantOK := hd.Selection()
+			require.True(t, wantOK)
+			wantCursor, _, _ := hd.Cursor()
+			pressY := y
+			if band == "input" {
+				pressY = h - 1
+				wantSel, wantOK = "", false
+			}
+			hd.Handle(mouseEv(1, pressY, term.MouseLeft))
+			if band == "input" {
+				wantCursor, _, _ = hd.Cursor()
+			}
+			for _, off := range []term.Coordinates{
+				{X: -1, Y: pressY}, {X: w, Y: pressY}, {X: 1, Y: -1}, {X: 1, Y: h}, {X: -400, Y: 400},
+			} {
+				hd.Handle(mouseEv(off.X, off.Y, 0))
+				sel, ok := hd.Selection()
+				assert.Equal(t, wantOK, ok, "leave to %+v", off)
+				assert.Equal(t, wantSel, sel, "leave to %+v must keep the selection", off)
+				cursor, _, _ := hd.Cursor()
+				assert.Equal(t, wantCursor, cursor, "leave to %+v must not move the cursor", off)
+				assert.Equal(t, "echo hello", hd.editBuf.String())
+			}
 		})
 	}
 }

@@ -35,6 +35,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/component/asciiart"
 	"unstable.build/rune/internal/component/imageuri/imageuritest"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/text"
 	"unstable.build/rune/internal/workspace"
 )
@@ -407,6 +408,30 @@ func TestViewImageTab(t *testing.T) {
 }
 
 const imageViewTimeout = 5 * time.Second
+
+func TestImageViewHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	open := func(t *testing.T) browserapi.Handler {
+		f := newImageViewFixture(t, "日本語🙂.png", 42, 14, true)
+		f.loader.openFile = workspace.NewMemoryFile(
+			"日本語🙂.png", 1, 0, imageuritest.SamplePNG, new(sync.Mutex))
+		h := f.open(true)
+		settleImageView(f)
+		return h
+	}
+	for _, size := range pointerSizes {
+		handlertest.RunPointerLeaves(t, open(t), size.width, size.height)
+	}
+	h := open(t)
+	settle := func() {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			return !strings.ContainsAny(pointerStateOf(h, 40, 10).Screen, imageViewSpinner)
+		}, imageViewTimeout, time.Millisecond, "the image never loaded")
+	}
+	requirePointerLeavesKeepState(t, h, 40, 10,
+		term.Coordinates{X: 10, Y: 2}, term.Coordinates{X: 16, Y: 4}, settle)
+}
 
 type imageViewStep struct {
 	do       func(*imageViewFixture)

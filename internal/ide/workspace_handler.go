@@ -1320,12 +1320,18 @@ func (h *workspaceManagerHandler) onBarTabClick(barIdx int) bool {
 func (h *workspaceManagerHandler) Handle(ev term.Event) (exit, handled bool) {
 	h.macro.BeginEvent(ev)
 	defer h.macro.EndEvent()
-	if ev.Type == term.EventMouse && h.drawBar() && ev.MouseY >= h.height-h.barSize() {
-		_, handled = h.union.Handle(ev)
-		return
-	}
 	focus := h.focusHandler()
-	exit, handled = focus.Handle(ev)
+	if ev.Type == term.EventMouse && h.drawBar() {
+		// The union must see every motion, not only the bar's, to tell
+		// the workspace or the bar that the pointer left it for the other.
+		h.focusProxy.Target = focus
+		exit, handled = h.union.Handle(ev)
+		if ev.MouseY >= h.height-h.barSize() {
+			return false, handled
+		}
+	} else {
+		exit, handled = focus.Handle(ev)
+	}
 	if !exit {
 		return h.confirmedForceExit, handled || h.confirmedForceExit
 	}

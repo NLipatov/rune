@@ -26,6 +26,7 @@ import (
 	"go.uber.org/goleak"
 	"unstable.build/rune/internal/component/shader"
 	"unstable.build/rune/internal/component/shader/shaderloop"
+	"unstable.build/rune/internal/handler/handlertest"
 )
 
 func newTestShadedTabs(cfg ShadedTabsConfig) *ShadedTabs {
@@ -238,4 +239,20 @@ func TestShadedTabsActiveRectsSkipProgress(t *testing.T) {
 		{Offset: term.Coordinates{X: 2}, Width: 5, Height: 1},
 		{Offset: term.Coordinates{X: 11}, Width: 4, Height: 1},
 	}, s.activeRects())
+}
+
+func TestShadedTabsPointerLeaves(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	for _, size := range [][2]int{{60, 15}, {60, 1}, {1, 1}} {
+		var clicks, iconClicks int
+		s := NewShadedTabs(newPointerTabs(&clicks, &iconClicks), ShadedTabsConfig{
+			Shader:      "pulse",
+			Interrupter: term.NopInterrupter(),
+			Active:      func() []int { return []int{1, 3, 11} },
+		})
+		handlertest.RunPointerLeaves(t, s, size[0], size[1])
+		require.True(t, s.SetRunning(true))
+		handlertest.RunPointerLeaves(t, s, size[0], size[1])
+		require.True(t, s.SetRunning(false))
+	}
 }

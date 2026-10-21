@@ -31,6 +31,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	htmlcomp "unstable.build/rune/internal/component/html"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 const (
@@ -915,4 +916,39 @@ func TestRefresh(t *testing.T) {
 	waitLoaded()
 	v3 := padLines("V3", "", "")
 	assert.Equal(t, v3, handlertest.DrawHandler(h, testWidth, testHeight), "after F5 refresh")
+}
+
+func TestHandlerPointerLeaves(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base := "http://" + r.Host
+		_, _ = fmt.Fprint(w, "<h1>Title</h1>")
+		for i := range 60 {
+			_, _ = fmt.Fprintf(w, `<p>%s <a href="%s/p%d">link %d</a> <a href="#a%d">anchor</a></p>`,
+				strings.Repeat("a long paragraph line ", i%7+1), base, i, i, i)
+		}
+	}))
+	defer srv.Close()
+
+	for _, opts := range [][]Option{nil, {WithNavigationBar(BarTop)}, {WithNavigationBar(BarBottom)}} {
+		for _, size := range [][2]int{{60, 15}, {1, 1}} {
+			h := New(term.NopInterrupter(), mustParseURL(t, srv.URL+"/"), opts...)
+			h.Resize(size[0], size[1])
+			waitFor(t, func() bool { return h.current.State() == htmlcomp.StateLoaded }, 5*time.Second)
+			h.Resize(size[0], size[1])
+			h.ScrollDown(5)
+			loaded, offset := h.current, h.SeekOffset()
+
+			for _, out := range []term.Coordinates{{X: -1, Y: 2}, {X: 2, Y: -40}, {X: 400, Y: 400}} {
+				h.Handle(term.Event{Type: term.EventMouse, MouseX: 1, MouseY: 1})
+				h.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+			}
+			assert.Same(t, loaded, h.current, "a leave does not follow a link")
+			assert.Equal(t, offset, h.SeekOffset(), "a leave does not scroll")
+			_, selected := h.Selection()
+			assert.False(t, selected, "a leave does not select")
+
+			rhandlertest.RunPointerLeaves(t, h, size[0], size[1])
+			require.NoError(t, h.Close())
+		}
+	}
 }

@@ -1105,6 +1105,35 @@ func TestFileExplorerPointerShape(t *testing.T) {
 	}
 }
 
+func TestFileExplorerHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	dirs := map[string][]explorerMockEntry{
+		"/project":     {{name: "src", isDir: true}, {name: "a.go"}, {name: "b.go"}},
+		"/project/src": {{name: "main.go"}},
+	}
+	for _, size := range []term.Coordinates{{X: 100, Y: 30}, {X: 2, Y: 2}} {
+		h, _ := newTestFileExplorerHandler(t, dirs)
+		expandExplorerRowContaining(t, h, "src")
+		handlertest.RunPointerLeaves(t, h, size.X, size.Y)
+	}
+
+	t.Run("a leave opens nothing and moves nothing", func(t *testing.T) {
+		h, host := newTestFileExplorerHandler(t, dirs)
+		expandExplorerRowContaining(t, h, "src")
+		h.Resize(40, 10)
+		tree := h.buf.String()
+		cursor := h.ed.CursorAtScroll()
+		for _, out := range []term.Coordinates{{X: -1, Y: 1}, {X: 40, Y: 1}, {X: 5, Y: -1}, {X: 5, Y: 10}, {X: 500, Y: 500}} {
+			h.Handle(term.Event{Type: term.EventMouse, MouseX: 5, MouseY: 1})
+			h.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+		}
+		require.Empty(t, host.opened)
+		require.Equal(t, tree, h.buf.String())
+		require.Equal(t, cursor, h.ed.CursorAtScroll())
+		require.False(t, h.mouseDown)
+	})
+}
+
 func sendExplorerKeys(t *testing.T, h *fileExplorerHandler, seq string) {
 	t.Helper()
 	keys, err := term.ParseKeys(seq)

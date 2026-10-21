@@ -18,11 +18,13 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
 func TestTabsOnClick(t *testing.T) {
@@ -461,5 +463,33 @@ func TestTabsPointerShape(t *testing.T) {
 			assert.Equal(t, tc.set, set)
 			assert.Equal(t, tc.want, shape)
 		})
+	}
+}
+
+// newPointerTabs returns Tabs with more tabs than fit any test width,
+// every one of them with an icon that takes clicks.
+func newPointerTabs(clicks, iconClicks *int) *Tabs {
+	tabs := NewTabs()
+	for i := range 12 {
+		tabs.Add('A'+rune(i), fmt.Sprintf("tab number %d", i))
+	}
+	tabs.SetFocus(3)
+	tabs.OnClick = func(int) bool { *clicks++; return true }
+	tabs.OnIconClick = func(int) { *iconClicks++ }
+	return tabs
+}
+
+func TestTabsPointerLeaves(t *testing.T) {
+	for _, size := range [][2]int{{60, 15}, {60, 1}, {1, 1}} {
+		var clicks, iconClicks int
+		tabs := newPointerTabs(&clicks, &iconClicks)
+		rhandlertest.RunPointerLeaves(t, tabs, size[0], size[1])
+
+		clicks, iconClicks = 0, 0
+		for _, x := range []int{-1, size[0], 1000} {
+			tabs.Handle(term.Event{Type: term.EventMouse, MouseX: x})
+		}
+		assert.Zero(t, clicks, "a leave is not a click")
+		assert.Zero(t, iconClicks, "a leave is not an icon click")
 	}
 }

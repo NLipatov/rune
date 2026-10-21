@@ -19,6 +19,7 @@ package vte
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/debug"
+	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vteparser"
 	"unstable.build/rune/internal/workspace/workspacetest"
@@ -1826,6 +1828,114 @@ func (p *exitStatusPublisher) sawEventNone() bool {
 }
 
 type discardNotifications struct{}
+
+func TestHandlerPointerLeaves(t *testing.T) {
+	t.Parallel()
+	var scrollback strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&scrollback, "line %02d: some text to select and scroll\r\n", i)
+	}
+	const (
+		mouseAnySgr = "\x1b[?1003h\x1b[?1006h"
+		altScreen   = "\x1b[?1049h\x1b[Halt screen\r\n"
+	)
+	cases := []struct {
+		name   string
+		output string
+		modal  bool
+		viMode bool
+	}{
+		{name: "scrollback", output: scrollback.String()},
+		{name: "mouse reporting", output: scrollback.String() + mouseAnySgr},
+		{name: "alt screen", output: scrollback.String() + altScreen},
+		{name: "alt screen with mouse reporting", output: scrollback.String() + altScreen + mouseAnySgr},
+		{name: "vi mode", output: scrollback.String(), modal: true, viMode: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, size := range []term.Coordinates{{X: 60, Y: 15}, {X: 1, Y: 1}} {
+				h, _ := newLeaveHarness(t, tc.modal, tc.output)
+				if tc.viMode {
+					h.enterViMode(h.comp.CursorAtScroll())
+				}
+				handlertest.RunPointerLeaves(t, h, size.X, size.Y)
+			}
+
+			h, _ := newLeaveHarness(t, tc.modal, tc.output)
+			if tc.viMode {
+				h.enterViMode(h.comp.CursorAtScroll())
+			}
+			h.Resize(60, 15)
+			mouse := func(key term.Key, x, y int) {
+				h.Handle(term.Event{Type: term.EventMouse, Key: key, MouseX: x, MouseY: y})
+			}
+			mouse(term.MouseWheelUp, 5, 5)
+			mouse(term.MouseLeft, 2, 3)
+			mouse(term.MouseLeft, 10, 4)
+			wantSel, wantSelOK := h.Selection()
+			wantPos, wantStyle, wantShow := h.Cursor()
+			wantOffset := h.SeekOffset()
+			for _, out := range []term.Coordinates{{X: -1, Y: 4}, {X: 60, Y: 4}, {X: 10, Y: -1}, {X: 10, Y: 15}, {X: -500, Y: 500}} {
+				exit, _ := h.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+				assert.False(t, exit, "leave to %v", out)
+				sel, selOK := h.Selection()
+				assert.Equal(t, wantSel, sel, "leave to %v changed the selection", out)
+				assert.Equal(t, wantSelOK, selOK, "leave to %v", out)
+				pos, style, show := h.Cursor()
+				assert.Equal(t, wantPos, pos, "leave to %v moved the cursor", out)
+				assert.Equal(t, wantStyle, style, "leave to %v", out)
+				assert.Equal(t, wantShow, show, "leave to %v", out)
+				assert.Equal(t, wantOffset, h.SeekOffset(), "leave to %v scrolled", out)
+			}
+		})
+	}
+}
+
+func TestHandlerLeaveKeepsDeadTerminal(t *testing.T) {
+	t.Parallel()
+	h, proc := newLeaveHarness(t, false, "bye\r\n")
+	h.Resize(20, 5)
+	proc.HangUp()
+	require.Eventually(t, h.exit.Load, 5*time.Second, 5*time.Millisecond)
+
+	for _, out := range []term.Coordinates{{X: -1, Y: 2}, {X: 20, Y: 2}, {X: 3, Y: -1}, {X: 3, Y: 5}} {
+		exit, _ := h.Handle(term.Event{Type: term.EventMouse, MouseX: out.X, MouseY: out.Y})
+		assert.False(t, exit, "a pointer leaving at %v closed the terminal", out)
+	}
+	exit, _ := h.Handle(term.Event{Type: term.EventNone})
+	assert.True(t, exit, "the terminal's own wake-up must still close it")
+}
+
+// newLeaveHarness returns a Handler whose program printed output, once
+// the terminal has drawn it.
+func newLeaveHarness(t *testing.T, modal bool, output string) (*Handler, *workspacetest.Process) {
+	t.Helper()
+	cfg := DefaultConfig()
+	cfg.CommandAndArgs = []string{"sh"}
+	cfg.Modal = modal
+	cfg.WidthHint, cfg.HeightHint = 60, 15
+	exe := workspacetest.NewPtyExecutor()
+	h, err := NewHandler(&exitStatusPublisher{}, discardNotifications{}, exe, exe, &mockTabManager{}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h.Close() })
+	var proc *workspacetest.Process
+	select {
+	case proc = <-exe.Started():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the terminal never started its command")
+	}
+	h.Resize(60, 15)
+	const marker = "READY"
+	proc.Print(output + marker)
+	require.Eventually(t, func() bool {
+		w := term.NewStringWriter(60, 15)
+		h.Draw(w)
+		_ = w.Flush()
+		return strings.Contains(w.String(), marker)
+	}, 5*time.Second, 5*time.Millisecond)
+	return h, proc
+}
 
 func (discardNotifications) Notify(
 	browserapi.NotificationLevel, string, ...any,

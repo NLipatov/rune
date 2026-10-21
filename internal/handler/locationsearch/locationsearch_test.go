@@ -19,6 +19,7 @@ package locationsearch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -42,6 +43,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/handler/finder"
+	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/handler/search"
 	"unstable.build/rune/internal/ide/vctrl/testgit"
 	"unstable.build/rune/internal/workspace"
@@ -860,3 +862,23 @@ func (e schemeExecutor) Signal(pid workspaceapi.Pid, sig syscall.Signal) error {
 }
 
 func (e schemeExecutor) Close() error { return nil }
+
+func TestHandlerPointerLeaves(t *testing.T) {
+	var script strings.Builder
+	for i := range 60 {
+		fmt.Fprintf(&script, "echo main.go:%d:%d\n", i*2+1, i%10+1)
+	}
+	fc := fileContent{
+		"/main.go": strings.Repeat("func someFunctionWithALongName(argument int) error { return nil }\n", 150),
+	}
+	for _, size := range [][2]int{{60, 15}, {1, 1}} {
+		h := newTestHandler(t, script.String(), fc, nil)
+		waitForScan(t, h)
+		h.Handle(term.Event{Type: term.EventKey, Ch: '1'})
+		before, _ := h.Selection()
+		rhandlertest.RunPointerLeaves(t, h, size[0], size[1])
+		after, _ := h.Selection()
+		assert.Equal(t, before, after, "the pointer does not move the focus")
+		require.NoError(t, h.Close())
+	}
+}
