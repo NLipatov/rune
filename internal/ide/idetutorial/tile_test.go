@@ -293,6 +293,86 @@ func TestTileMiddleButtonNamesWhatItDoes(t *testing.T) {
 	assert.Contains(t, footer(), "Skip")
 }
 
+func TestTileFooterButtonsHover(t *testing.T) {
+	t.Parallel()
+	text := term.Attributes{Bg: term.ColorGray}
+	highlight := term.Attributes{Bg: term.ColorRed}
+	hover := term.Attributes{Fg: term.ColorBlack, Bg: term.ColorSilver}
+	clicked := term.Attributes{Fg: term.ColorWhite, Bg: term.ColorPurple}
+	const width, height, footerY = 30, 6, 4
+	move := func(x, y int) term.Event {
+		return term.Event{Type: term.EventMouse, MouseX: x, MouseY: y}
+	}
+
+	newTile := func() (*idetutorial.Tile, *fakeTutorial) {
+		style := framedStyle()
+		style.Prompt = idetutorial.PromptStyle{
+			TextAttr: text, HighlightAttr: highlight, HoverAttr: hover, ClickedAttr: clicked,
+		}
+		tut := &fakeTutorial{}
+		tile := idetutorial.NewTile(tut, style, func() {}, func() {}, func() {})
+		tile.Resize(width, height)
+		return tile, tut
+	}
+	buttons := func(tile *idetutorial.Tile) (back, skip, stop int) {
+		row := strings.Split(handlertest.DrawHandler(tile, width, height), "\n")[footerY]
+		back = strings.Index(row, "Back")
+		skip = strings.Index(row, "Skip")
+		stop = strings.Index(row, "Stop")
+		require.GreaterOrEqual(t, back, 0)
+		require.GreaterOrEqual(t, skip, 0)
+		require.GreaterOrEqual(t, stop, 0)
+		return back, skip, stop
+	}
+	attrAt := func(tile *idetutorial.Tile, x int) term.Attributes {
+		w := term.NewStringWriter(width, height)
+		tile.Draw(w)
+		return w.Cells()[footerY*width+x].Attributes()
+	}
+	tile, _ := newTile()
+	backX, skipX, stopX := buttons(tile)
+
+	cases := []struct {
+		name                     string
+		events                   []term.Event
+		wantBack, wantSkip, want term.Attributes
+	}{
+		{
+			name:     "no button looks chosen before the pointer comes",
+			wantBack: text, wantSkip: text, want: text,
+		},
+		{
+			name:     "the button under the pointer",
+			events:   []term.Event{move(skipX, footerY)},
+			wantBack: text, wantSkip: hover, want: text,
+		},
+		{
+			name:     "the first button under the pointer",
+			events:   []term.Event{move(backX, footerY)},
+			wantBack: hover, wantSkip: text, want: text,
+		},
+		{
+			name: "a pressed button",
+			events: []term.Event{
+				move(stopX, footerY),
+				{Type: term.EventMouse, Key: term.MouseLeft, MouseX: stopX, MouseY: footerY},
+			},
+			wantBack: text, wantSkip: text, want: clicked,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tile, _ := newTile()
+			for _, ev := range tc.events {
+				_, _ = tile.Handle(ev)
+			}
+			assert.Equal(t, tc.wantBack, attrAt(tile, backX), "Back")
+			assert.Equal(t, tc.wantSkip, attrAt(tile, skipX), "Skip")
+			assert.Equal(t, tc.want, attrAt(tile, stopX), "Stop")
+		})
+	}
+}
+
 func TestTileRoutesKeysAndBodyMouseToTheTutorial(t *testing.T) {
 	t.Parallel()
 	tut := &fakeTutorial{handled: true}

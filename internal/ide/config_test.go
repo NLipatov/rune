@@ -283,6 +283,12 @@ browser:
         highlight_attr:
             bg: red
             fg: "#f0f0f0"
+        hover_attr:
+            bg: silver
+            fg: navy
+        clicked_attr:
+            bg: purple
+            fg: white
     window_manager:
         frame: true
         dim: false
@@ -1861,6 +1867,8 @@ func TestConfigSetting(t *testing.T) {
 	expectedPrompt := browser.PromptConfig{
 		TextAttr:      term.Attributes{Fg: term.ColorTeal},
 		HighlightAttr: term.Attributes{Fg: term.GetColor("#f0f0f0"), Bg: term.ColorRed},
+		HoverAttr:     term.Attributes{Fg: term.ColorNavy, Bg: term.ColorSilver},
+		ClickedAttr:   term.Attributes{Fg: term.ColorWhite, Bg: term.ColorPurple},
 		MinWidth:      browser.DefaultConfig().MinWidth,
 	}
 	assert.Equal(t, expectedPrompt, cfg.promptConfig())

@@ -29,6 +29,8 @@ import (
 type PromptStyle struct {
 	TextAttr       term.Attributes
 	HighlightAttr  term.Attributes
+	HoverAttr      term.Attributes
+	ClickedAttr    term.Attributes
 	BackgroundAttr term.Attributes
 }
 

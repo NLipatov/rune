@@ -47,6 +47,8 @@ func DefaultConfig() Config {
 		PromptConfig: PromptConfig{
 			TextAttr:       term.Attributes{},
 			HighlightAttr:  term.Attributes{Bg: term.ColorRed, Fg: term.ColorWhite},
+			HoverAttr:      term.Attributes{Bg: term.ColorSilver, Fg: term.ColorWhite},
+			ClickedAttr:    term.Attributes{Bg: term.ColorFuchsia, Fg: term.ColorWhite},
 			BackgroundAttr: term.Attributes{},
 			MinWidth:       60,
 		},
@@ -166,8 +168,14 @@ func (c TabStatusStyle) BarAttrs(status programstatus.Summary) (name, icon term.
 
 // PromptConfig holds configuration for the browser's Prompt component.
 type PromptConfig struct {
-	TextAttr       term.Attributes
-	HighlightAttr  term.Attributes
+	TextAttr      term.Attributes
+	HighlightAttr term.Attributes
+	// HoverAttr styles the tutorial tile's buttons under the mouse
+	// pointer.
+	HoverAttr term.Attributes
+	// ClickedAttr styles a button from the mouse press until the
+	// release that selects it.
+	ClickedAttr    term.Attributes
 	BackgroundAttr term.Attributes
 	MinWidth       int
 }

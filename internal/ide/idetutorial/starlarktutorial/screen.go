@@ -156,6 +156,8 @@ func (t *Tutorial) openPrompt(r *request) {
 		PromptHandler: ph,
 		OptionAttr:    t.promptStyle.TextAttr,
 		HighlightAttr: t.promptStyle.HighlightAttr,
+		HoverAttr:     t.promptStyle.HoverAttr,
+		ClickedAttr:   t.promptStyle.ClickedAttr,
 	})
 	r.body = handler.NewSpan(&promptBody{Prompt: r.prompt}, component.SpanConfig{
 		PadHorizontal: screenPadHorizontal,

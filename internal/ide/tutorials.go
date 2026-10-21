@@ -266,6 +266,8 @@ func newTutorialPromptStyle(i *IDE) idetutorial.PromptStyle {
 	return idetutorial.PromptStyle{
 		TextAttr:       cfg.TextAttr,
 		HighlightAttr:  cfg.HighlightAttr,
+		HoverAttr:      cfg.HoverAttr,
+		ClickedAttr:    cfg.ClickedAttr,
 		BackgroundAttr: cfg.BackgroundAttr,
 	}
 }

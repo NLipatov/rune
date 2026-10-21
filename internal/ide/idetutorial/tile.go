@@ -123,6 +123,8 @@ func NewTile(tut Tutorial, style TileStyle, onBack, onAdvance, onStop func()) *T
 		}, func() error { return nil }),
 		OptionAttr:    style.Prompt.TextAttr,
 		HighlightAttr: style.Prompt.HighlightAttr,
+		HoverAttr:     style.Prompt.HoverAttr,
+		ClickedAttr:   style.Prompt.ClickedAttr,
 	}
 	t.footer = handler.NewPrompt(t.footerCfg)
 	t.flattenFooter()
@@ -143,9 +145,12 @@ func NewTile(tut Tutorial, style TileStyle, onBack, onAdvance, onStop func()) *T
 
 // flattenFooter undoes the prompt's standing highlight of its first
 // option: the footer's buttons are mouse-only, so no option is the
-// default and none should look like one.
+// default and none should look like one. The pointer on it is another
+// matter: it looks hovered, or pressed.
 func (t *Tile) flattenFooter() {
-	t.footer.SetOptionAttr(0, t.style.Prompt.TextAttr)
+	if t.footer.Hovered() != 0 {
+		t.footer.SetOptionAttr(0, t.style.Prompt.TextAttr)
+	}
 }
 
 // SetFocused marks the tile as the pane holding focus, which the frame
@@ -209,9 +214,7 @@ func (t *Tile) Handle(ev term.Event) (bool, bool) {
 		if ev.MouseX >= t.width-t.inset {
 			return false, false
 		}
-		if ev.Key != term.MouseLeft {
-			defer t.flattenFooter()
-		}
+		defer t.flattenFooter()
 	}
 	_, handled := t.outer.Handle(ev)
 	return false, handled

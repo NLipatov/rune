@@ -1490,6 +1490,7 @@ func (c *Component) Prompt(
 		OptionBindings: bindings,
 		OptionAttr:     c.config.PromptConfig.TextAttr,
 		HighlightAttr:  c.config.PromptConfig.HighlightAttr,
+		ClickedAttr:    c.config.PromptConfig.ClickedAttr,
 	}
 
 	prompt := handler.NewPrompt(promptConfig)

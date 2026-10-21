@@ -1207,6 +1207,79 @@ func TestComponentPromptPointerShape(t *testing.T) {
 	assert.Equal(t, term.PointerDefault, hover(at('P')), "over the message")
 }
 
+func TestComponentPromptHoverMovesHighlight(t *testing.T) {
+	const width, height = 60, 20
+	highlight := browser.DefaultConfig().PromptConfig.HighlightAttr
+	c := browser.NewComponent(browser.DefaultConfig())
+	c.Resize(width, height)
+	selected := -1
+	c.Prompt("Proceed?", []string{"Yes", "No"}, nil, handler.FuncPromptHandler(
+		func(i int, _ string) { selected = i }, func() error { return nil }))
+	draw := func() *term.StringWriter {
+		w := term.NewStringWriter(width, height)
+		c.Draw(w)
+		require.NoError(t, w.Flush())
+		return w
+	}
+	cellOf := func(w *term.StringWriter, ch rune) (term.Coordinates, term.Attributes) {
+		t.Helper()
+		for i, cell := range w.Cells() {
+			if cell.Ch == ch {
+				return term.Coordinates{X: i % width, Y: i / width}, cell.Attributes()
+			}
+		}
+		require.Failf(t, "not drawn", "%q in:\n%s", ch, w.String())
+		return term.Coordinates{}, term.Attributes{}
+	}
+	noPos, _ := cellOf(draw(), 'N')
+
+	c.Handle(term.Event{Type: term.EventMouse, MouseX: noPos.X, MouseY: noPos.Y})
+	w := draw()
+	_, yes := cellOf(w, 'Y')
+	_, no := cellOf(w, 'N')
+	assert.NotEqual(t, highlight, yes, "the highlight leaves the keyboard's choice")
+	assert.Equal(t, highlight, no, "the highlight follows the pointer")
+
+	c.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	assert.Equal(t, 1, selected, "enter selects the hovered option")
+}
+
+func TestComponentPromptClickedAttr(t *testing.T) {
+	const width, height = 60, 20
+	cfg := browser.DefaultConfig()
+	cfg.PromptConfig.ClickedAttr = term.Attributes{Fg: term.ColorWhite, Bg: term.ColorPurple}
+	c := browser.NewComponent(cfg)
+	c.Resize(width, height)
+	selected := -1
+	c.Prompt("Proceed?", []string{"Yes", "No"}, nil, handler.FuncPromptHandler(
+		func(i int, _ string) { selected = i }, func() error { return nil }))
+	noCell := func() (term.Coordinates, term.Attributes) {
+		t.Helper()
+		w := term.NewStringWriter(width, height)
+		c.Draw(w)
+		require.NoError(t, w.Flush())
+		for i, cell := range w.Cells() {
+			if cell.Ch == 'N' {
+				return term.Coordinates{X: i % width, Y: i / width}, cell.Attributes()
+			}
+		}
+		require.Failf(t, "not drawn", "No in:\n%s", w.String())
+		return term.Coordinates{}, term.Attributes{}
+	}
+	pos, _ := noCell()
+	mouse := func(key term.Key) {
+		c.Handle(term.Event{Type: term.EventMouse, Key: key, MouseX: pos.X, MouseY: pos.Y})
+	}
+
+	mouse(term.MouseLeft)
+	_, no := noCell()
+	assert.Equal(t, cfg.PromptConfig.ClickedAttr, no, "a pressed button looks clicked")
+	assert.Equal(t, -1, selected, "the press alone selects nothing")
+
+	mouse(term.MouseRelease)
+	assert.Equal(t, 1, selected, "the release selects the button")
+}
+
 func TestComponentSplitNil(t *testing.T) {
 	t.Run("Split with nil sets a wallpaper", func(t *testing.T) {
 		w := term.NewStringWriter(24, 8)

@@ -836,6 +836,66 @@ tutorial(entry=run)
 	}
 }
 
+func TestChoiceButtonUnderThePointer(t *testing.T) {
+	t.Parallel()
+	text := term.Attributes{Bg: term.ColorGray}
+	hover := term.Attributes{Fg: term.ColorBlack, Bg: term.ColorSilver}
+	clicked := term.Attributes{Fg: term.ColorWhite, Bg: term.ColorPurple}
+	style := idetutorial.PromptStyle{
+		TextAttr:      text,
+		HighlightAttr: term.Attributes{Bg: term.ColorRed},
+		HoverAttr:     hover,
+		ClickedAttr:   clicked,
+	}
+	tut, err := New(
+		"hover", `
+def run():
+    choice(message="pick", options=["Alpha", "Beta"])
+tutorial(entry=run)
+`,
+		style, nil, &fakeNotis{}, nil,
+		nil, nil,
+		term.KeyComb{Ch: ':'},
+		"standard", "", nil,
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	t.Cleanup(tut.Stop)
+	tut.Resize(bodyW, bodyH)
+	resetAndWait(t, tut, time.Second)
+	require.Equal(t, "choice", activeKindFor(tut))
+
+	g := newAttrGridWriter(bodyW, bodyH)
+	tut.Draw(g)
+	x, y := -1, -1
+	for row := range bodyH {
+		if i := strings.Index(g.rowRunes(row), "Beta"); i >= 0 {
+			x, y = i, row
+			break
+		}
+	}
+	require.GreaterOrEqual(t, y, 0, "the options must be drawn")
+	beta := func() term.Attributes {
+		g := newAttrGridWriter(bodyW, bodyH)
+		tut.Draw(g)
+		return g.rowAttrs(y)[x]
+	}
+	move := func(x, y int) {
+		_, _ = tut.Handle(term.Event{Type: term.EventMouse, MouseX: x, MouseY: y})
+	}
+
+	require.Equal(t, text, beta())
+	move(x, y)
+	assert.Equal(t, hover, beta(), "the button under the pointer")
+	move(0, 0)
+	assert.Equal(t, text, beta(), "the pointer moved off it")
+	move(x, y)
+	_, _ = tut.Handle(term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseX: x, MouseY: y})
+	assert.Equal(t, clicked, beta(), "the button pressed until the release selects it")
+}
+
 func TestChoiceOnSelectResolvesResult(t *testing.T) {
 	t.Parallel()
 	src := `

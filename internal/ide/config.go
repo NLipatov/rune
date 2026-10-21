@@ -1839,6 +1839,20 @@ func (c ideConfig) promptHighlightAttr() term.Attributes {
 	)
 }
 
+func (c ideConfig) promptHoverAttr() term.Attributes {
+	return c.getCfgAttr(
+		"hover_attr", browser.DefaultConfig().HoverAttr,
+		"prompt", c.prompt,
+	)
+}
+
+func (c ideConfig) promptClickedAttr() term.Attributes {
+	return c.getCfgAttr(
+		"clicked_attr", browser.DefaultConfig().ClickedAttr,
+		"prompt", c.prompt,
+	)
+}
+
 func (c ideConfig) promptBackgroundAttr() term.Attributes {
 	return c.getCfgAttr(
 		"background_attr", browser.DefaultConfig().BackgroundAttr,
@@ -2035,6 +2049,8 @@ func (c ideConfig) promptConfig() browser.PromptConfig {
 	ret := browser.DefaultConfig().PromptConfig
 	ret.TextAttr = c.promptTextAttr()
 	ret.HighlightAttr = c.promptHighlightAttr()
+	ret.HoverAttr = c.promptHoverAttr()
+	ret.ClickedAttr = c.promptClickedAttr()
 	ret.BackgroundAttr = c.promptBackgroundAttr()
 	return ret
 }
