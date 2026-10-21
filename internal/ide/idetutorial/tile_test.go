@@ -352,10 +352,39 @@ func TestTileFooterButtonsHover(t *testing.T) {
 			wantBack: hover, wantSkip: text, want: text,
 		},
 		{
+			name:     "the pointer moves on to the lesson",
+			events:   []term.Event{move(skipX, footerY), move(skipX, 2)},
+			wantBack: text, wantSkip: text, want: text,
+		},
+		{
 			name: "a pressed button",
 			events: []term.Event{
 				move(stopX, footerY),
 				{Type: term.EventMouse, Key: term.MouseLeft, MouseX: stopX, MouseY: footerY},
+			},
+			wantBack: text, wantSkip: text, want: clicked,
+		},
+		{
+			name:     "the pointer moves on to the frame below",
+			events:   []term.Event{move(skipX, footerY), move(skipX, height-1)},
+			wantBack: text, wantSkip: text, want: text,
+		},
+		{
+			name:     "the pointer moves off the tile to the left",
+			events:   []term.Event{move(backX, footerY), move(-3, footerY)},
+			wantBack: text, wantSkip: text, want: text,
+		},
+		{
+			name:     "the pointer moves off the tile above",
+			events:   []term.Event{move(backX, footerY), move(backX, -1)},
+			wantBack: text, wantSkip: text, want: text,
+		},
+		{
+			name: "a press dragged off the tile stays pressed",
+			events: []term.Event{
+				move(stopX, footerY),
+				{Type: term.EventMouse, Key: term.MouseLeft, MouseX: stopX, MouseY: footerY},
+				{Type: term.EventMouse, Key: term.MouseLeft, MouseX: stopX, MouseY: height - 1},
 			},
 			wantBack: text, wantSkip: text, want: clicked,
 		},
@@ -371,6 +400,27 @@ func TestTileFooterButtonsHover(t *testing.T) {
 			assert.Equal(t, tc.want, attrAt(tile, stopX), "Stop")
 		})
 	}
+
+	t.Run("the pointer moves into the reserved inset", func(t *testing.T) {
+		tile, _ := newTile()
+		tile.SetRightInset(4)
+		_, _, stop := buttons(tile)
+		_, _ = tile.Handle(move(stop, footerY))
+		require.Equal(t, hover, attrAt(tile, stop))
+		_, _ = tile.Handle(move(width-2, footerY))
+		assert.Equal(t, text, attrAt(tile, stop))
+	})
+
+	t.Run("the lesson is told the pointer left it for the footer", func(t *testing.T) {
+		tile, tut := newTile()
+		_, _ = tile.Handle(move(skipX, 2))
+		_, _ = tile.Handle(move(skipX, footerY))
+		require.Len(t, tut.events, 2)
+		leave := tut.events[1]
+		assert.Equal(t, term.EventMouse, leave.Type)
+		assert.Zero(t, leave.Key, "a leave is a motion")
+		assert.GreaterOrEqual(t, leave.MouseY, tut.height, "below the lesson")
+	})
 }
 
 func TestTileRoutesKeysAndBodyMouseToTheTutorial(t *testing.T) {
@@ -391,11 +441,13 @@ func TestTileRoutesKeysAndBodyMouseToTheTutorial(t *testing.T) {
 	footer := term.Event{Type: term.EventMouse, Key: term.MouseWheelDown, MouseX: 3, MouseY: 4}
 	_, _ = tile.Handle(footer)
 
-	require.Len(t, tut.events, 2, "footer events must not reach the body")
+	require.Len(t, tut.events, 3)
 	assert.Equal(t, key, tut.events[0])
 	assert.Equal(t, term.Event{
 		Type: term.EventMouse, Key: term.MouseWheelDown, MouseX: 2, MouseY: 1,
 	}, tut.events[1], "body mouse events are translated past the frame")
+	assert.Zero(t, tut.events[2].Key,
+		"footer events must not reach the body: it is only told the pointer left")
 }
 
 func TestTileDelegatesCursorAndSelection(t *testing.T) {

@@ -891,6 +891,13 @@ tutorial(entry=run)
 	assert.Equal(t, hover, beta(), "the button under the pointer")
 	move(0, 0)
 	assert.Equal(t, text, beta(), "the pointer moved off it")
+	for _, off := range []term.Coordinates{
+		{X: -1, Y: y}, {X: x, Y: -1}, {X: bodyW, Y: y}, {X: x, Y: bodyH},
+	} {
+		move(x, y)
+		move(off.X, off.Y)
+		assert.Equal(t, text, beta(), "the pointer left the lesson for %+v", off)
+	}
 	move(x, y)
 	_, _ = tut.Handle(term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseX: x, MouseY: y})
 	assert.Equal(t, clicked, beta(), "the button pressed until the release selects it")

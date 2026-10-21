@@ -1390,7 +1390,7 @@ func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
 // sidebar under the wheel, and styles the program under the mouse once
 // it is done.
 func (v *statusView) handleMouse(ev term.Event) bool {
-	inSidebar := ev.MouseX < v.sidebarWidth() && ev.MouseY >= 0
+	inSidebar := ev.MouseX >= 0 && ev.MouseX < v.sidebarWidth() && ev.MouseY >= 0
 	handled := true
 	switch ev.Key {
 	case 0, term.MouseLeft:

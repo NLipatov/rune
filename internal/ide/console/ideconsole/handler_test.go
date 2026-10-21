@@ -1309,6 +1309,33 @@ func TestHandlerMouseWheelDoesNotSelect(t *testing.T) {
 	assert.False(t, ok, "wheel scroll must not create a selection")
 }
 
+func TestHandlerMouseLeavingKeepsTheSelection(t *testing.T) {
+	const w, h = mouseTestWidth, mouseTestHeight
+	for _, leave := range []struct {
+		name string
+		x, y func(row int) int
+	}{
+		{"below", func(int) int { return 2 }, func(int) int { return h }},
+		{"above", func(int) int { return 2 }, func(int) int { return -1 }},
+		{"left", func(int) int { return -1 }, func(row int) int { return row }},
+		{"right", func(int) int { return w }, func(row int) int { return row }},
+	} {
+		t.Run(leave.name, func(t *testing.T) {
+			hd, out := newMouseTestHandler(t, w, h, []string{"alpha bravo"})
+			y := rowOf(t, out, w, 'a')
+			for _, ev := range clickDrag(0, y, 4, y) {
+				hd.Handle(ev)
+			}
+			want, ok := hd.Selection()
+			require.True(t, ok)
+			hd.Handle(mouseEv(leave.x(y), leave.y(y), 0))
+			got, ok := hd.Selection()
+			assert.True(t, ok)
+			assert.Equal(t, want, got)
+		})
+	}
+}
+
 func TestHandlerMousePointerOverTheOutput(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -877,6 +878,7 @@ func TestWindowManagerMouseDrag(t *testing.T) {
 			expect: []dispatch{
 				to("L", term.MouseLeft, 1, 1),
 				to("L", term.MouseRelease, 1, 1),
+				to("L", 0, 14, 1),
 				to("R", term.MouseLeft, 2, 1),
 				to("R", term.MouseRelease, 2, 1),
 			},
@@ -897,6 +899,7 @@ func TestWindowManagerMouseDrag(t *testing.T) {
 				to("L", term.MouseLeft, 1, 1),
 				to("L", term.MouseLeft, 9, 1),
 				to("L", term.MouseRelease, 9, 1),
+				to("L", 0, 19, 3),
 				to("R", term.MouseLeft, 7, 3),
 			},
 		},
@@ -994,6 +997,126 @@ func TestWindowManagerMouseUnderFocusedFloat(t *testing.T) {
 
 	wm.Handle(term.Event{Type: term.EventMouse, Key: term.MouseWheelUp, MouseX: 1, MouseY: 1})
 	assert.Equal(t, []string{"F"}, seen)
+}
+
+func TestWindowManagerPointerLeaves(t *testing.T) {
+	const width, height = 20, 6
+	type setup struct {
+		wm       *WindowManager
+		windows  map[string]Window
+		got      *[]dispatch
+		mouse    func(ev mouseEvent)
+		frameOff int
+	}
+	newSetup := func(t *testing.T, frame bool) setup {
+		wm, handlers, windows := vsplitLayout("L", "R")(t, width, height, frame)
+		fh := handler.NewTestHandler()
+		handlers["F"] = fh
+		windows["F"] = wm.FloatingWindow(handler.StaticFloating(fh, 2, 2), component.FloatingConfig{})
+		wm.SetFocus(windows["L"])
+		got := new([]dispatch)
+		for name, h := range handlers {
+			h.HandleOverride = func(ev term.Event) (bool, bool) {
+				if ev.Type == term.EventMouse {
+					*got = append(*got, to(name, ev.Key, ev.MouseX, ev.MouseY))
+				}
+				return false, true
+			}
+		}
+		s := setup{wm: wm, windows: windows, got: got}
+		if frame {
+			s.frameOff = 1
+		}
+		s.mouse = func(ev mouseEvent) {
+			wm.Handle(term.Event{Type: term.EventMouse, Key: ev.key, MouseX: ev.x, MouseY: ev.y})
+		}
+		return s
+	}
+	// leave is what name's window is sent when the pointer leaves it for x, y.
+	leave := func(s setup, name string, x, y int) dispatch {
+		pos := s.windows[name].Position()
+		return to(name, 0, x-pos.X-s.frameOff, y-pos.Y-s.frameOff)
+	}
+
+	for _, frame := range []bool{false, true} {
+		t.Run(fmt.Sprintf("frame=%t", frame), func(t *testing.T) {
+			t.Run("onto another window", func(t *testing.T) {
+				s := newSetup(t, frame)
+				require.NoError(t, s.windows["F"].Close())
+				s.mouse(hover(2, 2))
+				*s.got = nil
+				s.mouse(hover(15, 2))
+				require.Len(t, *s.got, 2)
+				assert.Equal(t, leave(s, "L", 15, 2), (*s.got)[0], "L is told first")
+				assert.Equal(t, "R", (*s.got)[1].owner)
+				assert.GreaterOrEqual(t, (*s.got)[0].localX, s.windows["L"].Width()-2*s.frameOff,
+					"the leave lands outside L")
+			})
+			t.Run("within a window", func(t *testing.T) {
+				s := newSetup(t, frame)
+				require.NoError(t, s.windows["F"].Close())
+				s.mouse(hover(2, 2))
+				s.mouse(hover(3, 3))
+				assert.Equal(t, []string{"L", "L"}, owners(*s.got))
+			})
+			t.Run("off every window", func(t *testing.T) {
+				s := newSetup(t, frame)
+				require.NoError(t, s.windows["F"].Close())
+				s.mouse(hover(15, 2))
+				*s.got = nil
+				s.mouse(hover(width+3, 2))
+				s.mouse(hover(width+4, 2))
+				assert.Equal(t, []dispatch{leave(s, "R", width+3, 2)}, *s.got)
+			})
+			t.Run("past a focused float", func(t *testing.T) {
+				s := newSetup(t, frame)
+				s.wm.SetFocus(s.windows["F"])
+				fpos := s.windows["F"].Position()
+				fx, fy := fpos.X+s.frameOff, fpos.Y+s.frameOff
+				s.mouse(hover(fx, fy))
+				require.Equal(t, []string{"F"}, owners(*s.got))
+				*s.got = nil
+				s.mouse(hover(15, height-1))
+				s.mouse(hover(16, height-1))
+				assert.Equal(t, []dispatch{leave(s, "F", 15, height-1)}, *s.got,
+					"the float is told, the tile it keeps the hover from is not")
+				*s.got = nil
+				s.mouse(hover(fx, fy))
+				assert.Equal(t, []string{"F"}, owners(*s.got))
+			})
+			t.Run("not while a drag is held", func(t *testing.T) {
+				s := newSetup(t, frame)
+				require.NoError(t, s.windows["F"].Close())
+				s.mouse(press(2, 2))
+				s.mouse(drag(15, 2))
+				s.mouse(release(15, 2))
+				assert.Equal(t, []string{"L", "L", "L"}, owners(*s.got),
+					"the drag and its release stay with L")
+				*s.got = nil
+				s.mouse(hover(15, 2))
+				require.Len(t, *s.got, 2)
+				assert.Equal(t, leave(s, "L", 15, 2), (*s.got)[0])
+				assert.Equal(t, "R", (*s.got)[1].owner)
+			})
+			t.Run("not to a closed window", func(t *testing.T) {
+				s := newSetup(t, frame)
+				require.NoError(t, s.windows["F"].Close())
+				s.mouse(hover(15, 2))
+				require.NoError(t, s.windows["R"].Close())
+				*s.got = nil
+				require.NotPanics(t, func() { s.mouse(hover(2, 2)) })
+				assert.Equal(t, []string{"L"}, owners(*s.got))
+			})
+		})
+	}
+}
+
+func owners(ds []dispatch) []string {
+	ret := make([]string, len(ds))
+	for i, d := range ds {
+		ret[i] = d.owner
+	}
+	return ret
 }
 
 func TestWindowManagerMouseExitFromUnfocusedWindow(t *testing.T) {
@@ -1924,6 +2047,12 @@ func runDragCase(t *testing.T, tc dragCase) {
 	actual := make([]dispatch, 0, len(tc.events))
 	si := 0
 	for _, ev := range tc.events {
+		// The window the pointer leaves for ev's is told first.
+		for ev.key != 0 && si < len(seen) && seen[si].ev.Key == 0 {
+			s := seen[si]
+			actual = append(actual, to(s.owner, 0, s.ev.MouseX, s.ev.MouseY))
+			si++
+		}
 		if si < len(seen) && eventMatchesIntent(ev, seen[si].ev) {
 			s := seen[si]
 			actual = append(actual, dispatch{

@@ -63,6 +63,9 @@ type tutorialRunner struct {
 	// mouseDown pins a press that landed on the tile to it until the
 	// release, so a drag that leaves the tile still ends there.
 	mouseDown bool
+	// pointerOnTile reports that the tile was sent the last mouse
+	// event, so it is told the pointer left once one goes elsewhere.
+	pointerOnTile bool
 
 	width, height int
 	// inset is the column reserved along the right edge for a UI
@@ -156,6 +159,7 @@ func (r *tutorialRunner) clearActive() {
 	r.activeName = ""
 	r.stopRequested = false
 	r.mouseDown = false
+	r.pointerOnTile = false
 	r.active.Store(false)
 	r.Handler.Resize(r.width, r.height)
 	if r.rootInset != nil {
@@ -300,9 +304,11 @@ func (p *tilePane) Draw(w term.Writer) {
 }
 
 // Handle satisfies tui.Handler. Only what lands on the tile's own
-// rows is the tile's; the padding belongs to nothing.
+// rows is the tile's; the padding belongs to nothing. A motion over it
+// still reaches the tile, as one off it, which tells the tile the
+// pointer left.
 func (p *tilePane) Handle(ev term.Event) (bool, bool) {
-	if ev.Type == term.EventMouse {
+	if ev.Type == term.EventMouse && ev.Key != 0 {
 		top := p.v.Position().Y
 		if ev.MouseY < top || ev.MouseY >= top+p.v.Height() {
 			return false, false
@@ -446,11 +452,26 @@ func (r *tutorialRunner) handle(ev term.Event) (bool, bool) {
 		r.mouseDown = false
 	}
 	if !toTile {
+		r.leaveTile(term.Coordinates{X: ev.MouseX, Y: ev.MouseY})
 		return r.Handler.Handle(ev)
 	}
+	r.pointerOnTile = true
 	ev.MouseX = max(ev.MouseX-r.tileColumn(), 0)
 	_, handled := r.pane.Handle(ev)
 	return false, handled
+}
+
+// leaveTile sends the tile a motion at pos, on the screen, if the tile
+// had the pointer, so it drops whatever hover it shows. No press is
+// pinned to the tile then, so the motion cannot cut one short.
+func (r *tutorialRunner) leaveTile(pos term.Coordinates) {
+	if !r.pointerOnTile {
+		return
+	}
+	r.pointerOnTile = false
+	_, _ = r.pane.Handle(term.Event{
+		Type: term.EventMouse, MouseX: pos.X - r.tileColumn(), MouseY: pos.Y,
+	})
 }
 
 // answersPrompt reports whether ev is one of the keys the question on

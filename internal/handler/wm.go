@@ -111,6 +111,10 @@ type WindowManager struct {
 	winDragMoved             bool
 	winBarPressID            uint64
 	winBarPressTime          time.Time
+	// pointerWin is the window whose content last got a mouse event,
+	// the zero Window for none. It is told the pointer left once the
+	// pointer's events go elsewhere.
+	pointerWin component.Window
 	// defAttr holds the live theme default attributes so the grayscale
 	// dim writer can resolve a ColorDefault foreground before graying it.
 	defAttr term.Attributes
@@ -211,8 +215,18 @@ func (wm *WindowManager) Handle(ev term.Event) (exit bool, handled bool) {
 	// reaches the press window instead of being re-routed by position.
 	var endDragAfter bool
 	target := wm.focus
+	mousePos := term.Coordinates{X: ev.MouseX, Y: ev.MouseY}
+	trackPointer := ev.Type == term.EventMouse && (ev.Key == 0 ||
+		wm.winDrag == 0 && !wm.prevMouseLeftDrag && !wm.prevMouseScrollBarDrag)
+	pointerDispatched := false
+	if trackPointer {
+		defer func() {
+			if !pointerDispatched {
+				wm.pointerTo(component.Window{}, mousePos)
+			}
+		}()
+	}
 	if ev.Type == term.EventMouse {
-		mousePos := term.Coordinates{X: ev.MouseX, Y: ev.MouseY}
 		// The cancel hook may close windows, so nothing may be
 		// resolved from the layout before it runs.
 		if wm.winDrag != 0 && wm.winDragWin.Closed() {
@@ -360,6 +374,10 @@ func (wm *WindowManager) Handle(ev term.Event) (exit bool, handled bool) {
 	var hexit bool
 	focused := target == wm.focus
 	size := wm.comp.SizeTiles()
+	if trackPointer {
+		wm.pointerTo(target.Window, mousePos)
+		pointerDispatched = true
+	}
 	hexit, handled = target.Content().Handle(ev)
 	if endDragAfter {
 		wm.prevMouseLeftDrag = false
@@ -406,6 +424,26 @@ func (wm *WindowManager) Handle(ev term.Event) (exit bool, handled bool) {
 	}
 
 	return
+}
+
+// pointerTo records that the pointer at pos is over win, the zero
+// Window for none, and sends the window it was over before a motion at
+// pos, outside it, so it drops whatever hover it shows. The motion
+// carries no term.Pointer, so the shape set by win stands.
+func (wm *WindowManager) pointerTo(win component.Window, pos term.Coordinates) {
+	prev := wm.pointerWin
+	wm.pointerWin = win
+	if prev == win || prev.Closed() {
+		return
+	}
+	offset := prev.Position()
+	if wm.config.Frame {
+		offset = term.CoordinatesSum(offset, term.Coordinates{X: 1, Y: 1})
+	}
+	pos = term.CoordinatesDiff(pos, offset)
+	_, _ = wm.newNode(prev).Content().Handle(term.Event{
+		Type: term.EventMouse, MouseX: pos.X, MouseY: pos.Y,
+	})
 }
 
 // SplitVertical creates a new vertical split over the tile currently in focus.

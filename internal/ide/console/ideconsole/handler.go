@@ -661,6 +661,12 @@ func (h *Handler) handleMouse(ev term.Event, outH int) (exit, handled bool) {
 		}
 		return h.handleEditMouse(ev)
 	}
+	// A motion outside the console is how a parent says the pointer
+	// left it, which must not move the selection to the other band.
+	if ev.Key == 0 && (ev.MouseX < 0 || ev.MouseY < 0 ||
+		ev.MouseX >= h.width || ev.MouseY >= h.height) {
+		return false, false
+	}
 	if ev.MouseY >= outH {
 		h.mouseDelegate.ClearSelection()
 		if ev.Key == term.MouseLeft {

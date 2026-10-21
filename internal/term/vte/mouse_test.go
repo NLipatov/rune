@@ -164,6 +164,20 @@ func TestMouseDriverReport(t *testing.T) {
 				{mouseEv(0, 4, 2), "", false},
 			},
 		},
+		{
+			// A parent tells the terminal the pointer left it with a
+			// motion past its edges, which a real terminal never reports.
+			name:  "motion outside the screen",
+			modes: []vteparser.PrivateMode{anyEvent, sgr},
+			steps: []mouseStep{
+				{mouseEv(0, 4, 2), "\x1b[<35;5;3M", true},
+				{mouseEv(0, -3, 2), "", true},
+				{mouseEv(0, 4, -1), "", true},
+				{mouseEv(0, 300, 2), "", true},
+				{mouseEv(0, 4, 300), "", true},
+				{mouseEv(0, 4, 2), "\x1b[<35;5;3M", true},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -315,6 +315,16 @@ func (s *dialogueHandler) Handle(ev term.Event) (exit, handled bool) {
 				s.toolCallCanceled = false
 			}
 		}
+		if ev.Key == 0 && (ev.MouseX < 0 || ev.MouseY < 0 ||
+			ev.MouseX >= s.grid.Width() || ev.MouseY >= s.grid.Height()) {
+			// A motion outside the chat is how a parent says the pointer
+			// left it, which takes the hovers off but must not move focus
+			// between the input and the messages.
+			off := term.Coordinates{X: -1, Y: -1}
+			chips := s.comp.HoverSentAttachment(off)
+			code := s.comp.hoverCodeCopy(off)
+			return false, chips || code
+		}
 		pos := s.comp.InputPosition()
 		// A held drag that began in the messages area keeps selecting even
 		// over the input box: route it (and its terminating release) to the

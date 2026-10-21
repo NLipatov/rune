@@ -1513,6 +1513,10 @@ func TestStatusViewMouse(t *testing.T) {
 	assert.Equal(t, a, v.sel, "hovering selects nothing")
 	_, _ = v.Handle(term.Event{Type: term.EventMouse, MouseX: 30, MouseY: 6})
 	assert.Zero(t, nameAttrs(6).Attrs&term.AttrBold, "off the sidebar, nothing is bold")
+	_, _ = v.Handle(term.Event{Type: term.EventMouse, MouseX: 5, MouseY: 6})
+	require.NotZero(t, nameAttrs(6).Attrs&term.AttrBold)
+	_, _ = v.Handle(term.Event{Type: term.EventMouse, MouseX: -1, MouseY: 6})
+	assert.Zero(t, nameAttrs(6).Attrs&term.AttrBold, "left of the view, nothing is bold")
 
 	store.updateDetached(ws, statusStoreTestURI(t, "file:///c"), func(r *programstatus.Store) {
 		r.Apply(detachedTestReport(programstatus.Done, ""))

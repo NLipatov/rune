@@ -341,7 +341,8 @@ func TestTutorialRunnerMouseFocusesAndBlursTheTile(t *testing.T) {
 	assert.False(t, r.tileFocused(), "a click elsewhere blurs it")
 	rows = drawRunner(t, r, 120, 30)
 	assert.Equal(t, "│", string([]rune(rows[15])[x]))
-	assert.Len(t, tut.events, 2, "and does not reach it")
+	require.Len(t, tut.events, 3, "and does not reach it")
+	assert.Zero(t, tut.events[2].Key, "the lesson is only told the pointer left")
 
 	// A drag that starts on the tile ends there too.
 	_, _ = r.Handle(term.Event{
@@ -350,8 +351,56 @@ func TestTutorialRunnerMouseFocusesAndBlursTheTile(t *testing.T) {
 	_, _ = r.Handle(term.Event{
 		Type: term.EventMouse, Key: term.MouseRelease, MouseX: 10, MouseY: top + 3,
 	})
-	assert.Len(t, tut.events, 4)
-	assert.Equal(t, term.MouseRelease, tut.events[3].Key)
+	assert.Len(t, tut.events, 5)
+	assert.Equal(t, term.MouseRelease, tut.events[4].Key)
+}
+
+func TestTutorialRunnerTellsTheTileThePointerLeft(t *testing.T) {
+	t.Parallel()
+	tut := &tutStub{}
+	r, _ := newTestRunner(t, map[string]idetutorial.Tutorial{"basics": tut})
+	startTutorial(t, r, "basics")
+	top, _ := r.Handler.(*ex).windowRows()
+	require.Positive(t, top, "the tile is padded to the windows' rows")
+	tileX := 120 - tileColumn(120) + 5
+	move := func(x, y int) {
+		_, _ = r.Handle(term.Event{Type: term.EventMouse, MouseX: x, MouseY: y})
+	}
+
+	cases := []struct {
+		name string
+		x, y int
+	}{
+		{name: "into the workspaces", x: 10, y: top + 3},
+		{name: "onto the padding above the tile", x: tileX, y: top - 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			move(tileX, top+3)
+			tut.events = nil
+			move(tc.x, tc.y)
+			move(tc.x, tc.y)
+			require.Len(t, tut.events, 1, "the lesson is told once")
+			leave := tut.events[0]
+			assert.Zero(t, leave.Key, "a leave is a motion")
+			assert.False(t, leave.MouseX >= 0 && leave.MouseX < tut.width &&
+				leave.MouseY >= 0 && leave.MouseY < tut.height,
+				"off the lesson: %+v", leave)
+		})
+	}
+
+	t.Run("not while a press on the tile is dragged off it", func(t *testing.T) {
+		move(tileX, top+3)
+		tut.events = nil
+		_, _ = r.Handle(term.Event{
+			Type: term.EventMouse, Key: term.MouseLeft, MouseX: tileX, MouseY: top + 3,
+		})
+		_, _ = r.Handle(term.Event{
+			Type: term.EventMouse, Key: term.MouseLeft, MouseX: 10, MouseY: top + 3,
+		})
+		require.Len(t, tut.events, 2)
+		assert.Equal(t, term.MouseLeft, tut.events[1].Key, "the drag stays the tile's")
+	})
 }
 
 func TestTutorialRunnerKeysAlwaysReachTheWorkspace(t *testing.T) {

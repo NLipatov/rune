@@ -433,6 +433,13 @@ func (t *Component) Height() int {
 	return t.parserHandler.sync.buf.Rows()
 }
 
+// onScreen reports whether pos is one of the cells the program draws.
+func (t *Component) onScreen(pos term.Coordinates) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return pos.X >= 0 && pos.Y >= 0 && pos.X < t.width && pos.Y < t.height
+}
+
 // MaxWidth returns the maximum width of the underlying terminal buffer in columns.
 func (t *Component) MaxWidth() int {
 	t.mu.Lock()

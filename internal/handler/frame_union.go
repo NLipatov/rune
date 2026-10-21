@@ -26,7 +26,9 @@ import (
 
 // FrameUnion wraps a component.FrameUnion to satisfy tui.Handler by
 // dispatching mouse events to FrameUnion nodes and returning the
-// correct main Cursor offset.
+// correct main Cursor offset. When the pointer moves off a member, the
+// member is sent a motion at the pointer's position, outside it, so it
+// drops whatever hover it shows; not while a left press is held.
 //
 // See component.FrameUnion for more details.
 type FrameUnion struct {
@@ -41,6 +43,8 @@ type FrameUnion struct {
 	leftHeld        bool
 	pressedCaptures bool
 	pressed         component.Virtual[tui.Component]
+	// hovered is the member the pointer was last over, nil for none.
+	hovered tui.Component
 }
 
 // NewFrameUnion allocates storage for a new FrameUnion and initializes it.
@@ -140,7 +144,8 @@ func (u *FrameUnion) Handle(ev term.Event) (exit, handled bool) {
 	}
 
 	c, ok := u.FrameUnion.ComponentAt(term.Coordinates{X: ev.MouseX, Y: ev.MouseY})
-	dragging := u.leftHeld && (ev.Key == term.MouseLeft || ev.Key == term.MouseRelease)
+	held := u.leftHeld
+	dragging := held && (ev.Key == term.MouseLeft || ev.Key == term.MouseRelease)
 	switch ev.Key {
 	case term.MouseLeft:
 		if !u.leftHeld {
@@ -152,6 +157,15 @@ func (u *FrameUnion) Handle(ev term.Event) (exit, handled bool) {
 		// Hovering means no button is held, so a release that never
 		// reached this union cannot hold on to the next press.
 		u.leftHeld = false
+	}
+	// A leave mid-gesture would end the press the member it went to
+	// is tracking; a hover means the gesture is over.
+	if !held || ev.Key == 0 {
+		var next tui.Component
+		if ok {
+			next = c.C
+		}
+		u.pointerTo(next, term.Coordinates{X: ev.MouseX, Y: ev.MouseY})
 	}
 	if dragging {
 		if u.pressedCaptures {
@@ -176,6 +190,24 @@ func (u *FrameUnion) Handle(ev term.Event) (exit, handled bool) {
 		ev.MouseY = 0
 	}
 	return handler.Handle(ev)
+}
+
+// pointerTo records that the pointer at pos is over member next, nil
+// for none, and tells the member it was over before that the pointer
+// left. The motion carries no term.Pointer, so the shape set by next
+// stands.
+func (u *FrameUnion) pointerTo(next tui.Component, pos term.Coordinates) {
+	prev := u.hovered
+	u.hovered = next
+	if prev == nil || prev == next {
+		return
+	}
+	m, ok := u.FrameUnion.Member(prev)
+	if !ok {
+		return
+	}
+	pos = term.CoordinatesDiff(pos, m.Position())
+	_, _ = m.C.(tui.Handler).Handle(term.Event{Type: term.EventMouse, MouseX: pos.X, MouseY: pos.Y})
 }
 
 func (u *FrameUnion) captures(c tui.Component) bool {

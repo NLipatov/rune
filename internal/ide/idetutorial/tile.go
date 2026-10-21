@@ -207,11 +207,13 @@ func (t *Tile) syncFooter() {
 }
 
 // Handle routes mouse events to whatever they landed on, the footer's
-// buttons included, and every other event to the tutorial. exit is
-// always false: the tile is closed by the host, never by its content.
+// buttons included, and every other event to the tutorial. A motion
+// off the lesson and the footer, the reserved inset included, tells
+// them the pointer left. exit is always false: the tile is closed by
+// the host, never by its content.
 func (t *Tile) Handle(ev term.Event) (bool, bool) {
 	if ev.Type == term.EventMouse {
-		if ev.MouseX >= t.width-t.inset {
+		if ev.Key != 0 && ev.MouseX >= t.width-t.inset {
 			return false, false
 		}
 		defer t.flattenFooter()

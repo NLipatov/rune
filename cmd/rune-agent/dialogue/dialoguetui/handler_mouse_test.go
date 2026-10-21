@@ -918,6 +918,26 @@ func TestHandlerMouseSelection(t *testing.T) {
 			wantSel: "Run:\n\n\nls\n\n\nDone.",
 			wantOK:  true,
 		},
+		{
+			desc: "no-pad: the pointer leaving below keeps the selection",
+			cfg:  noPad,
+			setup: func(c *Component) {
+				c.AddReceiveMessage(mdContent)
+			},
+			events:  append(tripleClick(5, 4), mouseEv(5, height, 0)),
+			wantSel: "charlie",
+			wantOK:  true,
+		},
+		{
+			desc: "no-pad: the pointer leaving to the right keeps the selection",
+			cfg:  noPad,
+			setup: func(c *Component) {
+				c.AddReceiveMessage(mdContent)
+			},
+			events:  append(tripleClick(5, 4), mouseEv(width, height-1, 0)),
+			wantSel: "charlie",
+			wantOK:  true,
+		},
 	}
 
 	for _, tc := range suite {
@@ -1026,6 +1046,15 @@ func TestHandlerCodeCopy(t *testing.T) {
 			},
 			wantHandled: true,
 			wantCopied:  source,
+			wantIcon:    idle,
+		},
+		{
+			name: "the pointer leaving the chat takes the hover off",
+			clip: clipboard.NewInMemory(),
+			events: func(i term.Coordinates) []term.Event {
+				return []term.Event{motion(i.X, i.Y), motion(width, i.Y)}
+			},
+			wantHandled: true,
 			wantIcon:    idle,
 		},
 		{
