@@ -417,6 +417,51 @@ func (wm *WindowManager) SetWidth(win Window, width int) bool {
 	return t.SetFixedWidth(width)
 }
 
+// MoveTileEdge moves the divider along the right edge of the tile win, or along its
+// bottom edge for component.AlignmentBottom, onto the column or row to, in the coordinate
+// space of Window.Position. It returns false if win is floating, edge is neither
+// AlignmentRight nor AlignmentBottom, the edge is the manager's, or the move would leave
+// a tile too small.
+func (wm *WindowManager) MoveTileEdge(win Window, edge component.Alignment, to int) bool {
+	t, ok := win.node.(*TileNode)
+	if !ok {
+		return false
+	}
+	dir, ok := edgeSplit(edge)
+	if !ok {
+		return false
+	}
+	split, idx, ok := t.divider(dir)
+	if !ok {
+		return false
+	}
+	// win's edge is the one owner ends at, so owner changes size by as
+	// much as the edge moves.
+	owner := split.children[idx].C
+	pos := win.Position()
+	size := owner.width + to - (pos.X + t.width - 1)
+	if dir == horizontal {
+		size = owner.height + to - (pos.Y + t.height - 1)
+	}
+	if size <= 0 || wm.config.Frame && size < 3 {
+		return false
+	}
+	if dir == horizontal {
+		return owner.SetFixedHeight(size)
+	}
+	return owner.SetFixedWidth(size)
+}
+
+func edgeSplit(edge component.Alignment) (splitDir, bool) {
+	switch edge {
+	case component.AlignmentRight:
+		return vertical, true
+	case component.AlignmentBottom:
+		return horizontal, true
+	}
+	return noSplit, false
+}
+
 // WindowAt returns the window at pos.
 func (wm *WindowManager) WindowAt(pos term.Coordinates) (Window, bool) {
 	if pos.X < 0 || pos.Y < 0 || pos.X >= wm.width || pos.Y >= wm.height {

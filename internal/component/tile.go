@@ -738,6 +738,19 @@ func (t *TileNode) ID() uint64 {
 	return uint64(uintptr(unsafe.Pointer(t)))
 }
 
+func (t *TileNode) divider(dir splitDir) (split *TileNode, idx int, ok bool) {
+	for n := t; n.parent != nil; n = n.parent {
+		p := n.parent
+		if p.childSplit != dir {
+			continue
+		}
+		if i := p.childIdx(n); i < len(p.children)-1 {
+			return p, i, true
+		}
+	}
+	return nil, 0, false
+}
+
 // Height returns the height of this node.
 func (t *TileNode) Height() int {
 	return t.height

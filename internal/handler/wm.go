@@ -873,6 +873,17 @@ func (wm *WindowManager) applyWindowDrag(mouse term.Coordinates) {
 		return
 	}
 	pos := win.Position()
+	if !win.IsFloating() {
+		// SetWidth and SetHeight resize win within its nearest split,
+		// which need not be the one whose divider lies on this edge.
+		if wm.winDrag&winDragRight != 0 && mouse.X-pos.X+1 >= minWindowDragSize {
+			_ = wm.comp.MoveTileEdge(win, compapi.AlignmentRight, mouse.X)
+		}
+		if wm.winDrag&winDragBottom != 0 && mouse.Y-pos.Y+1 >= minWindowDragSize {
+			_ = wm.comp.MoveTileEdge(win, compapi.AlignmentBottom, mouse.Y)
+		}
+		return
+	}
 	if wm.winDrag&winDragRight != 0 {
 		if width := mouse.X - pos.X + 1; width >= minWindowDragSize {
 			_ = wm.comp.SetWidth(win, width)
@@ -909,7 +920,6 @@ func (wm *WindowManager) applyWindowDrag(mouse term.Coordinates) {
 	// Pin the floating window's top-left corner so resizes keep the
 	// window in place regardless of its alignment; this also forces a
 	// relayout so Width/Height reflect the new size immediately.
-	// MoveWindow is a no-op for tiles, which relayout on draw.
 	wm.comp.MoveWindow(win, term.Coordinates{X: newX, Y: newY})
 }
 

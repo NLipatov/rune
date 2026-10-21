@@ -3118,6 +3118,31 @@ func TestTileEdgeResizeDrag(t *testing.T) {
 		wm.Draw(term.NewStringWriter(30, 12))
 		assert.Equal(t, 9, tw.Height())
 	})
+	t.Run("nested edges move the divider they lie on", func(t *testing.T) {
+		// [[a|b] / c] | d: b's right edge is the outer divider, not a|b
+		wm := NewWindowManager(handler.NewTestHandler(), DefaultWindowManagerConfig())
+		wm.Resize(40, 12)
+		a := wm.Focus()
+		d, ok := wm.SplitVertical(a, handler.NewTestHandler())
+		require.True(t, ok)
+		c, ok := wm.SplitHorizontal(a, handler.NewTestHandler())
+		require.True(t, ok)
+		b, ok := wm.SplitVertical(a, handler.NewTestHandler())
+		require.True(t, ok)
+		wm.Draw(term.NewStringWriter(40, 12))
+		require.Equal(t, 10, a.Width())
+		require.Equal(t, 10, b.Width())
+		require.Equal(t, 20, d.Width())
+
+		wm.Handle(mouseEv(term.MouseLeft, 19, 1))
+		wm.Handle(mouseEv(term.MouseLeft, 24, 1))
+		wm.Handle(mouseEv(term.MouseRelease, 24, 1))
+		wm.Draw(term.NewStringWriter(40, 12))
+		assert.Equal(t, 12, a.Width())
+		assert.Equal(t, 13, b.Width())
+		assert.Equal(t, 25, c.Width())
+		assert.Equal(t, 15, d.Width())
+	})
 	t.Run("edges of the manager do not resize", func(t *testing.T) {
 		for _, press := range []term.Coordinates{xy(29, 5), xy(5, 11), xy(29, 11)} {
 			lh, rh := handler.NewTestHandler(), handler.NewTestHandler()

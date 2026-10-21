@@ -3364,3 +3364,91 @@ func TestForegroundFloating(t *testing.T) {
 	wm.ForegroundFloating(tiled)
 	assert.Equal(t, []uint64{b.ID(), a.ID()}, floatOrder())
 }
+
+func TestWindowManagerMoveTileEdge(t *testing.T) {
+	tile := func(i int) func(*WindowManager, [4]Window) Window {
+		return func(_ *WindowManager, wins [4]Window) Window { return wins[i] }
+	}
+	floating := func(wm *WindowManager, _ [4]Window) Window {
+		return wm.FloatingWindow(
+			component.StaticFloating(&component.TestComponent{Ch: 'F'}, 4, 2),
+			FloatingConfig{},
+		)
+	}
+	initial := [4][2]int{{10, 6}, {10, 6}, {20, 6}, {20, 12}}
+	tests := []struct {
+		name string
+		win  func(*WindowManager, [4]Window) Window
+		edge component.Alignment
+		to   int
+		ok   bool
+		want [4][2]int
+	}{
+		{
+			name: "divider shared with a sibling",
+			win:  tile(0), edge: component.AlignmentRight, to: 14, ok: true,
+			want: [4][2]int{{15, 6}, {5, 6}, {20, 6}, {20, 12}},
+		},
+		{
+			name: "divider shared by ancestors",
+			win:  tile(1), edge: component.AlignmentRight, to: 24, ok: true,
+			want: [4][2]int{{12, 6}, {13, 6}, {25, 6}, {15, 12}},
+		},
+		{
+			name: "bottom divider shared by ancestors",
+			win:  tile(0), edge: component.AlignmentBottom, to: 8, ok: true,
+			want: [4][2]int{{10, 9}, {10, 9}, {20, 3}, {20, 12}},
+		},
+		{
+			name: "right edge of the manager",
+			win:  tile(3), edge: component.AlignmentRight, to: 30,
+			want: initial,
+		},
+		{
+			name: "bottom edge of the manager",
+			win:  tile(2), edge: component.AlignmentBottom, to: 8,
+			want: initial,
+		},
+		{
+			name: "unsupported edge",
+			win:  tile(1), edge: component.AlignmentLeft, to: 5,
+			want: initial,
+		},
+		{
+			name: "too small for a frame",
+			win:  tile(0), edge: component.AlignmentRight, to: 0,
+			want: initial,
+		},
+		{
+			name: "floating window",
+			win:  floating, edge: component.AlignmentRight, to: 10,
+			want: initial,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// [[a|b] / c] | d: b's right edge is the outer divider, and
+			// a's bottom edge is [a|b]'s.
+			wm, a := NewWindowManager(&component.TestComponent{Ch: 'A'}, testWindowManagerConfig())
+			wm.Resize(40, 12)
+			d, ok := wm.SplitVertical(a, &component.TestComponent{Ch: 'D'})
+			require.True(t, ok)
+			c, ok := wm.SplitHorizontal(a, &component.TestComponent{Ch: 'C'})
+			require.True(t, ok)
+			b, ok := wm.SplitVertical(a, &component.TestComponent{Ch: 'B'})
+			require.True(t, ok)
+			wins := [4]Window{a, b, c, d}
+			sizes := func() (ret [4][2]int) {
+				wm.Draw(term.NewStringWriter(40, 12))
+				for i, win := range wins {
+					ret[i] = [2]int{win.Width(), win.Height()}
+				}
+				return ret
+			}
+
+			require.Equal(t, initial, sizes())
+			assert.Equal(t, tt.ok, wm.MoveTileEdge(tt.win(wm, wins), tt.edge, tt.to))
+			assert.Equal(t, tt.want, sizes())
+		})
+	}
+}
