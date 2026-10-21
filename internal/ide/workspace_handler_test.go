@@ -3876,8 +3876,8 @@ func TestWorkspaceManagerHandlerDraw(t *testing.T) {
 │  Do you want to  │
 │  restore the     │
 │  previous        │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		// prompt resets cache (use file scheme to avoid needing
 		// to use ':' to indicate memory scheme)
@@ -4063,8 +4063,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		}
 		h := newSafeHandler(m)
@@ -4091,8 +4091,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 			{":quit>",
 				`┌──────────────────┐
@@ -4102,8 +4102,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		}
 		h := newSafeHandler(m)
@@ -4125,8 +4125,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 			{"n",
 				`┌──────────────────┐
@@ -4147,8 +4147,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		}
 		h := newSafeHandler(m)
@@ -4186,8 +4186,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  There are open  │
 │  files with      │
 │  changes         │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		}
 		h := newSafeHandler(m)
@@ -4233,8 +4233,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  There are open  │
 │  files with      │
 │  changes         │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 		}
 		h := newSafeHandler(m)
@@ -4340,8 +4340,8 @@ func TestWorkspaceManagerClosePromptIntegration(t *testing.T) {
 │  Are you sure    │
 │  you want to     │
 │  exit?           │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 			}
 
@@ -4429,8 +4429,8 @@ func TestWorkspaceManagerHandlerDrawWithInitialFiles(t *testing.T) {
 │  Do you want to  │
 │  restore the     │
 │  previous        │
-│                  │
-│  Yes        No   │
+│       Yes        │
+│       No         │
 └──────────────────┘`},
 					{"y",
 						`┌────────━━━━━━────┐

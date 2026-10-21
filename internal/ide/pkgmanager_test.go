@@ -278,8 +278,8 @@ func TestPackageManagerLibDir(t *testing.T) {
 │  "go"?                               │
 │                                      │
 │                                      │
-│                                      │
-│Yes           Yes, Always          No │
+│        Yes            Yes, Always    │
+│                 No                   │
 └──────────────────────────────────────┘
 ├──────────────────────────────────────┤
 │1                                     │
@@ -544,8 +544,8 @@ func TestPackageManagerLibDir(t *testing.T) {
 │  "go"?                               │
 │                                      │
 │                                      │
-│                                      │
-│Yes           Yes, Always          No │
+│        Yes            Yes, Always    │
+│                 No                   │
 └──────────────────────────────────────┘
 ├──────────────────────────────────────┤
 │1                                     │
@@ -1021,8 +1021,8 @@ func TestPkgManagerPromptsForHost(t *testing.T) {
 │  "go" on studio?                     │
 │                                      │
 │                                      │
-│                                      │
-│Yes           Yes, Always          No │
+│        Yes            Yes, Always    │
+│                 No                   │
 └──────────────────────────────────────┘
 ├──────────────────────────────────────┤
 │1                                     │

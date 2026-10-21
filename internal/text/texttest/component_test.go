@@ -511,10 +511,10 @@ func TestComponentOpen(t *testing.T) {
 │  File file:///tmp/busy is  │
 │  already open by another   │
 │  process or an edit        │
-│  session for this file     │
-│  crashed.                  │
-│                            │
-│Open rdonly      Force Edit │
+│          Recover           │
+│        Open rdonly         │
+│        Force Edit          │
+│           Skip             │
 └────────────────────────────┘
 │                            │
 │                            │
@@ -573,10 +573,10 @@ func TestComponentOpen(t *testing.T) {
 │  File file:///tmp/more is  │
 │  already open by another   │
 │  process or an edit        │
-│  session for this file     │
-│  crashed.                  │
-│                            │
-│Open rdonly      Force Edit │
+│          Recover           │
+│        Open rdonly         │
+│        Force Edit          │
+│           Skip             │
 └────────────────────────────┘
 │AAAAAAAAAAAAAAAAAAAAAAAAAAAA│
 │AAAAAAAAAAAAAAAAAAAAAAAAAAAA│
@@ -599,10 +599,10 @@ func TestComponentOpen(t *testing.T) {
 │  File file:///tmp/m is     │
 │  already open by another   │
 │  process or an edit        │
-│  session for this file     │
-│  crashed.                  │
-│                            │
-│Open rdonly      Force Edit │
+│          Recover           │
+│        Open rdonly         │
+│        Force Edit          │
+│           Skip             │
 └────────────────────────────┘
 │AAAAAAAAAAAAAAAAAAAAAAAAAAAA│
 │AAAAAAAAAAAAAAAAAAAAAAAAAAAA│
@@ -762,10 +762,10 @@ func TestComponentOpen(t *testing.T) {
 │  File file:///tmp/busy is  │
 │  already open by another   │
 │  process or an edit        │
-│  session for this file     │
-│  crashed.                  │
-│                            │
-│Open rdonly      Force Edit │
+│          Recover           │
+│        Open rdonly         │
+│        Force Edit          │
+│           Skip             │
 └────────────────────────────┘
 │                            │
 │                            │

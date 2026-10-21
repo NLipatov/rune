@@ -761,17 +761,17 @@ tutorial(entry=run)
 	tut.Stop()
 }
 
-func TestPromptOptionsNeverTouch(t *testing.T) {
+func TestChoiceOptionsWrapWhenTheyDoNotFit(t *testing.T) {
 	t.Parallel()
 	style := idetutorial.PromptStyle{
 		TextAttr:      term.Attributes{Bg: term.ColorBlue},
 		HighlightAttr: term.Attributes{Bg: term.ColorBlue},
 	}
-	options := []string{"Alpha", "Bravo", "Delta", "Gamma", "Sigma"}
+	options := []string{"OpenAI", "Anthropic", "Gemini", "Codex", "Claude"}
 	tut, err := New(
-		"models", `
+		"providers", `
 def run():
-    choice(message="pick", options=["Alpha", "Bravo", "Delta", "Gamma", "Sigma"])
+    choice(message="pick", options=["OpenAI", "Anthropic", "Gemini", "Codex", "Claude"])
 tutorial(entry=run)
 `,
 		style, nil, &fakeNotis{}, nil,
@@ -788,35 +788,51 @@ tutorial(entry=run)
 	resetAndWait(t, tut, time.Second)
 	require.Equal(t, "choice", activeKindFor(tut))
 
-	// The narrowest of these still fits every label with a cell
-	// between each pair of buttons and at both edges.
-	for _, width := range []int{60, 50, 44, 40, 36} {
-		tut.Resize(width, bodyH)
-		g := newAttrGridWriter(width, bodyH)
+	cases := []struct{ width, wantRows int }{
+		{width: 70, wantRows: 1},
+		{width: 50, wantRows: 2},
+		{width: 30, wantRows: 3},
+		{width: idetutorial.MinTileWidth, wantRows: 5},
+	}
+	for _, tc := range cases {
+		tut.Resize(tc.width, bodyH)
+		g := newAttrGridWriter(tc.width, bodyH)
 		tut.Draw(g)
 
-		y := -1
-		for row := 0; row < bodyH && y < 0; row++ {
-			if strings.Contains(g.rowRunes(row), "Bravo") {
-				y = row
-			}
-		}
-		require.GreaterOrEqual(t, y, 0, "width=%d: the options must be drawn", width)
-
-		buttons, inButton := 0, false
-		for _, attr := range g.rowAttrs(y) {
-			if attr.Bg == term.ColorBlue {
-				if !inButton {
-					buttons++
+		// Every label is its own run of button cells, padded and
+		// whole: neither cut short nor run into the next one.
+		var buttons []string
+		var rows []int
+		for y := range bodyH {
+			runes := []rune(g.rowRunes(y))
+			start, found := -1, false
+			for x, attr := range append(g.rowAttrs(y), term.Attributes{}) {
+				if attr.Bg == term.ColorBlue {
+					if start < 0 {
+						start = x
+					}
+					continue
 				}
-				inButton = true
-				continue
+				if start >= 0 {
+					buttons = append(buttons, string(runes[start:x]))
+					start, found = -1, true
+				}
 			}
-			inButton = false
+			if found {
+				rows = append(rows, y)
+			}
 		}
-		assert.Equal(t, len(options), buttons,
-			"width=%d: every button must be a run of its own, "+
-				"with at least a cell of air between them", width)
+		want := make([]string, len(options))
+		for i, o := range options {
+			want[i] = " " + o + " "
+		}
+		assert.Equal(t, want, buttons, "width=%d", tc.width)
+		assert.Len(t, rows, tc.wantRows,
+			"width=%d: options that do not fit wrap onto the next row", tc.width)
+		for i := 1; i < len(rows); i++ {
+			assert.Equal(t, 2, rows[i]-rows[i-1],
+				"width=%d: the tile has room for a blank row between rows", tc.width)
+		}
 	}
 }
 
@@ -1629,6 +1645,39 @@ tutorial(entry=run)
 	waitNextActive(t, tut, "confirm", time.Second)
 	assert.Equal(t, 0, tut.MaxSeekOffset())
 	assert.False(t, tut.SeekDown())
+}
+
+func TestChoiceTooTallForTheTileScrollsItsQuestion(t *testing.T) {
+	t.Parallel()
+	src := `
+def run():
+    choice(message="first\n\nsecond\n\nthird\n\nfourth", options=["Alpha", "Beta"])
+tutorial(entry=run)
+`
+	tut, _ := newTutorial(t, src)
+	const width, height = 30, 5
+	tut.Resize(width, height)
+	resetAndWait(t, tut, time.Second)
+	defer tut.Stop()
+	require.Equal(t, "choice", activeKindFor(tut))
+
+	draw := func() *gridWriter {
+		g := newGridWriter(width, height)
+		tut.Draw(g)
+		return g
+	}
+	g := draw()
+	assert.Equal(t, height-1, gridRow(g, "Alpha"), "the options stay on show")
+	assert.True(t, gridContains(g, "first"))
+	assert.False(t, gridContains(g, "fourth"))
+	require.Positive(t, tut.MaxSeekOffset(), "the tile's scroll bar shows the rest")
+
+	for tut.SeekDown() {
+	}
+	g = draw()
+	assert.Equal(t, height-1, gridRow(g, "Alpha"))
+	assert.True(t, gridContains(g, "fourth"))
+	assert.False(t, gridContains(g, "first"))
 }
 
 func TestPromptRendersOnTutorialLayer(t *testing.T) {

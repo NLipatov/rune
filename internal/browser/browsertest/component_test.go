@@ -710,8 +710,8 @@ func TestComponentPrompt(t *testing.T) {
 ┌────────┐              
 │x musi  │              
 ├●███████┤              
-│  Rosa  │              
-│ YayNay │              
+│  Yay   │              
+│  Nay   │              
 └────────┘              
                         
                         

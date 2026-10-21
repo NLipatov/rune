@@ -127,19 +127,21 @@ func TestTileStacksBodyOverFooter(t *testing.T) {
 	t.Parallel()
 	tut := &fakeTutorial{}
 	tile := idetutorial.NewTile(tut, idetutorial.TileStyle{}, func() {}, func() {}, func() {})
-	tile.Resize(20, 6)
+	const width = idetutorial.MinTileWidth
+	tile.Resize(width, 6)
 
-	assert.Equal(t, 20, tut.width)
+	assert.Equal(t, width, tut.width)
 	assert.Equal(t, 4, tut.height, "the footer takes the last two rows")
 
-	drawn := handlertest.DrawHandler(tile, 20, 6)
+	drawn := handlertest.DrawHandler(tile, width, 6)
 	rows := strings.Split(drawn, "\n")
 	require.Len(t, rows, 6)
 	for _, row := range rows[:4] {
-		assert.Equal(t, strings.Repeat("b", 20), row)
+		assert.Equal(t, strings.Repeat("b", width), row)
 	}
-	assert.Equal(t, strings.Repeat(" ", 20), rows[4],
+	assert.Equal(t, strings.Repeat(" ", width), rows[4],
 		"a row of air keeps the buttons off the lesson")
+	assert.Contains(t, rows[5], "Back")
 	assert.Contains(t, rows[5], "Skip")
 	assert.Contains(t, rows[5], "Stop")
 }
