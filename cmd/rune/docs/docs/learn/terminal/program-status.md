@@ -167,21 +167,33 @@ its width, growing and shrinking downwards as the preview changes size.
 The sidebar lists every tab and terminal that reported a status, across your
 workspaces, most pressing first, then by workspace and tab. Each shows:
 
+- the name of its workspace, as on the workspace bar, in gray, or silver once
+  selected or under the mouse;
 - the state's icon and the tab's name, styled like the tab itself;
 - beneath, the state followed by the reporting `app`, in the state's color;
 - beneath that, while working with a reported `progress`, a progress bar with
-  the percentage on its right.
+  the percentage on its right, green as far as it is done and gray past that.
+  See [`program_status`](#configuring-the-inbox) to draw it with other
+  characters.
 
 A tab stays listed until you close it, even once you have seen what it
 reported: it then reads `idle`, followed by the `app` it last reported. A
 terminal that is not a tab leaves the list once it holds no record, as when it
 closes.
 
+When the programs don't all fit, the sidebar scrolls to keep the selected one
+in sight: moving past the last program shown scrolls down, and past the first
+scrolls up. The mouse wheel scrolls the sidebar one program at a time without
+moving the selection, which comes back in sight as soon as it moves. An arrow
+at the bottom of the sidebar shows there are more programs below; its row
+stays empty once you reach the last one, so the list doesn't shift.
+
 | Key | Action |
 | --- | --- |
 | `j` / `<down>` / `<ctrl-j>` / `<ctrl-n>` | Next program |
 | `k` / `<up>` / `<ctrl-k>` / `<ctrl-p>` | Previous program |
 | Click | Select a program |
+| Mouse wheel over the sidebar | Scroll the programs |
 | `<enter>` | Switch to the program's workspace and show it |
 | `<delete>` / `<backspace>` | Close the program as `:tabclose` would: a tab or window is closed, a task stopped, and the companion terminal hidden. A `working` or `blocked` program, or a file with unwritten changes, asks first |
 | `<esc>` / `q` / `<ctrl-c>` | Close the inbox |
@@ -357,7 +369,8 @@ Rune Agent reports its chats this way.
 Program status is configured under `terminal.status`. The activity effects
 that play over working tabs are configured separately, under
 `animations.active_content_tab` and `animations.active_workspace_tab`; see
-[Tab animations](../../config.md#tab-animations).
+[Tab animations](../../config.md#tab-animations). The status inbox is
+configured under [`program_status`](#configuring-the-inbox).
 
 | Key | Default | Effect |
 | --- | --- | --- |
@@ -370,8 +383,6 @@ that play over working tabs are configured separately, under
 | `workspace_tab` | see below | How workspace tabs on the bar show the status of their workspace. |
 | `notify` | `[blocked, error, done]` | The states that raise a notification when a tab out of sight enters them. `working` is also accepted. |
 | `notify_interval` | `2s` | The minimum time between two state notifications for the same tab. |
-| `programstatus.marker` | `▌` | The marker drawn down the left of the item selected in the [inbox](#the-status-inbox), colored by `browser.focus_tab_highlight_attr`. |
-| `programstatus.selected_attr` | gray background | Styles the item selected in the inbox; its background is also the marker's. |
 
 `content_tab` and `workspace_tab` take the same keys. Colors left at `default`
 keep the tab's own:
@@ -400,6 +411,54 @@ terminal:
 config["terminal"]["status"]["notify"] = ["blocked", "error"]
 config["terminal"]["status"]["content_tab"]["done_attr"] = attr(fg = "green")
 config["terminal"]["status"]["content_tab"]["error_attr"] = attr(fg = "red")
+```
+
+### Configuring the inbox
+
+The [status inbox](#the-status-inbox) is configured under the top-level
+`program_status`. Colors left at `default` keep those of what they are drawn
+over.
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `selected_attr` | gray background | Styles the whole selected program. Its colors win over those of the program's name and state. |
+| `hover_attr` | bold | Styles the whole program under the mouse, as `selected_attr` does. On the selected program, the selection's colors win. |
+| `marker` | `▌` | The marker drawn down the left of the selected program. |
+| `marker_attr` | default | Styles the marker. The colors it leaves at `default` are the foreground of `browser.focus_tab_highlight_attr` and the background of the selection. |
+| `workspace_attr` | gray | The name of the workspace above each program's name. A workspace without a name takes no row. |
+| `workspace_highlight_attr` | silver | The name of the workspace of the program selected or under the mouse, which gray would blend into the selection. Its colors, like `workspace_attr`'s, win over `selected_attr`'s and `hover_attr`'s. |
+| `progress_bar` | `🬋🬋🬋🬋` | The four characters a progress bar is drawn with, in order: its left end, what is done, what is not, and its right end, as in the console's `╢░_╟`. Each must be one cell wide. |
+| `progress_attr` | default | Beneath the whole bar. A background set here stays over the selection's. |
+| `progress_done_attr` | green | What is done of the bar. |
+| `progress_remaining_attr` | gray | What is not done of the bar. |
+| `progress_remaining_selected_attr` | silver | What is not done of the selected program's bar, which the gray above would blend into the selection. |
+| `progress_label_attr` | default | The percentage on the bar's right. |
+| `more_below` | `\uf063` (Nerd Font arrow down) | The arrow drawn below the programs when there are more out of sight below. |
+| `more_below_attr` | default | Styles that arrow. |
+| `divider_attr` | gray | The line between the programs and the preview. |
+| `placeholder_attr` | gray | The text shown when no program reported a status, or the selected one has nothing to preview. |
+
+A bar's ends are colored as the part of the bar they stand in, so a single
+character repeated four times draws a bar that only its colors split. The
+default, `🬋`, fills the middle third of a cell; Rune's GUI draws it itself,
+while a terminal running Rune draws it from its own fonts.
+
+For example, to draw progress bars as the console does, on a dark track, and
+to highlight the program under the mouse:
+
+```yaml tab
+program_status:
+  progress_bar: "╢░_╟"
+  progress_attr: {bg: "#303030"}
+  progress_remaining_selected_attr: {fg: gray}
+  hover_attr: {bg: "#3a3a3a"}
+```
+
+```python tab
+config["program_status"]["progress_bar"] = "╢░_╟"
+config["program_status"]["progress_attr"] = attr(bg = "#303030")
+config["program_status"]["progress_remaining_selected_attr"] = attr(fg = "gray")
+config["program_status"]["hover_attr"] = attr(bg = "#3a3a3a")
 ```
 
 ## Troubleshooting

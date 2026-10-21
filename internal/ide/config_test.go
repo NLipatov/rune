@@ -23,9 +23,11 @@ import (
 	"image/color"
 	"image/png"
 	"log/slog"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -567,17 +569,28 @@ func TestTabStatusConfigProgress(t *testing.T) {
 
 func TestStatusInboxStyle(t *testing.T) {
 	def := defaultStatusInboxStyle()
+	attrKeys := []string{
+		"marker_attr", "selected_attr", "hover_attr", "workspace_attr", "workspace_highlight_attr",
+		"progress_attr", "progress_done_attr", "progress_remaining_attr", "progress_remaining_selected_attr",
+		"progress_label_attr", "more_below_attr", "divider_attr", "placeholder_attr",
+	}
+	invalid := map[string]any{"marker": true, "progress_bar": true, "more_below": true}
+	wantInvalid := []string{"program_status.marker", "program_status.progress_bar", "program_status.more_below"}
+	for _, key := range attrKeys {
+		invalid[key] = "gray"
+		wantInvalid = append(wantInvalid, "program_status."+key)
+	}
 	for _, tc := range []struct {
 		name    string
 		cfg     map[string]any
 		want    statusInboxStyle
-		wantErr string
+		wantErr []string
 	}{
 		{name: "defaults", cfg: map[string]any{}, want: def},
 		{
 			name: "the marker takes the color of the focused tab marker",
 			cfg: map[string]any{"browser": map[string]any{
-				"focus_tab_highlight_attr": map[string]any{"fg": "red"},
+				"focus_tab_highlight_attr": map[string]any{"fg": "red", "bg": "navy"},
 			}},
 			want: func() statusInboxStyle {
 				s := def
@@ -586,38 +599,90 @@ func TestStatusInboxStyle(t *testing.T) {
 			}(),
 		},
 		{
-			name: "configured",
-			cfg: map[string]any{"terminal": map[string]any{"status": map[string]any{
-				"programstatus": map[string]any{
-					"marker":        "┃",
-					"selected_attr": map[string]any{"bg": "navy"},
-				},
-			}}},
+			name: "the marker keeps what it does not set of the focused tab marker",
+			cfg: map[string]any{
+				"browser":        map[string]any{"focus_tab_highlight_attr": map[string]any{"fg": "red"}},
+				"program_status": map[string]any{"marker_attr": map[string]any{"bg": "navy"}},
+			},
 			want: func() statusInboxStyle {
 				s := def
-				s.marker = '┃'
-				s.selectedAttr = term.Attributes{Bg: term.ColorNavy}
+				s.markerAttr = term.Attributes{Fg: term.ColorRed, Bg: term.ColorNavy}
 				return s
 			}(),
 		},
 		{
-			name: "invalid",
-			cfg: map[string]any{"terminal": map[string]any{"status": map[string]any{
-				"programstatus": map[string]any{"marker": true, "selected_attr": "gray"},
-			}}},
+			name: "configured",
+			cfg: map[string]any{"program_status": map[string]any{
+				"marker":                           "┃",
+				"marker_attr":                      map[string]any{"fg": "purple", "bg": "red"},
+				"selected_attr":                    map[string]any{"bg": "navy"},
+				"hover_attr":                       map[string]any{"bg": "teal"},
+				"workspace_attr":                   map[string]any{"fg": "blue"},
+				"workspace_highlight_attr":         map[string]any{"fg": "black"},
+				"progress_bar":                     "╢░_╟",
+				"progress_attr":                    map[string]any{"bg": "maroon"},
+				"progress_done_attr":               map[string]any{"fg": "lime"},
+				"progress_remaining_attr":          map[string]any{"fg": "silver"},
+				"progress_remaining_selected_attr": map[string]any{"fg": "white"},
+				"progress_label_attr":              map[string]any{"fg": "aqua"},
+				"more_below":                       "↓",
+				"more_below_attr":                  map[string]any{"fg": "yellow"},
+				"divider_attr":                     map[string]any{"fg": "olive"},
+				"placeholder_attr":                 map[string]any{"fg": "fuchsia"},
+			}},
+			want: func() statusInboxStyle {
+				s := def
+				s.marker = '┃'
+				s.markerAttr = term.Attributes{Fg: term.ColorPurple, Bg: term.ColorRed}
+				s.selectedAttr = term.Attributes{Bg: term.ColorNavy}
+				s.hoverAttr = term.Attributes{Bg: term.ColorTeal}
+				s.workspaceAttr = term.Attributes{Fg: term.ColorBlue}
+				s.workspaceHighlightAttr = term.Attributes{Fg: term.ColorBlack}
+				s.progressBar = component.ProgressBarCharSet{Left: '╢', Filled: '░', Empty: '_', Right: '╟'}
+				s.progressAttr = term.Attributes{Bg: term.ColorMaroon}
+				s.progressDoneAttr = term.Attributes{Fg: term.ColorLime}
+				s.progressRemainingAttr = term.Attributes{Fg: term.ColorSilver}
+				s.progressRemainingSelectedAttr = term.Attributes{Fg: term.ColorWhite}
+				s.progressLabelAttr = term.Attributes{Fg: term.ColorAqua}
+				s.moreBelow = '↓'
+				s.moreBelowAttr = term.Attributes{Fg: term.ColorYellow}
+				s.dividerAttr = term.Attributes{Fg: term.ColorOlive}
+				s.placeholderAttr = term.Attributes{Fg: term.ColorFuchsia}
+				return s
+			}(),
+		},
+		{
+			name: "the same character all along the bar",
+			cfg:  map[string]any{"program_status": map[string]any{"progress_bar": "━━━━"}},
+			want: func() statusInboxStyle {
+				s := def
+				s.progressBar = component.ProgressBarCharSet{Left: '━', Filled: '━', Empty: '━', Right: '━'}
+				return s
+			}(),
+		},
+		{
+			name:    "invalid",
+			cfg:     map[string]any{"program_status": invalid},
 			want:    def,
-			wantErr: "terminal.status.programstatus.",
+			wantErr: wantInvalid,
+		},
+		{
+			name:    "a progress bar short of a character",
+			cfg:     map[string]any{"program_status": map[string]any{"progress_bar": "╢░╟"}},
+			want:    def,
+			wantErr: []string{"program_status.progress_bar"},
+		},
+		{
+			name:    "a progress bar of wide characters",
+			cfg:     map[string]any{"program_status": map[string]any{"progress_bar": "界界界界"}},
+			want:    def,
+			wantErr: []string{"program_status.progress_bar"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := ideConfig{cfg: tc.cfg, errors: map[string]error{}}
 			assert.Equal(t, tc.want, cfg.statusInboxStyle())
-			if tc.wantErr == "" {
-				assert.Empty(t, cfg.errors)
-				return
-			}
-			assert.Error(t, cfg.errors[tc.wantErr+"marker"])
-			assert.Error(t, cfg.errors[tc.wantErr+"selected_attr"])
+			assert.ElementsMatch(t, tc.wantErr, slices.Collect(maps.Keys(cfg.errors)))
 		})
 	}
 }

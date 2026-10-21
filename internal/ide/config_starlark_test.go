@@ -406,6 +406,10 @@ func TestRuneStarFixture(t *testing.T) {
 			assert.Equal(t, defaults.Shine.Direction, wsShine.Direction)
 			wsParams.Shine = defaults.Shine
 			assert.Equal(t, defaults, wsParams, "workspace tabs only retune the shine")
+			inbox, want := ide.statusInboxStyle(), defaultStatusInboxStyle()
+			want.markerAttr = term.Attributes{Fg: ide.highlightTabAttr().Fg, Attrs: ide.highlightTabAttr().Attrs}
+			want.frame = ide.frameUnionCharset()
+			assert.Equal(t, want, inbox, "rune.star spells out the inbox defaults")
 			assert.Empty(t, ide.errors)
 		})
 	}

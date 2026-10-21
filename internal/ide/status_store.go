@@ -19,6 +19,7 @@ package ide
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -562,11 +563,13 @@ type statusItem struct {
 }
 
 // statusEntry is one program of the status inbox: a source, read as
-// its name, its state and app beneath, and its progress, if any, and
-// styled as the tab bar styles a tab in the same state.
+// its workspace, its name beneath, its state and app beneath that, and
+// its progress, if any, and styled as the tab bar styles a tab in the
+// same state.
 type statusEntry struct {
 	ws, uri workspaceapi.URI
-	// wsName is the name of the workspace on the workspace bar.
+	// wsName is the name of the workspace on the workspace bar, which
+	// takes no row when there is none.
 	wsName string
 	state  programstatus.State
 	// status is everything reported, for the user to know what closing
@@ -587,10 +590,14 @@ type statusEntry struct {
 
 // height returns the rows the entry takes in the sidebar.
 func (e statusEntry) height() int {
-	if e.progress >= 0 {
-		return 3
+	ret := 2
+	if e.wsName != "" {
+		ret++
 	}
-	return 2
+	if e.progress >= 0 {
+		ret++
+	}
+	return ret
 }
 
 // statusInbox renders status items as inbox entries, styled after the
@@ -713,41 +720,87 @@ const (
 	statusMinHeight = 40
 	// statusPadTop is the empty rows above the first program,
 	// statusPadLeft the empty columns left of the marker, and
-	// statusPadRight the empty columns between the longest text of the
-	// sidebar and the preview. The selection leaves the padding alone.
-	statusPadTop   = 1
-	statusPadLeft  = 1
-	statusPadRight = 2
+	// statusPadRight those between the selection and the preview: twice
+	// statusPadTop, as cells are about twice as tall as wide, for the
+	// selection to look as far from the preview as from the top. The
+	// selection reaches statusSelectionPad columns past the longest text,
+	// to keep it off its edge.
+	statusPadTop       = 1
+	statusPadLeft      = 1
+	statusPadRight     = 2
+	statusSelectionPad = 1
 	// statusIconX is the column icons are at in the sidebar, past the
-	// marker, and statusTextX the column names start at, past the icon
-	// and a space.
-	statusIconX = statusPadLeft + 1
+	// marker and a space, and statusTextX the column names start at, past
+	// the icon and a space.
+	statusIconX = statusPadLeft + 2
 	statusTextX = statusIconX + 2
 	// statusGap is the empty rows between two programs.
 	statusGap = 1
+	// statusProgressGlyph, BLOCK SEXTANT-34 (🬋), draws every cell of the
+	// default progress bar: it fills the middle third of a cell edge to
+	// edge, so that a run of them draws one thick bar centered on the
+	// text, which colors alone split.
+	statusProgressGlyph = '\U0001FB0B'
+	// statusMoreBelow, nf-fa-arrow_down, points at the programs out of
+	// sight below, as tutorials point at the rest of a step.
+	statusMoreBelow = '\uf063'
 )
 
-var (
-	statusMutedAttr = term.Attributes{Fg: term.ColorGray}
-	statusBoldAttr  = term.Attributes{Attrs: term.AttrBold}
-)
+var statusMutedAttr = term.Attributes{Fg: term.ColorGray}
 
-// statusInboxStyle styles the chrome of the status inbox.
+// statusInboxStyle styles the chrome of the status inbox. Colors left
+// at the default keep those of what they are drawn over.
 type statusInboxStyle struct {
-	// marker is drawn down the left of the selected item, in markerAttr
-	// over the background of selectedAttr, which styles the rest of it.
-	marker                   rune
-	markerAttr, selectedAttr term.Attributes
-	// frame draws the line between the programs and the preview.
-	frame component.FrameUnionCharSet
+	// selectedAttr styles the selected item, and hoverAttr the one under
+	// the mouse, all of it: their colors win over those of its text, and
+	// selectedAttr's over hoverAttr's on an item both style. marker is
+	// drawn down the left of the selected item in markerAttr, over them.
+	marker                              rune
+	markerAttr, selectedAttr, hoverAttr term.Attributes
+	// workspaceAttr styles the name of the workspace above the name of
+	// an item, and workspaceHighlightAttr that of the item selected or
+	// under the mouse. Their colors win over the item's.
+	workspaceAttr, workspaceHighlightAttr term.Attributes
+	// progressBar draws progress bars, their ends included, over
+	// progressAttr, which keeps its colors over the item's: in
+	// progressDoneAttr as far as they are done and in
+	// progressRemainingAttr past that, or in the selection in
+	// progressRemainingSelectedAttr, which progressRemainingAttr would
+	// blend into. progressLabelAttr styles the percentage on their right
+	// as the item's text.
+	progressBar                                           component.ProgressBarCharSet
+	progressAttr, progressDoneAttr, progressRemainingAttr term.Attributes
+	progressRemainingSelectedAttr, progressLabelAttr      term.Attributes
+	// moreBelow is drawn in moreBelowAttr in the row below the items when
+	// there are more out of sight below.
+	moreBelow     rune
+	moreBelowAttr term.Attributes
+	// frame draws the line between the programs and the preview in
+	// dividerAttr, and placeholderAttr the text that stands in for them
+	// when there is nothing to show.
+	frame                        component.FrameUnionCharSet
+	dividerAttr, placeholderAttr term.Attributes
 }
 
 func defaultStatusInboxStyle() statusInboxStyle {
 	return statusInboxStyle{
-		marker:       '▌',
-		markerAttr:   browser.DefaultConfig().FocusTabHighlightAttr,
-		selectedAttr: term.Attributes{Bg: term.ColorGray},
-		frame:        component.DefaultFrameUnionCharSet(),
+		marker:                 '▌',
+		markerAttr:             browser.DefaultConfig().FocusTabHighlightAttr,
+		selectedAttr:           term.Attributes{Bg: term.ColorGray},
+		hoverAttr:              term.Attributes{Attrs: term.AttrBold},
+		workspaceAttr:          statusMutedAttr,
+		workspaceHighlightAttr: term.Attributes{Fg: term.ColorSilver},
+		progressBar: component.ProgressBarCharSet{
+			Left: statusProgressGlyph, Filled: statusProgressGlyph,
+			Empty: statusProgressGlyph, Right: statusProgressGlyph,
+		},
+		progressDoneAttr:              term.Attributes{Fg: term.ColorGreen},
+		progressRemainingAttr:         statusMutedAttr,
+		progressRemainingSelectedAttr: term.Attributes{Fg: term.ColorSilver},
+		moreBelow:                     statusMoreBelow,
+		frame:                         component.DefaultFrameUnionCharSet(),
+		dividerAttr:                   statusMutedAttr,
+		placeholderAttr:               statusMutedAttr,
 	}
 }
 
@@ -781,9 +834,12 @@ type statusRef struct {
 // preview of the tab or terminal of the selected one. The preview draws
 // it at its own size, so it looks as it does in its window, and the
 // view asks to be large enough for it; given less, the preview loses
-// the top rows and right columns. The selection wraps around. Choosing
-// a program brings it in sight and closes the view. The previewed
-// content never receives input, and only a tab never sized is resized.
+// the top rows and right columns. The selection wraps around, and the
+// sidebar scrolls to keep it in sight; the wheel scrolls the sidebar
+// without moving the selection, which comes back in sight once it
+// moves. Choosing a program brings it in sight and closes the view. The
+// previewed content never receives input, and only a tab never sized is
+// resized.
 type statusView struct {
 	store   *statusStore
 	entries []statusEntry
@@ -793,6 +849,9 @@ type statusView struct {
 	selIdx int
 	// top is the first program the sidebar shows.
 	top int
+	// scrolled is set once the wheel scrolls the sidebar, for it to stop
+	// keeping the selection in sight until the selection moves.
+	scrolled bool
 	// rows holds the program drawn on each row of the sidebar, as an
 	// index in entries, or -1.
 	rows []int
@@ -849,6 +908,7 @@ func (v *statusView) selectAt(i int) {
 		return
 	}
 	v.sel, v.selIdx = v.entries[i].ref(), i
+	v.scrolled = false
 	v.fitted = statusFit{}
 	v.sizePreview()
 }
@@ -915,9 +975,10 @@ func (v *statusView) entryHeights() []int {
 }
 
 // sidebarSize returns the size the sidebar asks for to show every
-// program whole: the widest name or state line past statusTextX, and
-// statusPadRight, within statusSidebarMin and statusSidebarMax, by the
-// programs and the gaps between them below statusPadTop.
+// program whole: the widest workspace, name or state line past
+// statusTextX, the selection past it and statusPadRight, within
+// statusSidebarMin and statusSidebarMax, by the programs and the gaps
+// between them below statusPadTop.
 func (v *statusView) sidebarSize() (int, int) {
 	if len(v.entries) == 0 {
 		w := statusIconX + graphemecluster.StringWidth(statusViewEmpty) + statusPadRight
@@ -925,9 +986,11 @@ func (v *statusView) sidebarSize() (int, int) {
 	}
 	w := 0
 	for _, e := range v.entries {
-		w = max(w, statusTextX+graphemecluster.StringWidth(e.name), statusTextX+graphemecluster.StringWidth(e.sub))
+		for _, s := range []string{e.wsName, e.name, e.sub} {
+			w = max(w, statusTextX+graphemecluster.StringWidth(s))
+		}
 	}
-	return min(max(w+statusPadRight, statusSidebarMin), statusSidebarMax),
+	return min(max(w+statusSelectionPad+statusPadRight, statusSidebarMin), statusSidebarMax),
 		statusPadTop + sectionHeight(v.entryHeights())
 }
 
@@ -1001,7 +1064,7 @@ func (v *statusView) Draw(w term.Writer) {
 	if sideW >= v.width {
 		return
 	}
-	divider := term.NewCell(v.store.style.frame.VerticalLeft, 1, statusMutedAttr)
+	divider := term.NewCell(v.store.style.frame.VerticalLeft, 1, v.store.style.dividerAttr)
 	for y := range v.height {
 		w.SetCell(term.Coordinates{X: sideW, Y: y}, divider)
 	}
@@ -1015,87 +1078,177 @@ func (v *statusView) Draw(w term.Writer) {
 }
 
 // drawSidebar draws the programs into w, which is width cells wide,
-// scrolled to keep the selected one in sight.
+// scrolled to keep the selected one in sight unless the wheel scrolled
+// it away, and an arrow below them while there are more out of sight
+// below.
 func (v *statusView) drawSidebar(w term.Writer, width int) {
 	v.rows = slices.Repeat([]int{-1}, v.height)
+	style := v.store.style
 	if len(v.entries) == 0 {
-		statusText(w, statusIconX, statusPadTop, statusViewEmpty, statusMutedAttr, width-statusPadRight)
+		statusText(w, statusIconX, statusPadTop, statusViewEmpty, style.placeholderAttr, width-statusPadRight)
 		return
 	}
 	sel := v.resolve()
-	style := v.store.style
 	heights := v.entryHeights()
-	v.top = statusScroll(v.top, sel, heights, v.height-statusPadTop)
-	y := statusPadTop
+	rows, arrow := v.listRows(heights)
+	follow := sel
+	if v.scrolled {
+		follow = -1
+	}
+	v.top = statusScroll(v.top, follow, heights, rows)
 	selEnd := width - statusPadRight
-	for i := v.top; i < len(heights); i++ {
-		if i > v.top {
-			y += statusGap
+	spans := v.layout(heights)
+	// A program cut short stops above the arrow's row.
+	list := &component.VirtualWriter{Writer: w, Width: width, Height: statusPadTop + rows}
+	for _, s := range spans {
+		var base term.Attributes
+		if s.i == v.hover {
+			base = style.hoverAttr
 		}
-		if y >= v.height {
-			break
+		if s.i == sel {
+			base = term.AttributesUnion(base, style.selectedAttr)
 		}
-		rows := min(heights[i], v.height-y)
-		if i == sel {
-			blank := term.NewCell(' ', 1, style.selectedAttr)
-			for dy := range rows {
+		if s.i == v.hover || s.i == sel {
+			blank := term.NewCell(' ', 1, base)
+			for dy := range s.n {
 				for x := statusPadLeft; x < selEnd; x++ {
-					w.SetCell(term.Coordinates{X: x, Y: y + dy}, blank)
+					list.SetCell(term.Coordinates{X: x, Y: s.y + dy}, blank)
 				}
 			}
 		}
-		v.drawEntry(w, i, y, width)
-		for dy := range rows {
-			v.rows[y+dy] = i
-			if i != sel {
-				continue
-			}
-			for x := statusPadLeft; x < selEnd; x++ {
-				w.UnionAttributes(term.Coordinates{X: x, Y: y + dy}, style.selectedAttr)
-			}
-			statusText(w, statusPadLeft, y+dy, string(style.marker),
-				term.AttributesUnion(style.markerAttr, term.Attributes{Bg: style.selectedAttr.Bg}), statusIconX)
+		v.drawEntry(list, s.i, s.y, width, base, s.i == sel)
+		if s.i != sel {
+			continue
 		}
-		y += heights[i]
+		for dy := range s.n {
+			statusText(list, statusPadLeft, s.y+dy, string(style.marker),
+				term.AttributesUnion(base, style.markerAttr), statusIconX)
+		}
+	}
+	if !arrow {
+		return
+	}
+	// Keeping the arrow's row, listRows leaves one for the programs.
+	if last := spans[len(spans)-1]; last.i < len(heights)-1 || last.n < heights[last.i] {
+		statusText(w, statusPadLeft+(selEnd-statusPadLeft-1)/2, statusPadTop+rows,
+			string(style.moreBelow), style.moreBelowAttr, selEnd)
 	}
 }
 
+// statusSpan is where the sidebar draws the item at index i: n of its
+// rows, from row y.
+type statusSpan struct{ i, y, n int }
+
+// statusLayout returns where a sidebar height rows high draws the items
+// of heights from the one at top on, as far as they fit, the last one
+// cut short when it does not fit whole.
+func statusLayout(top int, heights []int, height int) []statusSpan {
+	var ret []statusSpan
+	y := statusPadTop
+	for i := top; i < len(heights) && y < height; i++ {
+		ret = append(ret, statusSpan{i: i, y: y, n: min(heights[i], height-y)})
+		y += heights[i] + statusGap
+	}
+	return ret
+}
+
+// listRows returns the rows below statusPadTop that the sidebar lists
+// the programs of heights in, and whether it keeps the row below them
+// for the arrow pointing at those out of sight below: it does as long
+// as they do not all fit, however far it is scrolled, for the programs
+// not to shift as the arrow comes and goes.
+func (v *statusView) listRows(heights []int) (int, bool) {
+	rows := v.height - statusPadTop
+	if rows > 1 && sectionHeight(heights) > rows {
+		return rows - 1, true
+	}
+	return rows, false
+}
+
+// layout lays the programs of heights out from top, keeping rows in
+// step with what the sidebar draws.
+func (v *statusView) layout(heights []int) []statusSpan {
+	rows, _ := v.listRows(heights)
+	spans := statusLayout(v.top, heights, statusPadTop+rows)
+	v.rows = slices.Repeat([]int{-1}, v.height)
+	for _, s := range spans {
+		for dy := range s.n {
+			v.rows[s.y+dy] = s.i
+		}
+	}
+	return spans
+}
+
+// scroll scrolls the sidebar a program down, or up, when there are
+// programs out of sight that way, the last one included until it is
+// whole, and reports whether it did.
+func (v *statusView) scroll(down bool) bool {
+	heights := v.entryHeights()
+	rows, _ := v.listRows(heights)
+	top := min(v.top, max(len(heights)-1, 0))
+	switch {
+	case down && top < len(heights)-1 && sectionHeight(heights[top:]) > rows:
+		top++
+	case !down && top > 0:
+		top--
+	default:
+		return false
+	}
+	v.top, v.scrolled = top, true
+	v.layout(heights)
+	return true
+}
+
 // drawEntry draws the program at index i from row y of w, which is
-// width cells wide: its icon, spinning while working, its name, bold
-// while hovered, its state and app, and its progress bar, if any.
-func (v *statusView) drawEntry(w term.Writer, i, y, width int) {
+// width cells wide, over base, whose colors win over those of its text:
+// its workspace, its icon, spinning while working, its name, its state
+// and app, and its progress bar, if any.
+func (v *statusView) drawEntry(w term.Writer, i, y, width int, base term.Attributes, selected bool) {
 	e := v.entries[i]
+	style := v.store.style
+	// Short of room, text keeps clear of the padding, as it does when it
+	// fits, and never splits a wide character there.
+	textEnd := width - statusPadRight - statusSelectionPad
+	if e.wsName != "" {
+		ws := style.workspaceAttr
+		if selected || i == v.hover {
+			ws = style.workspaceHighlightAttr
+		}
+		statusText(w, statusTextX, y, e.wsName, term.AttributesUnion(base, ws), textEnd)
+		y++
+	}
 	icon := e.icon
 	if e.state == programstatus.Working {
 		if frame, ok := v.spinnerFrame(); ok {
 			icon = frame
 		}
 	}
-	statusText(w, statusIconX, y, icon, e.iconAttr, statusTextX)
-	nameAttr := e.nameAttr
-	if i == v.hover {
-		nameAttr = term.AttributesUnion(statusBoldAttr, nameAttr)
+	statusText(w, statusIconX, y, icon, term.AttributesUnion(e.iconAttr, base), statusTextX)
+	statusText(w, statusTextX, y, e.name, term.AttributesUnion(e.nameAttr, base), textEnd)
+	statusText(w, statusTextX, y+1, e.sub, term.AttributesUnion(e.subAttr, base), textEnd)
+	if e.progress < 0 {
+		return
 	}
-	// Short of room, text keeps clear of the padding, as it does when it
-	// fits, and never splits a wide character there.
-	statusText(w, statusTextX, y, e.name, nameAttr, width-statusPadRight)
-	statusText(w, statusTextX, y+1, e.sub, e.subAttr, width-statusPadRight)
-	if e.progress >= 0 {
-		statusProgress(w, statusTextX, y+2, width-statusTextX-statusPadRight, e.progress)
+	bar := term.AttributesUnion(base, style.progressAttr)
+	remaining := style.progressRemainingAttr
+	if selected {
+		remaining = style.progressRemainingSelectedAttr
 	}
+	statusProgress(w, statusTextX, y+2, textEnd-statusTextX, e.progress, style.progressBar,
+		term.AttributesUnion(bar, style.progressDoneAttr), term.AttributesUnion(bar, remaining),
+		term.AttributesUnion(style.progressLabelAttr, base))
 }
 
 // statusScroll returns the first of the items of heights to show in
 // rows from top on, moved so the item at sel, if any, fits, or starts
-// them when it does not.
+// them when it does not, and back up while there is room below the last.
 func statusScroll(top, sel int, heights []int, rows int) int {
 	top = min(top, max(len(heights)-1, 0))
-	if sel < 0 || sel >= len(heights) {
-		return top
-	}
-	top = min(top, sel)
-	for top < sel && sectionHeight(heights[top:sel+1]) > rows {
-		top++
+	if sel >= 0 && sel < len(heights) {
+		top = min(top, sel)
+		for top < sel && sectionHeight(heights[top:sel+1]) > rows {
+			top++
+		}
 	}
 	// With room below the last item, scroll back up rather than leave
 	// rows empty while items above are hidden.
@@ -1125,30 +1278,37 @@ func statusText(w term.Writer, x, y int, s string, attr term.Attributes, end int
 	return x
 }
 
-// statusProgress draws a progress bar of pct percent at x, y, width
-// cells wide, with the percentage on its right, as the console draws
-// the progress of a command.
-func statusProgress(w term.Writer, x, y, width, pct int) {
-	label := strconv.Itoa(pct) + "%"
-	barW := width - 1 - len(label)
+// statusProgress draws a progress bar of pct percent, from 0 to 100, at
+// x, y, width cells wide, in chars: what is done in done, the rest in
+// remaining, and the percentage on its right in label, padded for the
+// bar to keep its length as the percentage grows. Its ends are colored
+// as the cells they stand in, for a bar of one character all along to
+// read as one. Too narrow for both ends, it draws the percentage alone.
+func statusProgress(
+	w term.Writer, x, y, width, pct int, chars component.ProgressBarCharSet, done, remaining, label term.Attributes,
+) {
+	text := fmt.Sprintf("%3d%%", pct)
+	barW := width - 1 - len(text)
 	if barW < 2 {
-		statusText(w, x, y, label, term.Attributes{}, x+width)
+		statusText(w, x, y, strconv.Itoa(pct)+"%", label, x+width)
 		return
 	}
-	chars := component.DefaultProgressBarCharSet()
-	inner := barW - 2
-	filled := pct * inner / 100
-	bar := make([]rune, 0, barW)
-	bar = append(bar, chars.Left)
-	for i := range inner {
+	// Rounding down keeps the bar from looking full before it is.
+	filled := pct * barW / 100
+	for i := range barW {
+		r, attr := chars.Empty, remaining
 		if i < filled {
-			bar = append(bar, chars.Filled)
-		} else {
-			bar = append(bar, chars.Empty)
+			r, attr = chars.Filled, done
 		}
+		switch i {
+		case 0:
+			r = chars.Left
+		case barW - 1:
+			r = chars.Right
+		}
+		w.SetCell(term.Coordinates{X: x + i, Y: y}, term.NewCell(r, 1, attr))
 	}
-	bar = append(bar, chars.Right)
-	statusText(w, x, y, string(bar)+" "+label, term.Attributes{}, x+width)
+	statusText(w, x+barW+1, y, text, label, x+width)
 }
 
 // drawPreview draws what the selected item previews, as it draws itself
@@ -1164,7 +1324,7 @@ func (v *statusView) drawPreview(w term.Writer, width, height int) {
 	if !ok || p.width == 0 || p.height == 0 {
 		s := component.NewStringWithConfig(statusPreviewNone, component.StringConfig{
 			Alignment:  component.AlignmentCentered,
-			Attributes: statusMutedAttr,
+			Attributes: v.store.style.placeholderAttr,
 		})
 		s.Resize(width, height)
 		s.Draw(w)
@@ -1226,20 +1386,27 @@ func (v *statusView) Handle(ev term.Event) (exit, handled bool) {
 	return false, false
 }
 
-// handleMouse selects the program clicked in the sidebar, and emboldens
-// the one the mouse moves over.
+// handleMouse selects the program clicked in the sidebar, scrolls the
+// sidebar under the wheel, and styles the program under the mouse once
+// it is done.
 func (v *statusView) handleMouse(ev term.Event) bool {
-	if ev.Key != 0 && ev.Key != term.MouseLeft {
+	inSidebar := ev.MouseX < v.sidebarWidth() && ev.MouseY >= 0
+	handled := true
+	switch ev.Key {
+	case 0, term.MouseLeft:
+	case term.MouseWheelDown, term.MouseWheelUp:
+		handled = inSidebar && v.scroll(ev.Key == term.MouseWheelDown)
+	default:
 		return false
 	}
 	v.hover = -1
-	if ev.MouseX < v.sidebarWidth() && ev.MouseY >= 0 && ev.MouseY < len(v.rows) {
+	if inSidebar && ev.MouseY < len(v.rows) {
 		v.hover = v.rows[ev.MouseY]
 	}
 	if ev.Key == term.MouseLeft {
 		v.selectAt(v.hover)
 	}
-	return true
+	return handled
 }
 
 // choose brings the selected program in sight. The view's window closes

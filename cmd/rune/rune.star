@@ -1089,14 +1089,6 @@ config = {
             # tab is in sight.
             "notify":          ["blocked", "error", "done"],
             "notify_interval": "2s",
-            # The :programstatus inbox. "marker" is drawn down the left of the
-            # selected workspace or program, in the color of
-            # browser.focus_tab_highlight_attr over the background of
-            # "selected_attr", which styles the rest of the selection.
-            "programstatus": {
-                "marker":        "▌",
-                "selected_attr": attr(bg = "gray"),
-            },
         },
         # Scrollback search, opened over the terminal itself. Its theme
         # follows editor.standard.search; only the key that opens it can be
@@ -1120,6 +1112,47 @@ config = {
             # Whether the plugin bar is rendered at the bottom instead of top.
             "bar_align_bottom":    True,
         },
+    },
+    # The :programstatus inbox. Colors left at "default" keep those of what
+    # they are drawn over.
+    "program_status": {
+        # The selected program, and the one under the mouse, all of it: their
+        # colors win over those of its text, and the selection's over the
+        # hover's.
+        "selected_attr": attr(bg = "gray"),
+        "hover_attr":    attr(flags = "bold"),
+        # Drawn down the left of the selected program. What "marker_attr"
+        # leaves at "default" takes the color of browser.focus_tab_highlight_attr
+        # and the background of the selection.
+        "marker":        "▌",
+        "marker_attr":   attr(fg = "default", bg = "default"),
+        # The workspace named above each program, and above the program
+        # selected or under the mouse, which the gray would blend into the
+        # selection. Their colors win over the program's.
+        "workspace_attr":           attr(fg = "gray"),
+        "workspace_highlight_attr": attr(fg = "silver"),
+        # The left end, what is done, what is not, and the right end of the
+        # progress bar of a working program, as in "╢░_╟". Ends are colored
+        # as what they stand in, so one character all along draws a bar that
+        # only its colors split.
+        "progress_bar":                     "🬋🬋🬋🬋",
+        # Beneath the whole bar, keeping its background over the selection's.
+        "progress_attr":                    attr(fg = "default", bg = "default"),
+        "progress_done_attr":               attr(fg = "green"),
+        "progress_remaining_attr":          attr(fg = "gray"),
+        # What is not done of the selected program's bar, which the gray of
+        # "progress_remaining_attr" would blend into the selection.
+        "progress_remaining_selected_attr": attr(fg = "silver"),
+        # The percentage on the bar's right.
+        "progress_label_attr":              attr(fg = "default", bg = "default"),
+        # Drawn below the programs when there are more out of sight below:
+        # nf-fa-arrow_down, as in tutorials.
+        "more_below":      "\uf063",
+        "more_below_attr": attr(fg = "default", bg = "default"),
+        # The line between the programs and the preview, and the text that
+        # stands in for them when there is nothing to show.
+        "divider_attr":     attr(fg = "gray"),
+        "placeholder_attr": attr(fg = "gray"),
     },
 }
 

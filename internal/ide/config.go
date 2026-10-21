@@ -47,6 +47,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"github.com/unstablebuild/rune-go-sdk/term/graphemecluster"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	yaml "gopkg.in/yaml.v3"
 	"unstable.build/rune/internal/browser"
@@ -5011,34 +5012,90 @@ func (c ideConfig) terminalStatus() (config.Config, bool) {
 	return c.getConfig(cfg, "status")
 }
 
-// statusInboxStyle reads terminal.status.programstatus, which styles
-// the selection of the status inbox. Its marker takes the color of the
-// marker of the focused tab, browser.focus_tab_highlight_attr, and its
-// lines the browser's frame.
+// statusInboxStyle reads program_status, which styles the status inbox.
+// Its marker takes what program_status.marker_attr leaves unset of the
+// marker of the focused tab, browser.focus_tab_highlight_attr, but its
+// background, which is the selection's, and its lines the browser's
+// frame.
 func (c ideConfig) statusInboxStyle() statusInboxStyle {
 	ret := defaultStatusInboxStyle()
 	ret.markerAttr = c.highlightTabAttr()
+	ret.markerAttr.Bg = term.ColorDefault
 	ret.frame = c.frameUnionCharset()
-	status, ok := c.terminalStatus()
+	if c.cfg == nil {
+		return ret
+	}
+	cfg, ok := c.getConfig(config.MapConfig(c.cfg), "program_status")
 	if !ok {
 		return ret
 	}
-	cfg, ok := c.getConfig(status, "programstatus")
-	if !ok {
-		return ret
-	}
-	const prefix = "terminal.status.programstatus."
+	const prefix = "program_status."
 	if marker, err := cfg.GetRune("marker"); err == nil {
 		ret.marker = marker
 	} else if err != config.ErrNotFound {
 		c.errors[prefix+"marker"] = err
 	}
-	if attr, err := config.GetAttributes(cfg, "selected_attr"); err == nil {
-		ret.selectedAttr = attr
+	if attr, err := config.GetAttributes(cfg, "marker_attr"); err == nil {
+		ret.markerAttr = term.AttributesUnion(ret.markerAttr, attr)
 	} else if err != config.ErrNotFound {
-		c.errors[prefix+"selected_attr"] = err
+		c.errors[prefix+"marker_attr"] = err
+	}
+	if arrow, err := cfg.GetRune("more_below"); err == nil {
+		ret.moreBelow = arrow
+	} else if err != config.ErrNotFound {
+		c.errors[prefix+"more_below"] = err
+	}
+	for _, a := range []struct {
+		key string
+		dst *term.Attributes
+	}{
+		{"selected_attr", &ret.selectedAttr},
+		{"hover_attr", &ret.hoverAttr},
+		{"workspace_attr", &ret.workspaceAttr},
+		{"workspace_highlight_attr", &ret.workspaceHighlightAttr},
+		{"progress_attr", &ret.progressAttr},
+		{"progress_done_attr", &ret.progressDoneAttr},
+		{"progress_remaining_attr", &ret.progressRemainingAttr},
+		{"progress_remaining_selected_attr", &ret.progressRemainingSelectedAttr},
+		{"progress_label_attr", &ret.progressLabelAttr},
+		{"more_below_attr", &ret.moreBelowAttr},
+		{"divider_attr", &ret.dividerAttr},
+		{"placeholder_attr", &ret.placeholderAttr},
+	} {
+		if attr, err := config.GetAttributes(cfg, a.key); err == nil {
+			*a.dst = attr
+		} else if err != config.ErrNotFound {
+			c.errors[prefix+a.key] = err
+		}
+	}
+	if bar, err := cfg.GetString("progress_bar"); err == nil {
+		if chars, err := parseProgressBarCharSet(bar); err == nil {
+			ret.progressBar = chars
+		} else {
+			c.errors[prefix+"progress_bar"] = err
+		}
+	} else if err != config.ErrNotFound {
+		c.errors[prefix+"progress_bar"] = err
 	}
 	return ret
+}
+
+// parseProgressBarCharSet reads a progress bar from its left end, what is
+// done of it, what is not, and its right end, as the console's ╢░_╟, each
+// one cell wide.
+func parseProgressBarCharSet(s string) (component.ProgressBarCharSet, error) {
+	chars := []rune(s)
+	if len(chars) != 4 {
+		return component.ProgressBarCharSet{}, fmt.Errorf(
+			"%q: expected 4 characters, the left end, done, not done and the right end, as in %q",
+			s, "╢░_╟")
+	}
+	for _, r := range chars {
+		if graphemecluster.StringWidth(string(r)) != 1 {
+			return component.ProgressBarCharSet{}, fmt.Errorf("%q: %q is not one cell wide", s, r)
+		}
+	}
+	return component.ProgressBarCharSet{Left: chars[0], Filled: chars[1], Empty: chars[2], Right: chars[3]}, nil
 }
 
 // tabStatusEnabled reads terminal.status.enabled; a disabled status
