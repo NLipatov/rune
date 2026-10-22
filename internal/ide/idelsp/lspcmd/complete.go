@@ -136,7 +136,8 @@ func (h *completeHandler) HandleCommand(ctx context.Context, cmd textapi.Command
 	}
 
 	ch := make(chan string, 1)
-	fetchCtx, cancel := context.WithCancel(context.Background())
+	// The fetch outlives the request ctx; closing the popup cancels it.
+	fetchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	fetchDone, fetchDoneCancel := context.WithCancel(context.Background())
 	drainDone, drainDoneCancel := context.WithCancel(context.Background())
 
@@ -176,7 +177,7 @@ func (h *completeHandler) HandleCommand(ctx context.Context, cmd textapi.Command
 		defer fetchDoneCancel()
 		defer close(ch)
 
-		result, err := h.lsp.Completion(ctx, params)
+		result, err := h.lsp.Completion(fetchCtx, params)
 		if err != nil {
 			h.log.Warn("completion fetch", "err", err)
 			return

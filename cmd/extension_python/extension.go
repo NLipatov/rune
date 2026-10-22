@@ -291,8 +291,11 @@ func setupManagedEnvironment(
 
 	if pin := debugpyPin(cfg, notify); pin != "" {
 		uvx := findTool(ctx, tools, notify, "uvx")
+		// ctx may be a command's, canceled once its output is drained,
+		// which would kill the prewarm.
+		prewarmCtx := context.WithoutCancel(ctx)
 		go debug.CapturePanicReport(func() {
-			prewarmDebugpy(ctx, uvx, exec, root.Dir, pin)
+			prewarmDebugpy(prewarmCtx, uvx, exec, root.Dir, pin)
 		})
 	}
 	return envErr

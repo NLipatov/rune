@@ -644,6 +644,47 @@ func TestCompleteHandlerCommandAsync(t *testing.T) {
 	require.NoError(t, gotFloating.Close())
 }
 
+func TestCompleteHandlerFetchOutlivesRequestContext(t *testing.T) {
+	release := make(chan struct{})
+	lsp := &mockLSP{
+		completionFn: func(
+			ctx context.Context, _ semanticapi.CompletionParams,
+		) (semanticapi.CompletionResult, error) {
+			<-release
+			if err := ctx.Err(); err != nil {
+				return semanticapi.CompletionResult{}, err
+			}
+			return semanticapi.CompletionResult{Items: testItems("alpha", "beta")}, nil
+		},
+	}
+	var gotFloating browserapi.Floating
+	wm := &mockWindowManager{
+		floatingFn: func(
+			h browserapi.Floating, _ browserapi.FloatingConfig,
+		) (browserapi.Window, error) {
+			gotFloating = h
+			return &mockWindow{id: 1}, nil
+		},
+	}
+	h := CompleteHandler(lsp, &mockEditor{}, wm, DefaultCompleteConfig(), term.NopInterrupter(), nil)
+
+	// textrpc cancels the request context once HandleCommand returns.
+	ctx, cancel := context.WithCancel(t.Context())
+	require.NoError(t, h.HandleCommand(ctx, textapi.Command{Resource: &mockHandler{}}))
+	cancel()
+	close(release)
+
+	floating, ok := gotFloating.(*completionHandler)
+	require.True(t, ok)
+	<-floating.fetchDone.Done()
+	<-floating.drainDone.Done()
+	floating.mu.Lock()
+	labels := len(floating.labels)
+	floating.mu.Unlock()
+	assert.Equal(t, 2, labels)
+	require.NoError(t, floating.Close())
+}
+
 func TestCompletionHandlerClose(t *testing.T) {
 	fetchCtx, fetchCancel := context.WithCancel(context.Background())
 	fetchDone, fetchDoneCancel := context.WithCancel(context.Background())
