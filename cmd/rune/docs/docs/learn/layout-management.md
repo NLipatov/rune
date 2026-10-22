@@ -114,6 +114,12 @@ Toggle maximization of the focused window with
 These layers keep directional resize commands off native text movement and
 selection key combinations.
 
+With the mouse, drag the border between two windows to resize them, and
+double-click it to reset the windows on both sides. A reset returns a window to
+its default size: the file explorer goes back to the width of its tree, and
+other windows share the space evenly. `windowresize reset` resets the focused
+window the same way.
+
 `windowtogglemaximize` is the quick "blow this window up, then put it back"
 toggle. It maximizes width and height, and a second press, or focusing another
 window, resets the size.

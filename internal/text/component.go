@@ -1240,9 +1240,10 @@ func (c *Component) SetFocus(win browser.Window) (browser.Window, error) {
 	return c.comp.SetFocus(win), nil
 }
 
-// SetWindowWidth sets the width of the given window.
-func (c *Component) SetWindowWidth(win browser.Window, width int) bool {
-	return c.comp.SetWindowWidth(win, width)
+// SetWindowDefaultWidth sets the width win is reset to and resizes win to it; see
+// browser.Component.SetWindowDefaultWidth.
+func (c *Component) SetWindowDefaultWidth(win browser.Window, width int) bool {
+	return c.comp.SetWindowDefaultWidth(win, width)
 }
 
 // Edit edits the resource with name and buffer

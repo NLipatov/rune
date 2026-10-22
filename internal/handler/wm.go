@@ -89,9 +89,9 @@ const (
 	winDragTop
 )
 
-// windowBarDoubleClickTimeout is the maximum delay between two bar
-// presses for them to count as a maximize/restore double click.
-const windowBarDoubleClickTimeout = 500 * time.Millisecond
+// frameDoubleClickTimeout is the maximum delay between two presses of a
+// window's bar or tile edge for them to count as a double click.
+const frameDoubleClickTimeout = 500 * time.Millisecond
 
 // WindowManager implements Handler as a tiled window manager.
 type WindowManager struct {
@@ -109,8 +109,13 @@ type WindowManager struct {
 	winDragWin               component.Window
 	winDragGrab              term.Coordinates
 	winDragMoved             bool
-	winBarPressID            uint64
-	winBarPressTime          time.Time
+	// winPress* describe the last frame press, which a second press on the
+	// same part of the same window's frame turns into a double click unless
+	// the pointer left the pressed cell. winPressPos is in root coordinates.
+	winPressID   uint64
+	winPressMode winDragMode
+	winPressPos  term.Coordinates
+	winPressTime time.Time
 	// pointerWin is the window whose content last got a mouse event,
 	// the zero Window for none. It is told the pointer left once the
 	// pointer's events go elsewhere.
@@ -294,7 +299,7 @@ func (wm *WindowManager) Handle(ev term.Event) (exit bool, handled bool) {
 		}
 
 		if ev.Key == term.MouseLeft && !wm.prevMouseLeftDrag && wm.config.Frame {
-			if exit, handled, done := wm.handleWindowFramePress(childAtMouse, ev); done {
+			if exit, handled, done := wm.handleWindowFramePress(childAtMouse, ev, mousePos); done {
 				if wm.winDrag != 0 {
 					term.SetPointerShape(ev, dragShape(wm.winDragWin, wm.winDrag))
 				}
@@ -669,8 +674,8 @@ func (wm *WindowManager) SetDefaultAttr(attr term.Attributes) {
 // SetHeight fixes the height of the given window and returns true if possible,
 // or returns false if not.
 //
-// Calling this method with height=0 effectively reverts back to the height
-// being automatically distributed between windows.
+// Calling this method with height=0 resets the height, as
+// component.WindowManager.SetHeight does.
 func (wm *WindowManager) SetHeight(win Window, height int) bool {
 	return wm.comp.SetHeight(win.Window, height)
 }
@@ -678,10 +683,17 @@ func (wm *WindowManager) SetHeight(win Window, height int) bool {
 // SetWidth fixes the width of the given window and returns true if possible,
 // or returns false if not.
 //
-// Calling this method with width=0 effectively reverts back to the width
-// being automatically distributed between windows.
+// Calling this method with width=0 resets the width to the window's default, as
+// component.WindowManager.SetWidth does.
 func (wm *WindowManager) SetWidth(win Window, width int) bool {
 	return wm.comp.SetWidth(win.Window, width)
+}
+
+// SetDefaultWidth sets the width the tile win is reset to, by SetWidth with 0 or by
+// double clicking a divider on its edge, and fixes it to that width; see
+// component.WindowManager.SetDefaultWidth.
+func (wm *WindowManager) SetDefaultWidth(win Window, width int) bool {
+	return wm.comp.SetDefaultWidth(win.Window, width)
 }
 
 // Resize : tui.Component
@@ -831,6 +843,9 @@ func (wm *WindowManager) handleWindowDrag(
 	barMove := wm.winDrag == winDragMove && wm.config.FloatingBar != nil
 	switch ev.Key {
 	case term.MouseLeft:
+		if mouse != wm.winPressPos {
+			wm.winPressID = 0
+		}
 		term.SetPointerShape(ev, dragShape(wm.winDragWin, wm.winDrag))
 		win := wm.newNode(wm.winDragWin)
 		before := wm.winDragWin.Position()
@@ -999,12 +1014,12 @@ func dragShape(win component.Window, mode winDragMode) term.PointerShape {
 }
 
 // handleWindowFramePress starts the drag of frameDragModeAt or closes
-// the window from its bar's close icon. A second press on the bar within
-// windowBarDoubleClickTimeout toggles maximize instead of moving. Event
-// coordinates are window-local. done reports whether the press was
-// consumed.
+// the window from its bar's close icon. A double click starts no drag: on
+// a bar it toggles maximize, and on a tile edge it resets the sizes of the
+// tiles that meet there. Event coordinates are window-local and mouse is
+// in root coordinates. done reports whether the press was consumed.
 func (wm *WindowManager) handleWindowFramePress(
-	win component.Window, ev term.Event,
+	win component.Window, ev term.Event, mouse term.Coordinates,
 ) (exit, handled, done bool) {
 	mode, closeIcon := wm.frameDragModeAt(win, ev.MouseX, ev.MouseY)
 	if closeIcon {
@@ -1016,15 +1031,28 @@ func (wm *WindowManager) handleWindowFramePress(
 	if win.IsFloating() {
 		wm.SetFocus(wm.newNode(win))
 	}
-	if mode == winDragMove {
-		if win.ID() == wm.winBarPressID &&
-			time.Since(wm.winBarPressTime) < windowBarDoubleClickTimeout {
-			wm.winBarPressID = 0
-			wm.comp.ToggleMaximize(win)
-			return false, true, true
+	doubleClick := win.ID() == wm.winPressID && mode == wm.winPressMode &&
+		time.Since(wm.winPressTime) < frameDoubleClickTimeout
+	wm.winPressID = 0
+	switch {
+	case doubleClick && mode == winDragMove:
+		wm.comp.ToggleMaximize(win)
+		return false, true, true
+	case doubleClick && !win.IsFloating():
+		if mode&winDragRight != 0 {
+			wm.comp.ResetTileEdge(win, compapi.AlignmentRight)
 		}
-		wm.winBarPressID = win.ID()
-		wm.winBarPressTime = time.Now()
+		if mode&winDragBottom != 0 {
+			wm.comp.ResetTileEdge(win, compapi.AlignmentBottom)
+		}
+		term.SetPointerShape(ev, dragShape(win, mode))
+		return false, true, true
+	}
+	wm.winPressID = win.ID()
+	wm.winPressMode = mode
+	wm.winPressPos = mouse
+	wm.winPressTime = time.Now()
+	if mode == winDragMove {
 		wm.winDragGrab = term.Coordinates{X: ev.MouseX, Y: 0}
 	}
 	wm.winDrag = mode

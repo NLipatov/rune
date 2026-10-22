@@ -1208,7 +1208,7 @@ func (h *testFileExplorerHost) Prompt(message string, options []string, bindings
 	return &testExplorerWindow{id: 99}
 }
 
-func (h *testFileExplorerHost) SetWindowWidth(win browser.Window, width int) bool {
+func (h *testFileExplorerHost) SetWindowDefaultWidth(win browser.Window, width int) bool {
 	h.lastWidth = width
 	return true
 }

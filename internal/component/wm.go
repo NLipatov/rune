@@ -384,8 +384,8 @@ func (wm *WindowManager) SplitRoot(alignment component.Alignment, content tui.Co
 // SetHeight fixes the height of the given window and returns true if possible,
 // or returns false if not.
 //
-// Calling this method with height=0 effectively reverts back to the height
-// being automatically distributed between windows.
+// Calling this method with height=0 resets the height: a floating window takes its
+// content's height, and a tile shares the height evenly with its siblings.
 func (wm *WindowManager) SetHeight(win Window, height int) bool {
 	fn, ok := win.node.(*floatingNode)
 	if ok {
@@ -402,8 +402,9 @@ func (wm *WindowManager) SetHeight(win Window, height int) bool {
 // SetWidth fixes the width of the given window and returns true if possible,
 // or returns false if not.
 //
-// Calling this method with width=0 effectively reverts back to the width
-// being automatically distributed between windows.
+// Calling this method with width=0 resets the width: a floating window takes its
+// content's width, and a tile its default width, set with SetDefaultWidth, or an even
+// share with its siblings when it has none or the default does not fit.
 func (wm *WindowManager) SetWidth(win Window, width int) bool {
 	fn, ok := win.node.(*floatingNode)
 	if ok {
@@ -415,6 +416,19 @@ func (wm *WindowManager) SetWidth(win Window, width int) bool {
 		return false
 	}
 	return t.SetFixedWidth(width)
+}
+
+// SetDefaultWidth sets the width the tile win is reset to, by SetWidth with 0 or by
+// ResetTileEdge, and fixes it to that width as SetWidth does. The default is kept even
+// when the width cannot be fixed now, and a width of 0 clears it. It returns false if
+// win is floating, whose default is its content's width, or if the width cannot be
+// fixed.
+func (wm *WindowManager) SetDefaultWidth(win Window, width int) bool {
+	t, ok := win.node.(*TileNode)
+	if !ok || wm.config.Frame && width < 3 && width > 0 {
+		return false
+	}
+	return t.SetDefaultWidth(width)
 }
 
 // MoveTileEdge moves the divider along the right edge of the tile win, or along its
@@ -450,6 +464,28 @@ func (wm *WindowManager) MoveTileEdge(win Window, edge component.Alignment, to i
 		return owner.SetFixedHeight(size)
 	}
 	return owner.SetFixedWidth(size)
+}
+
+// ResetTileEdge resets, as SetWidth or SetHeight with 0 do, the sizes of the two tiles
+// that meet at the divider along the right edge of the tile win, or along its bottom
+// edge for component.AlignmentBottom. As in MoveTileEdge, the divider may separate
+// ancestors of win. It returns false if win is floating, edge is neither AlignmentRight
+// nor AlignmentBottom, or the edge is the manager's.
+func (wm *WindowManager) ResetTileEdge(win Window, edge component.Alignment) bool {
+	t, ok := win.node.(*TileNode)
+	if !ok {
+		return false
+	}
+	dir, ok := edgeSplit(edge)
+	if !ok {
+		return false
+	}
+	split, idx, ok := t.divider(dir)
+	if !ok {
+		return false
+	}
+	split.resetDivider(idx)
+	return true
 }
 
 func edgeSplit(edge component.Alignment) (splitDir, bool) {

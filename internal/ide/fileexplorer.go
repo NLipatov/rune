@@ -87,7 +87,7 @@ func (e *lockedEditor) Edit(
 
 type fileExplorerHost interface {
 	Prompt(message string, options []string, bindings []term.KeyComb, promptHandler handler.PromptHandler) browser.Window
-	SetWindowWidth(win browser.Window, width int) bool
+	SetWindowDefaultWidth(win browser.Window, width int) bool
 	SetFocus(win browser.Window) (browser.Window, error)
 	Focus() (browser.Window, error)
 	OpenFile(uri workspaceapi.URI, win browser.Window) error
@@ -728,7 +728,7 @@ func (h *fileExplorerHandler) syncWidth() {
 	if h.host.FrameEnabled() {
 		width += 2
 	}
-	_ = h.host.SetWindowWidth(h.win, width)
+	_ = h.host.SetWindowDefaultWidth(h.win, width)
 }
 
 func (h *fileExplorerHandler) focusTarget() {
@@ -780,8 +780,8 @@ func (h exFileExplorerHost) Prompt(
 	return h.ex.comp.Prompt(message, options, bindings, promptHandler)
 }
 
-func (h exFileExplorerHost) SetWindowWidth(win browser.Window, width int) bool {
-	return h.ex.comp.SetWindowWidth(win, width)
+func (h exFileExplorerHost) SetWindowDefaultWidth(win browser.Window, width int) bool {
+	return h.ex.comp.SetWindowDefaultWidth(win, width)
 }
 
 func (h exFileExplorerHost) SetFocus(win browser.Window) (browser.Window, error) {

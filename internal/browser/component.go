@@ -1310,7 +1310,8 @@ func (c *Component) swapContent(
 	return true
 }
 
-// ResetWindowSize resets width and height to be automatically calculated.
+// ResetWindowSize resets the focus window's width and height to their defaults, see
+// SetWindowDefaultWidth, or to be automatically calculated when it has none.
 func (c *Component) ResetWindowSize() bool {
 	w := c.wm.Focus()
 	okh := c.wm.SetHeight(w, 0)
@@ -1366,13 +1367,16 @@ func (c *Component) DecreaseWindowWidth() bool {
 	return c.wm.SetWidth(w, w.Width()-1)
 }
 
-// SetWindowWidth sets the given window's width exactly.
-func (c *Component) SetWindowWidth(win Window, width int) bool {
+// SetWindowDefaultWidth sets the width win is reset to, by ResetWindowSize or by double
+// clicking a divider on its edge, and resizes win to it. Resizes by the user last only
+// until the next call. It returns false if win is closed, or if the width cannot be
+// set; see handler.WindowManager.SetDefaultWidth.
+func (c *Component) SetWindowDefaultWidth(win Window, width int) bool {
 	bwin := win.(*browserWindow)
 	if bwin.parent == nil {
 		return false
 	}
-	return c.wm.SetWidth(bwin.win, width)
+	return c.wm.SetDefaultWidth(bwin.win, width)
 }
 
 // SetFocus sets the underlying WindowManager's focus to win.

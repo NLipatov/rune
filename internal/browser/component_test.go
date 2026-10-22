@@ -3827,3 +3827,62 @@ func TestOffsetTabsPointerLeaves(t *testing.T) {
 		rhandlertest.RunPointerLeaves(t, v, size[0], size[1])
 	}
 }
+
+func TestWindowDefaultWidth(t *testing.T) {
+	edgeAt := func(win Window) term.Coordinates {
+		return term.Coordinates{X: win.Position().X + win.Width() - 1, Y: win.Position().Y + 2}
+	}
+	tests := []struct {
+		name  string
+		reset func(b *Component, win Window)
+	}{
+		{
+			name: "double click on the divider",
+			reset: func(b *Component, win Window) {
+				edge := edgeAt(win)
+				for range 2 {
+					b.Handle(mouseAt(b, term.MouseLeft, edge))
+					b.Handle(mouseAt(b, term.MouseRelease, edge))
+				}
+			},
+		},
+		{
+			name: "reset window size",
+			reset: func(b *Component, win Window) {
+				b.SetFocus(win)
+				require.True(t, b.ResetWindowSize())
+			},
+		},
+		{
+			name: "setting the default again",
+			reset: func(b *Component, win Window) {
+				require.True(t, b.SetWindowDefaultWidth(win, 12))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := dragConfig()
+			cfg.Frame = true
+			b := NewComponent(cfg)
+			require.NoError(t, b.Focus().SetContent(newTestHandler()))
+			win, ok := b.SplitRoot(component.AlignmentLeft, newTestHandler())
+			require.True(t, ok)
+			b.Resize(60, 20)
+			require.True(t, b.SetWindowDefaultWidth(win, 12))
+			b.Draw(term.NewStringWriter(60, 20))
+			require.Equal(t, 12, win.Width())
+
+			edge := edgeAt(win)
+			b.Handle(mouseAt(b, term.MouseLeft, edge))
+			b.Handle(mouseAt(b, term.MouseLeft, term.Coordinates{X: 29, Y: edge.Y}))
+			b.Handle(mouseAt(b, term.MouseRelease, term.Coordinates{X: 29, Y: edge.Y}))
+			b.Draw(term.NewStringWriter(60, 20))
+			require.Equal(t, 30, win.Width())
+
+			tt.reset(b, win)
+			b.Draw(term.NewStringWriter(60, 20))
+			assert.Equal(t, 12, win.Width())
+		})
+	}
+}

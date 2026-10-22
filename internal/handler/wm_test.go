@@ -3071,11 +3071,22 @@ func TestWindowBarDoubleClickMaximize(t *testing.T) {
 	t.Run("slow clicks start a move drag instead", func(t *testing.T) {
 		wm, _, _, _, floatWin := prepareWindowBarTest(t)
 		click(wm, 4, 0)
-		wm.winBarPressTime = time.Now().Add(-time.Second)
+		wm.winPressTime = time.Now().Add(-time.Second)
 		wm.Handle(mouseEv(term.MouseLeft, 4, 0))
 		assert.Equal(t, winDragMove, wm.winDrag)
 		assert.Equal(t, 8, floatWin.Width())
 		wm.Handle(mouseEv(term.MouseRelease, 4, 0))
+	})
+	t.Run("a press that moved the window does not start a double click", func(t *testing.T) {
+		wm, _, _, _, floatWin := prepareWindowBarTest(t)
+		wm.Handle(mouseEv(term.MouseLeft, 4, 0))
+		wm.Handle(mouseEv(term.MouseLeft, 6, 0))
+		wm.Handle(mouseEv(term.MouseRelease, 6, 0))
+		require.Equal(t, term.Coordinates{X: 2}, floatWin.Position())
+		wm.Handle(mouseEv(term.MouseLeft, 6, 0))
+		assert.Equal(t, winDragMove, wm.winDrag)
+		assert.Equal(t, 8, floatWin.Width())
+		wm.Handle(mouseEv(term.MouseRelease, 6, 0))
 	})
 	t.Run("close icon clicks do not maximize", func(t *testing.T) {
 		wm, _, _, _, floatWin := prepareWindowBarTest(t)
@@ -3162,6 +3173,126 @@ func TestTileEdgeResizeDrag(t *testing.T) {
 			assert.Zero(t, wm.winDrag, "press at %v", press)
 			assert.Len(t, presses, 1, "the press at %v reaches the content", press)
 		}
+	})
+}
+
+func TestTileEdgeDoubleClickReset(t *testing.T) {
+	// [a / b] | c
+	newLayout := func(t *testing.T) (*WindowManager, [3]Window) {
+		t.Helper()
+		wm := NewWindowManager(handler.NewTestHandler(), DefaultWindowManagerConfig())
+		wm.Resize(30, 12)
+		a := wm.Focus()
+		c, ok := wm.SplitVertical(a, handler.NewTestHandler())
+		require.True(t, ok)
+		b, ok := wm.SplitHorizontal(a, handler.NewTestHandler())
+		require.True(t, ok)
+		return wm, [3]Window{a, b, c}
+	}
+	sizes := func(wm *WindowManager, wins [3]Window) (ret [3][2]int) {
+		wm.Draw(term.NewStringWriter(30, 12))
+		for i, win := range wins {
+			ret[i] = [2]int{win.Width(), win.Height()}
+		}
+		return ret
+	}
+	click := func(wm *WindowManager, at term.Coordinates) {
+		wm.Handle(mouseEv(term.MouseLeft, at.X, at.Y))
+		wm.Handle(mouseEv(term.MouseRelease, at.X, at.Y))
+	}
+	drag := func(wm *WindowManager, wins [3]Window, from, to term.Coordinates) {
+		wm.Handle(mouseEv(term.MouseLeft, from.X, from.Y))
+		wm.Handle(mouseEv(term.MouseLeft, to.X, to.Y))
+		wm.Handle(mouseEv(term.MouseRelease, to.X, to.Y))
+		sizes(wm, wins)
+	}
+	initial := [3][2]int{{15, 6}, {15, 6}, {15, 12}}
+	widened := [3][2]int{{20, 6}, {20, 6}, {10, 12}}
+
+	tests := []struct {
+		name         string
+		defaultWidth map[int]int
+		drags        [][2]term.Coordinates
+		click        term.Coordinates
+		want         [3][2]int
+	}{
+		{
+			name:  "right edge",
+			drags: [][2]term.Coordinates{{xy(14, 2), xy(19, 2)}},
+			click: xy(19, 2),
+			want:  initial,
+		},
+		{
+			name:  "bottom edge",
+			drags: [][2]term.Coordinates{{xy(2, 5), xy(2, 8)}},
+			click: xy(2, 8),
+			want:  initial,
+		},
+		{
+			name:  "corner resets both edges",
+			drags: [][2]term.Coordinates{{xy(14, 5), xy(19, 8)}},
+			click: xy(19, 8),
+			want:  initial,
+		},
+		{
+			name:  "other dividers keep their sizes",
+			drags: [][2]term.Coordinates{{xy(14, 2), xy(19, 2)}, {xy(2, 5), xy(2, 8)}},
+			click: xy(2, 8),
+			want:  widened,
+		},
+		{
+			name:         "default width",
+			defaultWidth: map[int]int{2: 8},
+			drags:        [][2]term.Coordinates{{xy(21, 2), xy(15, 2)}},
+			click:        xy(15, 2),
+			want:         [3][2]int{{22, 6}, {22, 6}, {8, 12}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wm, wins := newLayout(t)
+			for i, width := range tt.defaultWidth {
+				require.True(t, wm.SetDefaultWidth(wins[i], width))
+			}
+			sizes(wm, wins)
+			for _, d := range tt.drags {
+				drag(wm, wins, d[0], d[1])
+			}
+			click(wm, tt.click)
+			_, handled := wm.Handle(mouseEv(term.MouseLeft, tt.click.X, tt.click.Y))
+			assert.True(t, handled)
+			assert.Zero(t, wm.winDrag)
+			wm.Handle(mouseEv(term.MouseRelease, tt.click.X, tt.click.Y))
+			assert.Equal(t, tt.want, sizes(wm, wins))
+		})
+	}
+
+	t.Run("slow clicks start a drag", func(t *testing.T) {
+		wm, wins := newLayout(t)
+		drag(wm, wins, xy(14, 2), xy(19, 2))
+		click(wm, xy(19, 2))
+		wm.winPressTime = time.Now().Add(-time.Second)
+		wm.Handle(mouseEv(term.MouseLeft, 19, 2))
+		assert.Equal(t, winDragRight, wm.winDrag)
+		wm.Handle(mouseEv(term.MouseRelease, 19, 2))
+		assert.Equal(t, widened, sizes(wm, wins))
+	})
+	t.Run("a press that dragged does not start a double click", func(t *testing.T) {
+		wm, wins := newLayout(t)
+		drag(wm, wins, xy(14, 2), xy(19, 2))
+		wm.Handle(mouseEv(term.MouseLeft, 19, 2))
+		assert.Equal(t, winDragRight, wm.winDrag)
+		wm.Handle(mouseEv(term.MouseRelease, 19, 2))
+		assert.Equal(t, widened, sizes(wm, wins))
+	})
+	t.Run("presses on different edges", func(t *testing.T) {
+		wm, wins := newLayout(t)
+		drag(wm, wins, xy(14, 2), xy(19, 2))
+		click(wm, xy(19, 2))
+		wm.Handle(mouseEv(term.MouseLeft, 2, 5))
+		assert.Equal(t, winDragBottom, wm.winDrag)
+		wm.Handle(mouseEv(term.MouseRelease, 2, 5))
+		assert.Equal(t, widened, sizes(wm, wins))
 	})
 }
 
