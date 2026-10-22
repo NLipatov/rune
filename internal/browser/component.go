@@ -277,9 +277,10 @@ func (c *Component) NewTab(
 	return t
 }
 
-// NewTabFromContent converts the given window's content into a tab, if it's not a tab
-// already. This method always returns a valid tab; whether it created one
-// or returned false because the window's content is already a tab.
+// NewTabFromContent converts the given window's content into a tab and
+// reports whether it created one. If the content is already a tab, that
+// tab is returned. If the window shows the wallpaper there is nothing to
+// convert, so it returns nil.
 func (c *Component) NewTabFromContent(
 	icon rune, name string, win Window,
 ) (*Tab, bool) {
@@ -288,6 +289,9 @@ func (c *Component) NewTabFromContent(
 	tab, ok := content.(*Tab)
 	if ok {
 		return tab, false
+	}
+	if isWallpaper(content) {
+		return nil, false
 	}
 	content = c.unwrapContent(content)
 	var uri workspaceapi.URI
@@ -1886,7 +1890,7 @@ func (c *Component) splitInverted(
 
 func (c *Component) newWindowContent(h browserapi.Handler) (browserapi.Handler, bool) {
 	if h == nil {
-		h = c.wallpaper()
+		return c.wallpaper(), false
 	}
 	_, ok := h.(*Tab)
 	if !ok {
@@ -2030,9 +2034,15 @@ func (c *Component) wallpaper() browserapi.Handler {
 	// if wallpaper is being set as a default on a floating window
 	floating := component.StaticFloating(instance, 80, 40)
 	return &browserContent{
-		Handler: NopFloatingHandler(handler.NopFloatingFromComponent(floating)),
-		c:       c,
+		Handler:   NopFloatingHandler(handler.NopFloatingFromComponent(floating)),
+		c:         c,
+		wallpaper: true,
 	}
+}
+
+func isWallpaper(h browserapi.Handler) bool {
+	bc, ok := h.(*browserContent)
+	return ok && bc.wallpaper
 }
 
 func (c *Component) newBrowserContent(content browserapi.Handler) browserapi.Handler {
@@ -2119,6 +2129,9 @@ type browserContent struct {
 	browserapi.Handler
 	closed bool
 	c      *Component
+	// wallpaper marks the placeholder of windows without content, which
+	// must never be mistaken for content the user can act on.
+	wallpaper bool
 }
 
 // allow for advanced use of content
@@ -2280,6 +2293,10 @@ func (c *Component) OnBarDrop(win thandler.Window, pos term.Coordinates) bool {
 	}
 
 	tab, _ := c.NewTabFromContent(winDropTabIcon, c.winDropTabName(src), src)
+	if tab == nil {
+		c.clearWinDropPreview()
+		return false
+	}
 	// Release the preview before closing the float so the teardown
 	// below cannot reclaim the window we are about to fill.
 	c.winDrop = winDropState{}

@@ -185,7 +185,8 @@ var (
 				Summary: "Convert the content of the window in focus into a tab. " +
 					"If no name is given, a random one is used. " +
 					"If the current window is a floating window, it is closed. " +
-					"If the content is already a tab, this command does nothing.",
+					"If the content is already a tab, or the window is empty, " +
+					"this command does nothing.",
 				Synopsis: "[<name> [<icon>]]",
 			},
 			handler: (*ex).convertTab,

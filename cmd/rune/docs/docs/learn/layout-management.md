@@ -179,11 +179,10 @@ preset provides a prompt-prefill binding:
 windowconverttab [<name> [<icon>]]
 ```
 
-If you omit the name, the tab gets a random two-word name such as
-`brave-otter`. Setting a custom icon requires an explicit name. If the
-focused window is a floating window, converting it to a tab closes the
-floater. If the window's content is already a tab, the command does
-nothing.
+If you omit the name, the tab gets a random two-word name such as `brave-otter`. Setting a
+custom icon requires an explicit name. If the focused window is a floating window,
+converting it to a tab closes it. If the window's content is already a tab, or the window
+is empty, the command does nothing.
 
 ## Floating windows
 

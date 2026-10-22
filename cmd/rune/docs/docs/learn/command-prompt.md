@@ -172,7 +172,7 @@ set of variables (`$FILE`, `$LINE`, `$WORD`, `$WORKSPACE_PATH`,
 Two built-in commands hand the rest of the line to a real shell:
 
 - `! <body>` opens a floating terminal that runs `body` through your
-  `$SHELL` and shows its live output. Close the floater with `<esc>`
+  `$SHELL` and shows its live output. Close the floating window with `<esc>`
   or let the command exit on its own.
 - `!! <body>` runs `body` headlessly through Rune's built-in shell
   interpreter. Stdout is discarded; stderr surfaces only if the
@@ -435,7 +435,7 @@ command:
 - [Aliases](./aliases.md): define your own commands, plus
   `$FILE`, `$1`, `${VAR:-default}`, and the rest of the expansion grammar.
 - [Tasks](./terminal/tasks.md): long-running commands pinned as tabs or
-  status bars instead of one-shot floaters.
+  status bars instead of one-shot floating windows.
 - [Key combination syntax](./key-syntax.md): the spelling of
   bindings like `<ctrl-r>` and `<m-enter>`.
 - [Exoeditor](./exoeditor.md): wire a guest terminal editor into

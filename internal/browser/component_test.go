@@ -58,6 +58,40 @@ func TestNewTabFromContent(t *testing.T) {
 		assert.Equal(t, tab, actualTab)
 	})
 
+	t.Run("does nothing if content is the wallpaper", func(t *testing.T) {
+		cases := []struct {
+			name string
+			win  func(t *testing.T, b *Component) Window
+		}{
+			{"initial window", func(_ *testing.T, b *Component) Window {
+				return b.Focus()
+			}},
+			{"split without content", func(t *testing.T, b *Component) Window {
+				win, ok := b.Split(browserapi.OrientationRight, b.Focus(), nil)
+				require.True(t, ok)
+				return win
+			}},
+			{"last tab removed", func(t *testing.T, b *Component) Window {
+				h := newTestHandler()
+				tab := b.NewTab(workspaceapi.URI{}, 'o', "d", h, h)
+				require.NoError(t, b.Focus().SetContent(tab))
+				require.False(t, b.RemoveWindowContent(b.Focus()))
+				return b.Focus()
+			}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				b := NewComponent(DefaultConfig())
+				win := tc.win(t, b)
+
+				tab, ok := b.NewTabFromContent('o', "tab", win)
+				assert.False(t, ok)
+				assert.Nil(t, tab)
+				assert.Empty(t, b.Tabs())
+			})
+		}
+	})
+
 	t.Run("converts scrollable into a tab", func(t *testing.T) {
 		b := NewComponent(DefaultConfig())
 
@@ -3418,6 +3452,30 @@ func TestWinDrop(t *testing.T) {
 		got, err := tile.Content()
 		require.NoError(t, err)
 		assert.Equal(t, tab, got)
+	})
+
+	t.Run("a float showing the wallpaper is a plain move", func(t *testing.T) {
+		b, tile, _, zoneAt := winDragBrowser(t, 60, 20)
+		h := newTestHandler()
+		tab := b.NewTab(workspaceapi.URI{}, 'm', "gone", h, nil)
+		float := b.Floating(newTestHandler(), browserapi.FloatingConfig{})
+		require.NoError(t, float.SetContent(tab))
+		require.False(t, b.RemoveWindowContent(float))
+		b.Resize(60, 20)
+		floats := b.FloatingWindows()
+		before, err := tile.Content()
+		require.NoError(t, err)
+
+		pos := zoneAt(winDropCenter)
+		barDrag(b, float, pos)
+		assert.False(t, b.OnBarDrop(float.(*browserWindow).win, pos))
+
+		assert.Equal(t, floats, b.FloatingWindows(), "the float survives a plain move")
+		assert.Empty(t, b.buffers)
+		after, err := tile.Content()
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+		assert.NotContains(t, drawString(b, 60, 20), winDropConvertLabel)
 	})
 }
 
