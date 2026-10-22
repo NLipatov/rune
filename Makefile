@@ -705,7 +705,7 @@ notary-credentials:
 # context excludes .git, and a git worktree's .git is a file pointing
 # outside the context anyway.
 PKG_OUT ?= $(TARGET)/pkg
-PKG_GO_VERSION ?= 1.27.2
+PKG_GO_VERSION ?= 1.27.3
 DEB_BASE_IMAGE ?= debian:bookworm
 PKG_HOST_ARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 PKG_TAG := $(shell git describe --tags --match 'v*')
