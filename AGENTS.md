@@ -11,6 +11,7 @@ Key entrypoints:
 - `cmd/rune` — the main Rune application
 - `cmd/rune-agent` — the Rune Agent extension binary and packages
 - `auth` — the account contract shared with the API server
+- `docs` — the documentation site, embedded into Rune's `docs:///` workspace
 - `internal/` — every non-`main` package (`ide`, `text`, `term`, `workspace`,
   `handler`, `component`, `llm`, `cell`, `debug`, ...)
 
@@ -23,7 +24,7 @@ separate `rune-go-sdk` module.
 
 Before researching, planning, implementing, or reviewing support for a new
 programming language, read
-[`cmd/rune/docs/docs/develop/languages.md`](cmd/rune/docs/docs/develop/languages.md)
+[`docs/docs/develop/languages.md`](docs/docs/develop/languages.md)
 in full. Treat that guide as the required integration checklist, not optional
 background reading. It defines how language extensions, project and tool
 management, LSP initialization, Tree-sitter assets, core symbol resolution,
@@ -36,11 +37,15 @@ language suite in Rune core for each affected layer, using the real language
 server, debugger adapter, native syntax queries, and committed `testdata`
 project where the guide requires them.
 
-`auth` is the one exception: the account claims, roles and endpoint paths in it
+`auth` is one exception: the account claims, roles and endpoint paths in it
 are a wire contract with the API server, which lives in a different module and
 therefore cannot import `internal/`. Both ends must deserialize the same token,
 so the package is public to keep them from drifting. Keep it that way — nothing
 else here is public API, and `auth` should stay free of editor concerns.
+
+`docs` is the other: `go:embed` cannot reach outside the embedding package's
+directory, so `docs/embed.go` exports the markdown for `cmd/rune` to import.
+Keep that package to the embedded filesystem and nothing else.
 
 ## Common Commands
 

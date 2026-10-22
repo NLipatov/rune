@@ -5,7 +5,7 @@ import {dump, load} from 'js-yaml';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const docsRoot = resolve(scriptDir, '..');
-const runeRoot = resolve(docsRoot, '..', '..', '..');
+const runeRoot = resolve(docsRoot, '..');
 const outputPath = join(docsRoot, 'src', 'data', 'keybindings.yaml');
 
 const presets = {modal: 'modal', helix: 'helix', standard: 'standard', emacs: 'emacs'};

@@ -54,7 +54,7 @@ jobs:
           missing=0
           while IFS= read -r f; do
             case "$f" in
-              ./cmd/rune/docs/*|*_gomock.go|*.pb.go) continue ;;
+              ./docs/node_modules/*|*_gomock.go|*.pb.go) continue ;;
             esac
             if ! head -3 "$f" | grep -q 'Copyright (C) .* The Rune Authors'; then
               echo "missing license header: $f"
