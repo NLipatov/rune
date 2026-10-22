@@ -663,6 +663,7 @@ func (i *IDE) init(
 	i.workspaceHandler.workspaceOpenCompleters = op.workspaceOpenCompleters
 	i.workspaceHandler.tutorialsInstalled = i.onTutorialsInstalled
 	i.workspaceHandler.sessionReopenDisabled = op.disableSessionReopen
+	i.workspaceHandler.sponsorsURL = op.sponsorsURL
 	i.workspaceHandler.onboardingActive = func() bool {
 		return op.startingTutorial != "" || i.tutorial.running()
 	}

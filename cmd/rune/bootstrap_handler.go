@@ -207,6 +207,7 @@ func (b *bootstrapHandler) buildPreIDE() (*ide.IDE, error) {
 		ide.WithTabsClickCallback(b.handleTabsClick),
 		ide.WithClipboard(b.clip),
 		ide.WithSystemURLOpener(b.openBrowser),
+		sponsorsOption(),
 	}
 	preIDE, err := ide.New("", b.configPath, b.dataDir, b.trust, b.storage, opts...)
 	if err != nil {
@@ -285,6 +286,7 @@ func (b *bootstrapHandler) buildConfiguredIDE(
 	opts = append(opts,
 		ide.WithReleaseManager(releaseManager),
 		nagPromptOption(client),
+		sponsorsOption(),
 		ide.WithWatchedFilesChangeHook(client.RecordWatchedFilesChange),
 		ide.WithCommandDispatchHook(client.RecordCommand),
 		b.network.completerOption(),

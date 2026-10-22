@@ -61,6 +61,12 @@ var (
 			},
 			handler: (*ex).keybindings,
 		},
+		"sponsors": {
+			man: textapi.CommandManual{
+				Summary: "Show the companies and people sponsoring Rune.",
+			},
+			handler: (*ex).sponsors,
+		},
 		"gitshow": {
 			man: textapi.CommandManual{
 				Summary: "Show the focused file's diff against HEAD in a floating window, " +

@@ -339,6 +339,14 @@ func WithSystemURLOpener(open func(*url.URL) error) Option {
 	}
 }
 
+// WithSponsorsURL sets the URL of the sponsor list the sponsors command
+// shows. Without it the command fails.
+func WithSponsorsURL(u string) Option {
+	return func(opts *options) {
+		opts.sponsorsURL = u
+	}
+}
+
 // WithShutdownShader configures the IDE to close with the
 // given Shader animation upon "quit" or "writequit".
 func WithShutdownShader(
@@ -556,6 +564,7 @@ type options struct {
 	cellPixelSize        func() (int, int)
 	clip                 clipboard.Register
 	systemOpenURL        func(*url.URL) error
+	sponsorsURL          string
 	afterFunc            func(time.Duration, func()) *time.Timer
 	debugCommands        bool
 	streamingOpen        bool

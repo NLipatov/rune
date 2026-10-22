@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os/user"
 	"runtime"
@@ -9227,4 +9229,115 @@ func TestExPointerLeaves(t *testing.T) {
 			assert.Equal(t, cursor, got, "prompt %t", prompt)
 		}
 	})
+}
+
+func TestSponsorsOpensFloatingWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		handler http.HandlerFunc
+		want    string
+	}{
+		{
+			name: "sponsor list",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"sponsor_url":"https://example.com/sponsor","tiers":[
+					{"id":"gold","name":"Gold","sponsors":[{"login":"acme","name":"Acme Corp"}]}]}`))
+			},
+			want: "Acme Corp",
+		},
+		{
+			name: "private sponsors",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"sponsor_url":"https://example.com/sponsor","tiers":[],"private_count":2}`))
+			},
+			want: "2 sponsors chose to keep their sponsorship private",
+		},
+		{
+			name: "api unavailable shows the page without sponsors",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "sponsors unavailable", http.StatusServiceUnavailable)
+			},
+			want: "Your name here",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			b := newExForTesting(t, texttest.NopEditor())
+			b.ex.sponsorsURL = srv.URL
+			scheduled := make(chan func(), 1)
+			b.ex.sched = func(fn func()) bool {
+				scheduled <- fn
+				return true
+			}
+			before := b.comp.Browser().FloatingWindows()
+
+			require.NoError(t, b.ex.sponsors(bgctx))
+			select {
+			case fn := <-scheduled:
+				fn()
+			case <-time.After(10 * time.Second):
+				t.Fatal("sponsors never scheduled its window")
+			}
+
+			require.Equal(t, before+1, b.comp.Browser().FloatingWindows())
+			assert.Contains(t, gitshowFrame(t, b, 100, 40), tc.want)
+		})
+	}
+}
+
+func TestSponsorsRequiresURL(t *testing.T) {
+	b := newExForTesting(t, texttest.NopEditor())
+	assert.EqualError(t, b.ex.sponsors(bgctx), "sponsors: no sponsor list is configured")
+}
+
+func TestOpenMarkdownFloatingScrollBar(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		md   string
+		want string
+	}{
+		{
+			name: "fits",
+			md:   "- one\n- two\n",
+			want: "┌────────────────────────────┐\n" +
+				"│                            │\n" +
+				"├────────────────────────────┤\n" +
+				"│                            │\n" +
+				"│     █●█████ Doc ██████     │\n" +
+				"│     │ • one          │     │\n" +
+				"│     │ • two          │     │\n" +
+				"│     │                │     │\n" +
+				"│     └────────────────┘     │\n" +
+				"│                            │\n" +
+				"│                            │\n" +
+				"└────────────────────────────┘",
+		},
+		{
+			name: "overflows",
+			md:   "- 1\n- 2\n- 3\n- 4\n- 5\n- 6\n- 7\n- 8\n- 9\n- 10\n- 11\n- 12\n- 13\n- 14\n- 15\n",
+			want: "┌────────────────────────────┐\n" +
+				"│                            │\n" +
+				"├────────────────────────────┤\n" +
+				"│     █●█████ Doc ██████     │\n" +
+				"│     │ • 1            #     │\n" +
+				"│     │ • 2            #     │\n" +
+				"│     │ • 3            #     │\n" +
+				"│     │ • 4            │     │\n" +
+				"│     │ • 5            │     │\n" +
+				"│     │ • 6            │     │\n" +
+				"│     └────────────────┘     │\n" +
+				"└────────────────────────────┘",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The default bar is a bold border, which a string frame
+			// cannot tell apart from the border itself.
+			wmCfg := thandler.DefaultWindowManagerConfig()
+			wmCfg.ScrollBarChar = '#'
+			b := newExForTesting(t, texttest.NopEditor(), text.WithWindowManagerConfig(wmCfg))
+			require.NoError(t, b.ex.openMarkdownFloating(tc.md, "Doc", 16))
+			assert.Equal(t, tc.want, gitshowFrame(t, b, 30, 12))
+		})
+	}
 }

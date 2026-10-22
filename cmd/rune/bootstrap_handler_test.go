@@ -17,6 +17,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -316,6 +317,53 @@ func TestApplyInitialThemeAttrHoldsEventLoopLock(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("applyInitialThemeAttr did not complete after the lock was released")
+	}
+}
+
+func TestBootstrapIDEsFetchSponsorsFromAPI(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		configBody string
+		ide        func(*bootstrapHandler) *ide.IDE
+	}{
+		{
+			name: "first run",
+			ide:  func(b *bootstrapHandler) *ide.IDE { return b.preIDE },
+		},
+		{
+			name:       "configured",
+			configBody: "editor:\n  mode: modal\n",
+			ide:        func(b *bootstrapHandler) *ide.IDE { return b.realIDE },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requested := make(chan struct{}, 1)
+			api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/sponsors" {
+					http.NotFound(w, r)
+					return
+				}
+				select {
+				case requested <- struct{}{}:
+				default:
+				}
+				_, _ = w.Write([]byte(`{"sponsor_url":"https://example.com/sponsor","tiers":[]}`))
+			})
+			b := newBootstrapForTest(t, configFilename, tc.configBody, t.TempDir(), api)
+			i := tc.ide(b)
+			require.NotNil(t, i)
+
+			b.mu.Lock()
+			err := i.DispatchCommand("sponsors")
+			b.mu.Unlock()
+			require.NoError(t, err)
+
+			select {
+			case <-requested:
+			case <-time.After(10 * time.Second):
+				t.Fatal("sponsors never requested the API server's sponsor list")
+			}
+		})
 	}
 }
 

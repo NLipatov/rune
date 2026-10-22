@@ -640,6 +640,7 @@ func runTUI(
 	opts = append(opts,
 		ide.WithReleaseManager(releaseManager),
 		nagPromptOption(client),
+		sponsorsOption(),
 		ide.WithWatchedFilesChangeHook(client.RecordWatchedFilesChange),
 		ide.WithCommandDispatchHook(client.RecordCommand),
 		net.completerOption(),
@@ -936,6 +937,12 @@ func waitLoginShellPATH(pathDone <-chan error) error {
 		return fmt.Errorf("resolving your login shell PATH timed out; tools on it " +
 			"(e.g. homebrew, mise) may be unavailable")
 	}
+}
+
+// sponsorsOption points the sponsors command at the configured API
+// server. Every ide.New in this binary needs it, or the command fails.
+func sponsorsOption() ide.Option {
+	return ide.WithSponsorsURL(strings.TrimRight(*flagHTTPAddress, "/") + "/api/sponsors")
 }
 
 // newAPIClient constructs the production apiclient.Client and its

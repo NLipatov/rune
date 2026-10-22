@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -215,8 +216,11 @@ type ex struct {
 	metaKey keymeta.Meta
 	// editorAutoSave records whether the editor flushes buffers
 	// automatically. The cheatsheet uses it to gate the manual write row.
-	editorAutoSave   bool
-	metaOpenURL      metaOpenURLConfig
+	editorAutoSave bool
+	metaOpenURL    metaOpenURLConfig
+	// sponsorsURL is where :sponsors fetches the sponsor list. Empty
+	// when the IDE was given none.
+	sponsorsURL      string
 	fullscreenID     uint64
 	exit             bool
 	forceExit        bool
@@ -3668,20 +3672,36 @@ func (e *ex) openMarkdownFloating(md, title string, width int) error {
 	})
 
 	var win browser.Window
-	floating := browser.FuncFloatingHandler(span, func() error {
+	view := markdownFloating{Floating: span, md: mdh, width: width}
+	h := browser.FuncScrollableFloatingHandler(view, func() error {
 		defer win.Close() //nolint:errcheck
 		return mdh.Close()
 	})
-	staticWidth := browser.FuncFloating(floating, func() (int, int) {
-		_, h := floating.Dimensions()
-		return width, h
-	})
-	win, err = e.comp.Floating(staticWidth, browserapi.FloatingConfig{
+	win, err = e.comp.Floating(h, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 		Title:     title,
 	})
 	return err
 }
+
+// markdownFloating pins a padded markdown view to a fixed width. The
+// padding Span does not pass on the markdown's scroll position, which
+// the window frame needs to draw a scroll bar, so it comes from md.
+type markdownFloating struct {
+	handler.Floating
+	md    *hmarkdown.Handler
+	width int
+}
+
+func (m markdownFloating) Dimensions() (int, int) {
+	_, h := m.Floating.Dimensions()
+	return m.width, h
+}
+
+func (m markdownFloating) SeekUp() bool       { return m.md.SeekUp() }
+func (m markdownFloating) SeekDown() bool     { return m.md.SeekDown() }
+func (m markdownFloating) SeekOffset() int    { return m.md.SeekOffset() }
+func (m markdownFloating) MaxSeekOffset() int { return m.md.MaxSeekOffset() }
 
 // cheatsheet renders a keys-first cheatsheet from the user's resolved key
 // bindings and editor mode and opens it as a read-only markdown view in a
@@ -3704,6 +3724,35 @@ func (e *ex) keybindings(_ context.Context, _ ...string) error {
 		return err
 	}
 	return e.openMarkdownFloating(md, "Key bindings", keybindingsWidth)
+}
+
+// sponsors fetches the sponsor list off the event loop and opens it in
+// a floating window once it arrives. If it cannot be fetched, the page
+// still opens with the tiers and open slots, as the website does.
+func (e *ex) sponsors(_ context.Context, _ ...string) error {
+	if e.sponsorsURL == "" {
+		return errors.New("sponsors: no sponsor list is configured")
+	}
+	go debug.CapturePanicReport(func() {
+		resp, err := fetchSponsors(e.bgCtx, http.DefaultClient, e.sponsorsURL)
+		if err != nil {
+			log.WithError(err).Warn("sponsors: show page without sponsors")
+		}
+		md, err := renderSponsors(resp)
+		if err != nil {
+			log.WithError(err).Error("sponsors: render")
+			return
+		}
+		e.sched(func() {
+			if e.closed {
+				return
+			}
+			if err := e.openMarkdownFloating(md, "Sponsors", sponsorsWidth); err != nil {
+				log.WithError(err).Error("sponsors: open window")
+			}
+		})
+	})
+	return nil
 }
 
 func (e *ex) gitshow(ctx context.Context, _ ...string) error {

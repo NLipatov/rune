@@ -152,6 +152,7 @@ type workspaceManagerHandler struct {
 	events                  *eventRouter
 	tabsClickCallback       func(int) bool
 	extensionRunner         ExtensionsRunner
+	sponsorsURL             string
 	trust                   *pkgtrust.Store
 	sixDir                  string
 	extensionsStorage       storageapi.Service
@@ -769,6 +770,7 @@ func (h *workspaceManagerHandler) init(
 	if err != nil {
 		return fmt.Errorf("new ex: %w", err)
 	}
+	h.empty.sponsorsURL = h.sponsorsURL
 	tm.tm = h.empty.Browser()
 	if err = h.subscribeAllCommands(h.empty); err != nil {
 		return err
@@ -1965,6 +1967,7 @@ func (h *workspaceManagerHandler) buildWorkspaceAsync(
 		}
 		return nil, fmt.Errorf("new ex: %w", err)
 	}
+	ex.sponsorsURL = h.sponsorsURL
 	if symbolDB != nil {
 		if serr := ex.comp.SubscribeEvents(
 			symboldb.EditorEvents(), symbolDB,

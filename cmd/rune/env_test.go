@@ -158,10 +158,20 @@ func newConfiguredBootstrapForEnvTest(
 	t *testing.T, filename, configBody, installBackupDir string,
 ) *bootstrapHandler {
 	t.Helper()
+	b := newBootstrapForTest(t, filename, configBody, installBackupDir, http.NotFoundHandler())
+	require.NotNil(t, b.realIDE, "config.yaml in dataDir must build the configured IDE directly")
+	return b
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
+// newBootstrapForTest builds a real bootstrapHandler whose API server is
+// api. An empty configBody writes no config, so the handler starts the
+// first-run flow on the pre-config IDE instead of the configured one.
+func newBootstrapForTest(
+	t *testing.T, filename, configBody, installBackupDir string, api http.Handler,
+) *bootstrapHandler {
+	t.Helper()
+
+	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
 
 	// The live-apply hook changes the process environment.
@@ -170,7 +180,9 @@ func newConfiguredBootstrapForEnvTest(
 
 	dataDir := t.TempDir()
 	configPath := filepath.Join(dataDir, filename)
-	require.NoError(t, os.WriteFile(configPath, []byte(configBody), 0o644))
+	if configBody != "" {
+		require.NoError(t, os.WriteFile(configPath, []byte(configBody), 0o644))
+	}
 
 	restoreFlags := overrideBootstrapFlags(t, bootstrapFlagOverrides{
 		httpAddress:    srv.URL,
@@ -195,7 +207,6 @@ func newConfiguredBootstrapForEnvTest(
 		installBackupDir, rootCfg, pkgtrust.NewStore(dataDir, nil),
 	)
 	require.NoError(t, err)
-	require.NotNil(t, b.realIDE, "config.yaml in dataDir must build the configured IDE directly")
 	t.Cleanup(func() { _ = b.Close() })
 	return b
 }
