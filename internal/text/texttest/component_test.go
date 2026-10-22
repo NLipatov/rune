@@ -238,6 +238,10 @@ func (t *testLoader) Recover(
 	return t.Load(file, buf, workspaceapi.URI{}, false)
 }
 
+func (t *testLoader) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(t, file), nil
+}
+
 func (t *testLoader) URI(path string) (workspaceapi.URI, error) {
 	panic("unused")
 }
@@ -2867,6 +2871,10 @@ func TestFlush(t *testing.T) {
 		win, err := c.Focus()
 		require.NoError(t, err)
 
+		mockWorkspace.EXPECT().LoaderFor(gomock.Any()).DoAndReturn(
+			func(file workspaceapi.URI) (workspace.FileLoader, error) {
+				return workspace.FileLoaderOf(mockWorkspace, file), nil
+			}).Times(1)
 		mockWorkspace.EXPECT().Load(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(mockFlusherCloser, nil).Times(1)
 		mockWorkspace.EXPECT().PathCaseSensitive().Return(true).AnyTimes()
@@ -3057,6 +3065,10 @@ func TestReload(t *testing.T) {
 		win, err := c.Focus()
 		require.NoError(t, err)
 
+		mockWorkspace.EXPECT().LoaderFor(gomock.Any()).DoAndReturn(
+			func(file workspaceapi.URI) (workspace.FileLoader, error) {
+				return workspace.FileLoaderOf(mockWorkspace, file), nil
+			}).Times(1)
 		mockWorkspace.EXPECT().Load(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 			Return(mockFlusherCloser, nil).Times(1)
 		mockWorkspace.EXPECT().PathCaseSensitive().Return(true).AnyTimes()

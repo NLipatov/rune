@@ -203,6 +203,10 @@ func (w *testLoader) Recover(
 	return w.Load(filePath, buf, swapFilePath, false)
 }
 
+func (w *testLoader) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(w, file), nil
+}
+
 func (w *testLoader) ReadDir(name string) ([]os.DirEntry, error) {
 	return nil, nil
 }
@@ -3563,6 +3567,12 @@ func (w *readfileCrossWorkspaceLoader) Load(
 		buf.WriteString(w.currentContents)
 	}
 	return &testFileBuffer{readOnly: readOnly}, nil
+}
+
+func (w *readfileCrossWorkspaceLoader) LoaderFor(
+	file workspaceapi.URI,
+) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(w, file), nil
 }
 
 func (w *readfileCrossWorkspaceLoader) OpenFile(
@@ -7053,6 +7063,8 @@ func TestSwitchToTab(t *testing.T) {
 func TestConvertTab(t *testing.T) {
 	cases := []struct {
 		name string
+		// empty leaves the window showing the wallpaper.
+		empty bool
 		// alreadyTab converts the window content to a "build" tab with
 		// icon 'X' before running the command under test.
 		alreadyTab bool
@@ -7060,6 +7072,8 @@ func TestConvertTab(t *testing.T) {
 		wantName   string
 		wantIcon   rune
 	}{
+		{name: "empty window", empty: true},
+		{name: "empty window with name and icon", empty: true, args: []string{"build", "X"}},
 		{name: "no args", wantName: "brave-otter", wantIcon: defaultConvertTabIcon},
 		{name: "empty name", args: []string{""}, wantName: "brave-otter",
 			wantIcon: defaultConvertTabIcon},
@@ -7080,13 +7094,19 @@ func TestConvertTab(t *testing.T) {
 			defer b.Close()
 			ctx := context.Background()
 
-			require.NoError(t, b.terminalnew(ctx))
+			if !tc.empty {
+				require.NoError(t, b.terminalnew(ctx))
+			}
 			if tc.alreadyTab {
 				require.NoError(t, b.convertTab(ctx, "build", "X"))
 			}
 			require.NoError(t, b.convertTab(ctx, tc.args...))
 
 			br := b.comp.Browser()
+			if tc.empty {
+				assert.Empty(t, br.Tabs())
+				return
+			}
 			require.Len(t, br.Tabs(), 1)
 			tab, ok := b.comp.FocusTab()
 			require.True(t, ok)

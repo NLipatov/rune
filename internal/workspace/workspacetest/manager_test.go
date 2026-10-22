@@ -48,7 +48,7 @@ func TestManager(t *testing.T) {
 			m.RegisterScheme("test", NewNopScheme("test")))
 	})
 
-	t.Run("registers scheme to be used by AddWorkspace", func(*testing.T) {
+	t.Run("registers scheme to be used by AcquireWorkspace", func(*testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestManager(t *testing.T) {
 		assert.Nil(t, w)
 		require.False(t, ok)
 
-		w, err = m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err = m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		assert.NotNil(t, w)
 		require.NoError(t, err)
 
@@ -75,7 +75,7 @@ func TestManager(t *testing.T) {
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		assert.NotNil(t, w)
 		require.NoError(t, err)
 
@@ -94,29 +94,29 @@ func TestManager(t *testing.T) {
 		require.NoError(t, m.Close())
 	})
 
-	t.Run("AddWorkspace creates a new Workspace if URI is different", func(*testing.T) {
+	t.Run("AcquireWorkspace creates a new Workspace if URI is different", func(*testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
 
-		w0, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w0, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		assert.NotNil(t, w0)
 		require.NoError(t, err)
 
-		w1, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/blah"))
+		w1, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/blah"))
 		assert.NotNil(t, w1)
 		require.NoError(t, err)
 
 		assert.NotEqual(t, w0, w1)
 
-		w2, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/blah/hello"))
+		w2, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/blah/hello"))
 		assert.NotNil(t, w2)
 		require.NoError(t, err)
 
 		assert.NotEqual(t, w1, w2)
 
 		// same as w2
-		w3, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/blah/hello"))
+		w3, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/blah/hello"))
 		assert.NotNil(t, w2)
 		require.NoError(t, err)
 
@@ -131,11 +131,11 @@ func TestManager(t *testing.T) {
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
 
-		w0, err := m.AddWorkspace(ctx, parseURI(t, "test:///var/"))
+		w0, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///var/"))
 		assert.NotNil(t, w0)
 		require.NoError(t, err)
 
-		w1, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/blah"))
+		w1, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/blah"))
 		assert.NotNil(t, w1)
 		require.NoError(t, err)
 
@@ -163,10 +163,9 @@ func TestManager(t *testing.T) {
 		require.NoError(t, err)
 
 		uri := parseURI(t, "test:///tmp/")
-		w, err := m.AddWorkspace(ctx, uri)
+		w, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
 		require.NotNil(t, w)
-		m.IncrementReference(uri)
 
 		detached, ok := m.ReleaseWorkspace(uri)
 		require.True(t, ok)
@@ -180,7 +179,7 @@ func TestManager(t *testing.T) {
 		// A new workspace registered under the same uri must survive
 		// closing the detached one: the detached value must not be
 		// wrapped in the manager-removing decorator.
-		w2, err := m.AddWorkspace(ctx, uri)
+		w2, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
 		require.NotNil(t, w2)
 
@@ -197,10 +196,10 @@ func TestManager(t *testing.T) {
 		require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
 
 		uri := parseURI(t, "test:///tmp/")
-		_, err := m.AddWorkspace(ctx, uri)
+		_, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
-		m.IncrementReference(uri)
-		m.IncrementReference(uri)
+		_, err = m.AcquireWorkspace(ctx, uri)
+		require.NoError(t, err)
 
 		detached, ok := m.ReleaseWorkspace(uri)
 		assert.False(t, ok, "release with another holder must not detach")
@@ -218,79 +217,19 @@ func TestManager(t *testing.T) {
 		assert.Equal(t, 1, *closes)
 	})
 
-	t.Run("ReleaseWorkspace leaves an unreferenced entry registered and open", func(t *testing.T) {
-		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
-		closes := new(int)
-		require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
-
-		uri := parseURI(t, "test:///tmp/")
-		_, err := m.AddWorkspace(ctx, uri)
-		require.NoError(t, err)
-
-		detached, ok := m.ReleaseWorkspace(uri)
-		assert.False(t, ok)
-		assert.Nil(t, detached)
-		assert.True(t, m.HasWorkspace(uri))
-		assert.Zero(t, *closes)
-
-		require.NoError(t, m.Close())
-	})
-
-	t.Run("an entry shared by a workspace and a file closes once both release", func(t *testing.T) {
-		for _, tc := range []struct {
-			name      string
-			fileFirst bool
-		}{
-			{name: "workspace released first"},
-			{name: "file released first", fileFirst: true},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				m := workspace.NewManager(config.NopConfig(), inlineSchedule)
-				closes := new(int)
-				require.NoError(t, m.RegisterScheme("test", newCloseCountingScheme(closes)))
-
-				uri := parseURI(t, "test:///tmp/")
-				_, err := m.AddWorkspace(ctx, uri)
-				require.NoError(t, err)
-				m.IncrementReference(uri)
-				m.IncrementReference(uri)
-
-				releaseWorkspace := func() {
-					if detached, ok := m.ReleaseWorkspace(uri); ok {
-						require.NoError(t, detached.Close())
-					}
-				}
-				releaseFile := func() { require.NoError(t, m.DecrementReference(uri)) }
-				first, second := releaseWorkspace, releaseFile
-				if tc.fileFirst {
-					first, second = releaseFile, releaseWorkspace
-				}
-
-				first()
-				assert.True(t, m.HasWorkspace(uri))
-				assert.Zero(t, *closes)
-
-				second()
-				assert.False(t, m.HasWorkspace(uri), "the last release must unregister the entry")
-				assert.Equal(t, 1, *closes, "the last release must close the scheme exactly once")
-			})
-		}
-	})
-
 	t.Run("stale wrapped Close does not evict a successor instance", func(t *testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		err := m.RegisterScheme("test", NewNopScheme("test"))
 		require.NoError(t, err)
 
 		uri := parseURI(t, "test:///tmp/")
-		stale, err := m.AddWorkspace(ctx, uri)
+		stale, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
-		m.IncrementReference(uri)
 
 		_, ok := m.ReleaseWorkspace(uri)
 		require.True(t, ok)
 
-		successor, err := m.AddWorkspace(ctx, uri)
+		successor, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
 
 		// The wrapped handle from before the remove is now stale:
@@ -298,7 +237,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, stale.Close())
 		assert.True(t, m.HasWorkspace(uri),
 			"a stale wrapped handle's Close must not evict the successor")
-		w, err := m.AddWorkspace(ctx, uri)
+		w, err := m.AcquireWorkspace(ctx, uri)
 		require.NoError(t, err)
 		assert.True(t, successor == w,
 			"the successor must remain the registered entry")
@@ -314,9 +253,10 @@ func TestManager(t *testing.T) {
 			})
 		require.NoError(t, err)
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		assert.Nil(t, w)
 		require.Error(t, err)
+		assert.False(t, m.HasWorkspace(parseURI(t, "test:///tmp/")))
 
 		require.NoError(t, m.Close())
 	})
@@ -347,7 +287,7 @@ func TestManager(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		require.NoError(t, err)
 		assert.NotNil(t, w)
 		assert.True(t, called)
@@ -355,7 +295,7 @@ func TestManager(t *testing.T) {
 		require.NoError(t, m.Close())
 	})
 
-	// Manager wraps every workspace returned by AddWorkspace in
+	// Manager wraps every workspace returned by AcquireWorkspace in
 	// a managerWorkspace, which embeds workspace.Workspace via
 	// an interface field — so OnDisconnect is NOT promoted into
 	// the wrapper's method set even when the underlying scheme
@@ -364,7 +304,7 @@ func TestManager(t *testing.T) {
 	// type-assertion would always fail at runtime for SSH
 	// workspaces because the Manager's wrapper hides the
 	// optional interface.
-	t.Run("AddWorkspace result forwards RemoteScheme.OnDisconnect", func(t *testing.T) {
+	t.Run("AcquireWorkspace result forwards RemoteScheme.OnDisconnect", func(t *testing.T) {
 		m := workspace.NewManagerWithWorkspaceFunc(config.NopConfig(),
 			inlineSchedule,
 			func(uri workspaceapi.URI, _ schemeapi.Scheme, _ func(func()) bool) workspace.Workspace {
@@ -375,7 +315,7 @@ func TestManager(t *testing.T) {
 			})
 		require.NoError(t, m.RegisterScheme("test", NewNopScheme("test")))
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		require.NoError(t, err)
 
 		rs, ok := w.(workspace.RemoteScheme)
@@ -391,9 +331,9 @@ func TestManager(t *testing.T) {
 
 	// InstallRoot is part of the Workspace interface, so unlike
 	// OnDisconnect it is promoted through Manager's wrapper; this
-	// pins that AddWorkspace surfaces the wrapped workspace's answer
+	// pins that AcquireWorkspace surfaces the wrapped workspace's answer
 	// rather than a wrapper default.
-	t.Run("AddWorkspace result surfaces the workspace InstallRoot", func(t *testing.T) {
+	t.Run("AcquireWorkspace result surfaces the workspace InstallRoot", func(t *testing.T) {
 		m := workspace.NewManagerWithWorkspaceFunc(config.NopConfig(),
 			inlineSchedule,
 			func(uri workspaceapi.URI, _ schemeapi.Scheme, _ func(func()) bool) workspace.Workspace {
@@ -404,7 +344,7 @@ func TestManager(t *testing.T) {
 			})
 		require.NoError(t, m.RegisterScheme("test", NewNopScheme("test")))
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		require.NoError(t, err)
 
 		root, err := w.InstallDataDir(ctx)
@@ -418,7 +358,7 @@ func TestManager(t *testing.T) {
 		m := workspace.NewManager(config.NopConfig(), inlineSchedule)
 		require.NoError(t, m.RegisterScheme("test", NewNopScheme("test")))
 
-		w, err := m.AddWorkspace(ctx, parseURI(t, "test:///tmp/"))
+		w, err := m.AcquireWorkspace(ctx, parseURI(t, "test:///tmp/"))
 		require.NoError(t, err)
 
 		root, err := w.InstallDataDir(ctx)
@@ -483,7 +423,7 @@ func TestIntegrationManagerWithWorkspaceLoad(t *testing.T) {
 		require.NoError(t, manager.RegisterScheme("finn", NewNopScheme("finn")))
 		require.NoError(t, manager.RegisterScheme("jake", NewNopScheme("jake")))
 
-		finnWorkspace, err := manager.AddWorkspace(ctx, finnWorkspaceURI)
+		finnWorkspace, err := manager.AcquireWorkspace(ctx, finnWorkspaceURI)
 		require.NoError(t, err)
 
 		_, err = finnWorkspace.Load(jakeFileURI, cell.NewBuffer(), jakeSwapDirURI, false)
@@ -498,7 +438,7 @@ func TestIntegrationManagerWithWorkspaceLoad(t *testing.T) {
 		require.NoError(t, manager.RegisterScheme("finn", workspace.LoggingScheme("finn", NewNopScheme("finn"))))
 		require.NoError(t, manager.RegisterScheme("jake", workspace.LoggingScheme("jake", NewNopScheme("jake"))))
 
-		finnWorkspace, err := manager.AddWorkspace(ctx, finnWorkspaceURI)
+		finnWorkspace, err := manager.AcquireWorkspace(ctx, finnWorkspaceURI)
 		require.NoError(t, err)
 
 		finnWorkspace = workspace.Multi(ctx, manager, finnWorkspace, finnWorkspaceURI)

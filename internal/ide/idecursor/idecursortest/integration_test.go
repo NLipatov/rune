@@ -513,17 +513,13 @@ func (m testWorkspaceManager) UnregisterScheme(string) error {
 	return nil
 }
 
-func (m testWorkspaceManager) AddWorkspace(context.Context, workspaceapi.URI) (workspace.Workspace, error) {
+func (m testWorkspaceManager) AcquireWorkspace(context.Context, workspaceapi.URI) (workspace.Workspace, error) {
 	return m.workspace, nil
 }
 
 func (m testWorkspaceManager) Workspace(uri workspaceapi.URI) (workspace.Workspace, bool, error) {
 	return m.workspace, workspaceapi.HasPrefix(uri, m.workspaceURI), nil
 }
-
-func (testWorkspaceManager) IncrementReference(workspaceapi.URI) {}
-
-func (testWorkspaceManager) DecrementReference(workspaceapi.URI) error { return nil }
 
 func (testWorkspaceManager) ReleaseWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
 	return nil, false

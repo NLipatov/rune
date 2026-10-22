@@ -1442,6 +1442,11 @@ func (t *testLoader) Recover(
 ) (workspace.FlusherCloser, error) {
 	return t.Load(file, buf, workspaceapi.URI{}, false)
 }
+
+func (t *testLoader) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(t, file), nil
+}
+
 func (t *testLoader) URI(path string) (workspaceapi.URI, error) {
 	panic("unused")
 }

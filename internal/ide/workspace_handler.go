@@ -265,10 +265,10 @@ type visibleWorkspaceManager struct {
 	manager workspace.WorkspaceManager
 }
 
-func (m visibleWorkspaceManager) AddWorkspace(
+func (m visibleWorkspaceManager) AcquireWorkspace(
 	ctx context.Context, uri workspaceapi.URI,
 ) (workspace.Workspace, error) {
-	return m.manager.AddWorkspace(ctx, uri)
+	return m.manager.AcquireWorkspace(ctx, uri)
 }
 
 func (m visibleWorkspaceManager) Workspace(
@@ -289,14 +289,6 @@ func (m visibleWorkspaceManager) RegisterScheme(
 
 func (m visibleWorkspaceManager) UnregisterScheme(scheme string) error {
 	return m.manager.UnregisterScheme(scheme)
-}
-
-func (m visibleWorkspaceManager) IncrementReference(uri workspaceapi.URI) {
-	m.manager.IncrementReference(uri)
-}
-
-func (m visibleWorkspaceManager) DecrementReference(uri workspaceapi.URI) error {
-	return m.manager.DecrementReference(uri)
 }
 
 func (m visibleWorkspaceManager) ReleaseWorkspace(
@@ -715,15 +707,14 @@ func (h *workspaceManagerHandler) init(
 	h.status = newStatusStore(h, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
 		h.scheduleNextTick, h.events.globalInterrupter())
 
-	homeWorkspace, err := h.workspace.AddWorkspace(ctx, homeDirUri)
+	// Files and workspaces under the home directory share this manager
+	// entry; the reference held here for the IDE's lifetime keeps their
+	// release from closing the home scheme. Manager.Close still tears it
+	// down at shutdown.
+	homeWorkspace, err := h.workspace.AcquireWorkspace(ctx, homeDirUri)
 	if err != nil {
 		return fmt.Errorf("add home workspace: %v", err)
 	}
-	// Files and workspaces under the home directory share this manager
-	// entry and reference-count it; holding a reference for the IDE's
-	// lifetime keeps their release from closing the home scheme.
-	// Manager.Close still tears it down at shutdown.
-	h.workspace.IncrementReference(homeDirUri)
 
 	h.homeURI = homeDirUri
 	h.homeWorkspace = homeWorkspace
@@ -1841,15 +1832,10 @@ func (h *workspaceManagerHandler) isPending(uri workspaceapi.URI) bool {
 func (h *workspaceManagerHandler) createWorkspaceScheme(uri workspaceapi.URI) (
 	workspace.Workspace, error,
 ) {
-	cwd, err := h.workspace.AddWorkspace(context.Background(), uri)
+	cwd, err := h.workspace.AcquireWorkspace(context.Background(), uri)
 	if err != nil {
 		return nil, fmt.Errorf("create new workspace for %q: %w", uri, err)
 	}
-	// The entry may be shared, e.g. with the home workspace; the
-	// reference keeps another holder's release from closing it under
-	// this workspace, and this workspace's release from closing it
-	// under them.
-	h.workspace.IncrementReference(uri)
 	return cwd, nil
 }
 

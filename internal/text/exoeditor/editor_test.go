@@ -57,6 +57,10 @@ func (stubWorkspace) Recover(
 	return nil, nil
 }
 
+func (s stubWorkspace) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(s, file), nil
+}
+
 func (stubWorkspace) Remove(string) error { return nil }
 
 // newTestEditor builds a exoeditor.Editor with stub dependencies so other

@@ -73,6 +73,21 @@ func (mr *MockWorkspaceMockRecorder) Load(file, buf, swapDir, readOnly any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockWorkspace)(nil).Load), file, buf, swapDir, readOnly)
 }
 
+// LoaderFor mocks base method.
+func (m *MockWorkspace) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoaderFor", file)
+	ret0, _ := ret[0].(workspace.FileLoader)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoaderFor indicates an expected call of LoaderFor.
+func (mr *MockWorkspaceMockRecorder) LoaderFor(file any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoaderFor", reflect.TypeOf((*MockWorkspace)(nil).LoaderFor), file)
+}
+
 // Open mocks base method.
 func (m *MockWorkspace) Open(arg0 string) (workspaceapi.File, error) {
 	m.ctrl.T.Helper()

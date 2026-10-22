@@ -139,6 +139,21 @@ func (mr *MockWorkspaceMockRecorder) Load(file, buf, swapDir, readOnly any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockWorkspace)(nil).Load), file, buf, swapDir, readOnly)
 }
 
+// LoaderFor mocks base method.
+func (m *MockWorkspace) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoaderFor", file)
+	ret0, _ := ret[0].(workspace.FileLoader)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoaderFor indicates an expected call of LoaderFor.
+func (mr *MockWorkspaceMockRecorder) LoaderFor(file any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoaderFor", reflect.TypeOf((*MockWorkspace)(nil).LoaderFor), file)
+}
+
 // Lstat mocks base method.
 func (m *MockWorkspace) Lstat(filename string) (fs.FileInfo, error) {
 	m.ctrl.T.Helper()
@@ -629,6 +644,21 @@ func (mr *MockLoaderMockRecorder) Load(file, buf, swapDir, readOnly any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockLoader)(nil).Load), file, buf, swapDir, readOnly)
 }
 
+// LoaderFor mocks base method.
+func (m *MockLoader) LoaderFor(file workspaceapi.URI) (workspace.FileLoader, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LoaderFor", file)
+	ret0, _ := ret[0].(workspace.FileLoader)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LoaderFor indicates an expected call of LoaderFor.
+func (mr *MockLoaderMockRecorder) LoaderFor(file any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoaderFor", reflect.TypeOf((*MockLoader)(nil).LoaderFor), file)
+}
+
 // Recover mocks base method.
 func (m *MockLoader) Recover(file, swapFilePath workspaceapi.URI, buf *cell.Buffer, force bool) (workspace.FlusherCloser, error) {
 	m.ctrl.T.Helper()
@@ -656,6 +686,73 @@ func (m *MockLoader) Remove(file string) error {
 func (mr *MockLoaderMockRecorder) Remove(file any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Remove", reflect.TypeOf((*MockLoader)(nil).Remove), file)
+}
+
+// MockFileLoader is a mock of FileLoader interface.
+type MockFileLoader struct {
+	ctrl     *gomock.Controller
+	recorder *MockFileLoaderMockRecorder
+}
+
+// MockFileLoaderMockRecorder is the mock recorder for MockFileLoader.
+type MockFileLoaderMockRecorder struct {
+	mock *MockFileLoader
+}
+
+// NewMockFileLoader creates a new mock instance.
+func NewMockFileLoader(ctrl *gomock.Controller) *MockFileLoader {
+	mock := &MockFileLoader{ctrl: ctrl}
+	mock.recorder = &MockFileLoaderMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockFileLoader) EXPECT() *MockFileLoaderMockRecorder {
+	return m.recorder
+}
+
+// Load mocks base method.
+func (m *MockFileLoader) Load(buf *cell.Buffer, swapDir workspaceapi.URI, readOnly bool) (workspace.FlusherCloser, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Load", buf, swapDir, readOnly)
+	ret0, _ := ret[0].(workspace.FlusherCloser)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Load indicates an expected call of Load.
+func (mr *MockFileLoaderMockRecorder) Load(buf, swapDir, readOnly any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Load", reflect.TypeOf((*MockFileLoader)(nil).Load), buf, swapDir, readOnly)
+}
+
+// Recover mocks base method.
+func (m *MockFileLoader) Recover(swapFilePath workspaceapi.URI, buf *cell.Buffer, force bool) (workspace.FlusherCloser, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Recover", swapFilePath, buf, force)
+	ret0, _ := ret[0].(workspace.FlusherCloser)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Recover indicates an expected call of Recover.
+func (mr *MockFileLoaderMockRecorder) Recover(swapFilePath, buf, force any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Recover", reflect.TypeOf((*MockFileLoader)(nil).Recover), swapFilePath, buf, force)
+}
+
+// Release mocks base method.
+func (m *MockFileLoader) Release() error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Release")
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Release indicates an expected call of Release.
+func (mr *MockFileLoaderMockRecorder) Release() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockFileLoader)(nil).Release))
 }
 
 // MockSchemeManager is a mock of SchemeManager interface.
@@ -732,45 +829,19 @@ func (m *MockWorkspaceManager) EXPECT() *MockWorkspaceManagerMockRecorder {
 	return m.recorder
 }
 
-// AddWorkspace mocks base method.
-func (m *MockWorkspaceManager) AddWorkspace(arg0 context.Context, arg1 workspaceapi.URI) (workspace.Workspace, error) {
+// AcquireWorkspace mocks base method.
+func (m *MockWorkspaceManager) AcquireWorkspace(arg0 context.Context, arg1 workspaceapi.URI) (workspace.Workspace, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AddWorkspace", arg0, arg1)
+	ret := m.ctrl.Call(m, "AcquireWorkspace", arg0, arg1)
 	ret0, _ := ret[0].(workspace.Workspace)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// AddWorkspace indicates an expected call of AddWorkspace.
-func (mr *MockWorkspaceManagerMockRecorder) AddWorkspace(arg0, arg1 any) *gomock.Call {
+// AcquireWorkspace indicates an expected call of AcquireWorkspace.
+func (mr *MockWorkspaceManagerMockRecorder) AcquireWorkspace(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddWorkspace", reflect.TypeOf((*MockWorkspaceManager)(nil).AddWorkspace), arg0, arg1)
-}
-
-// DecrementReference mocks base method.
-func (m *MockWorkspaceManager) DecrementReference(arg0 workspaceapi.URI) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrementReference", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrementReference indicates an expected call of DecrementReference.
-func (mr *MockWorkspaceManagerMockRecorder) DecrementReference(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrementReference", reflect.TypeOf((*MockWorkspaceManager)(nil).DecrementReference), arg0)
-}
-
-// IncrementReference mocks base method.
-func (m *MockWorkspaceManager) IncrementReference(arg0 workspaceapi.URI) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "IncrementReference", arg0)
-}
-
-// IncrementReference indicates an expected call of IncrementReference.
-func (mr *MockWorkspaceManagerMockRecorder) IncrementReference(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrementReference", reflect.TypeOf((*MockWorkspaceManager)(nil).IncrementReference), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquireWorkspace", reflect.TypeOf((*MockWorkspaceManager)(nil).AcquireWorkspace), arg0, arg1)
 }
 
 // RegisterScheme mocks base method.

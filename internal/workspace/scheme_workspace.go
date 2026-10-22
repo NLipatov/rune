@@ -193,6 +193,10 @@ func (w *schemeWorkspace) Init(
 	w.scheduleNextTick = scheduleNextTick
 }
 
+func (w *schemeWorkspace) LoaderFor(file workspaceapi.URI) (FileLoader, error) {
+	return FileLoaderOf(w, file), nil
+}
+
 func (w *schemeWorkspace) Recover(
 	uri, swapURI workspaceapi.URI, buf *cell.Buffer, force bool,
 ) (ret FlusherCloser, err error) {

@@ -150,17 +150,24 @@ func (c *Component) newFileBuffer(
 	file, recSwapFile workspaceapi.URI, buf *cell.Buffer,
 	readOnly, forceRecover bool,
 ) (handler Handler, ret *editorFlusherCloser, err error) {
-	fc, recover, err := c.loadFileBuffer(
-		file, recSwapFile, buf, readOnly, forceRecover)
+	l, err := c.workspace.LoaderFor(file)
 	if err != nil {
+		return nil, nil, err
+	}
+	fc, recover, err := c.loadFileBuffer(
+		l, file, recSwapFile, buf, readOnly, forceRecover)
+	if err != nil {
+		c.releaseLoader(file, l)
 		return nil, nil, err
 	}
 	return c.buildEditorHandler(file, buf, fc, readOnly, recover)
 }
 
 // loadFileBuffer performs only the disk I/O half of newFileBuffer:
-// it populates buf from the workspace and returns the resulting
-// FlusherCloser plus a recover flag derived from recSwapFile.
+// it populates buf through l, which LoaderFor returned for file on the
+// event loop, and returns the resulting FlusherCloser plus a recover
+// flag derived from recSwapFile. When it fails, the caller releases l
+// on the event loop.
 //
 // The split exists so the streaming-open code path can run the I/O
 // off the host event loop and then schedule the editor-construction
@@ -170,7 +177,7 @@ func (c *Component) newFileBuffer(
 // bars, ...) that read window-manager and other event-loop-owned
 // state, so it must not run on the worker goroutine.
 func (c *Component) loadFileBuffer(
-	file, recSwapFile workspaceapi.URI, buf *cell.Buffer,
+	l workspace.FileLoader, file, recSwapFile workspaceapi.URI, buf *cell.Buffer,
 	readOnly, forceRecover bool,
 ) (workspace.FlusherCloser, bool, error) {
 	recover := recSwapFile != (workspaceapi.URI{})
@@ -179,18 +186,24 @@ func (c *Component) loadFileBuffer(
 		err error
 	)
 	if recover {
-		fc, err = c.workspace.Recover(file, recSwapFile, buf, forceRecover)
+		fc, err = l.Recover(recSwapFile, buf, forceRecover)
 	} else {
 		var swapDir workspaceapi.URI
 		swapDir, err = c.getSwapDir(file)
 		if err == nil {
-			fc, err = c.workspace.Load(file, buf, swapDir, readOnly)
+			fc, err = l.Load(buf, swapDir, readOnly)
 		}
 	}
 	if err != nil {
 		return nil, recover, err
 	}
 	return fc, recover, nil
+}
+
+func (c *Component) releaseLoader(file workspaceapi.URI, l workspace.FileLoader) {
+	if err := l.Release(); err != nil {
+		c.log(log.WarnLevel, "release workspace of %s: %v", file, err)
+	}
 }
 
 func (c *Component) buildEditorHandler(
@@ -595,6 +608,11 @@ func (c *Component) openFileTabStreaming(
 		}
 		return nil, fmt.Errorf("stream load file: %w", err)
 	}
+	l, err := c.workspace.LoaderFor(file)
+	if err != nil {
+		_ = sh.Close()
+		return nil, err
+	}
 	icon := c.iconFor(file)
 	def := newDeferHandler(sh)
 	streamingTab := c.newTab(file, icon, fileTabName(file), def, nil)
@@ -611,9 +629,12 @@ func (c *Component) openFileTabStreaming(
 
 		buf := cell.NewBuffer()
 		fc, _, loadErr := c.loadFileBuffer(
-			file, recoveryFilename, buf, readOnly, forceRecover)
+			l, file, recoveryFilename, buf, readOnly, forceRecover)
 
 		c.config.ScheduleNextTick(func() {
+			if loadErr != nil {
+				c.releaseLoader(file, l)
+			}
 			var (
 				realHandler Handler
 				efc         *editorFlusherCloser

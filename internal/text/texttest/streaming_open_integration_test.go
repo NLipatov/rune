@@ -482,6 +482,12 @@ func (w *failingLoadWorkspace) Recover(
 	return nil, w.err()
 }
 
+func (w *failingLoadWorkspace) LoaderFor(
+	file workspaceapi.URI,
+) (workspace.FileLoader, error) {
+	return workspace.FileLoaderOf(w, file), nil
+}
+
 func TestStreamingOpenStaleRecoverShowsAreYouSurePrompt(t *testing.T) {
 	dir := t.TempDir()
 	wsURI, err := workspaceapi.ParseURI("file://" + dir)

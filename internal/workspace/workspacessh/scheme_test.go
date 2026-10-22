@@ -501,10 +501,10 @@ func TestIntegrationManagerIsWorkspaceFile(t *testing.T) {
 
 	ctx := context.Background()
 
-	fileWorkspace, err := manager.AddWorkspace(ctx, fileWorkspaceURI)
+	fileWorkspace, err := manager.AcquireWorkspace(ctx, fileWorkspaceURI)
 	require.NoError(t, err)
 
-	sshWorkspace, err := manager.AddWorkspace(ctx, sshWorkspaceURI)
+	sshWorkspace, err := manager.AcquireWorkspace(ctx, sshWorkspaceURI)
 	require.NoError(t, err)
 
 	tsuite := []struct {

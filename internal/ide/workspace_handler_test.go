@@ -7684,6 +7684,48 @@ func TestClosingHomeDirWorkspaceKeepsHomeWorkspaceAlive(t *testing.T) {
 	requireHomeSchemeOpen(t, m, manager, homeURI, home)
 }
 
+func TestStreamingOpenOfAnExtraneousFileUsesTheManagerOnTheEventLoop(t *testing.T) {
+	home := t.TempDir()
+	proj := filepath.Join(home, "proj")
+	require.NoError(t, os.Mkdir(proj, 0o755))
+	projURI, err := workspaceapi.ParseURI("file://" + proj)
+	require.NoError(t, err)
+	m, manager, _ := newHomeSharingTestHandler(t, home, projURI)
+
+	streaming := filepath.Join(home, "streaming")
+	require.NoError(t, os.Mkdir(streaming, 0o755))
+	streamingURI, err := workspaceapi.ParseURI("file://" + streaming)
+	require.NoError(t, err)
+	m.mu.Lock()
+	m.streamingOpen = true
+	require.NoError(t, m.addWorkspace(streamingURI, false, false, -1))
+	m.mu.Unlock()
+	m.waitForWorkspace(t, streamingURI)
+
+	other := t.TempDir()
+	otherURI, err := workspaceapi.ParseURI("file://" + other)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(other, "f.txt"), []byte("x\n"), 0o644))
+	fileURI, err := workspaceapi.ParseURI("file://" + filepath.Join(other, "f.txt"))
+	require.NoError(t, err)
+
+	m.mu.Lock()
+	ex := m.workspaces[m.focus].ex
+	require.True(t, ex.workspaceURI.Equal(streamingURI))
+	_, err = ex.editFileURI(fileURI, ex.invokeWindow(), false)
+	require.NoError(t, err)
+	// Any event-loop use of the manager while the file loads.
+	_ = manager.HasWorkspace(otherURI)
+	m.mu.Unlock()
+	ex.comp.WaitStreamingLoads()
+	m.quiesce()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	require.True(t, manager.HasWorkspace(otherURI),
+		"the open file must hold the workspace of its directory")
+}
+
 func TestReloadWorkspaceClosesAndReopensScheme(t *testing.T) {
 	dir := t.TempDir()
 

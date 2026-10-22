@@ -6951,7 +6951,7 @@ func TestFileCursorIntegration(t *testing.T) {
 			require.NoError(t, err)
 			err = m.RegisterScheme(workspace.FileScheme, workspace.NewFileScheme)
 			require.NoError(t, err)
-			workspace, err := m.AddWorkspace(context.Background(), cwdURI(t))
+			workspace, err := m.AcquireWorkspace(context.Background(), cwdURI(t))
 			require.NoError(t, err)
 			_, err = workspace.Load(uri, b, swapDir, false)
 			require.NoError(t, err)

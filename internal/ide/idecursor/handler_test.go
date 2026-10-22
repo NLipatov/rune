@@ -37,7 +37,7 @@ import (
 
 type stubWorkspaceManager struct{}
 
-func (stubWorkspaceManager) AddWorkspace(context.Context, workspaceapi.URI) (workspace.Workspace, error) {
+func (stubWorkspaceManager) AcquireWorkspace(context.Context, workspaceapi.URI) (workspace.Workspace, error) {
 	return nil, nil
 }
 func (stubWorkspaceManager) Workspace(workspaceapi.URI) (workspace.Workspace, bool, error) {
@@ -46,11 +46,7 @@ func (stubWorkspaceManager) Workspace(workspaceapi.URI) (workspace.Workspace, bo
 func (stubWorkspaceManager) RegisterScheme(string, schemeapi.SchemeFunc) error {
 	return nil
 }
-func (stubWorkspaceManager) UnregisterScheme(string) error       { return nil }
-func (stubWorkspaceManager) IncrementReference(workspaceapi.URI) {}
-func (stubWorkspaceManager) DecrementReference(workspaceapi.URI) error {
-	return nil
-}
+func (stubWorkspaceManager) UnregisterScheme(string) error { return nil }
 func (stubWorkspaceManager) ReleaseWorkspace(workspaceapi.URI) (workspace.Workspace, bool) {
 	return nil, false
 }
