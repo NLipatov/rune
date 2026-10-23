@@ -80,6 +80,11 @@ extensions:
       # own, so the review reads the rest from the file as it stands
       # now. Set to 0 to show only the lines the agent changed.
       review_context_lines: 3
+      # How many lines of your last message stay pinned over the top of
+      # the chat once it scrolls out of sight. Longer messages are cut
+      # short with an ellipsis; clicking the pin scrolls back to the
+      # message. Set to 0 to disable the pin.
+      pinned_user_msg_max_lines: 2
       # status_bar configures the chat's bottom status row.
       status_bar:
         # Whether the chat reserves its bottom row for the status bar.

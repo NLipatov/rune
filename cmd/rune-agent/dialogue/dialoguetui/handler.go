@@ -323,7 +323,8 @@ func (s *dialogueHandler) Handle(ev term.Event) (exit, handled bool) {
 			off := term.Coordinates{X: -1, Y: -1}
 			chips := s.comp.HoverSentAttachment(off)
 			code := s.comp.hoverCodeCopy(off)
-			return false, chips || code
+			overlays := s.comp.HoverScrollOverlays(off)
+			return false, chips || code || overlays
 		}
 		pos := s.comp.InputPosition()
 		// A held drag that began in the messages area keeps selecting even
@@ -356,6 +357,13 @@ func (s *dialogueHandler) Handle(ev term.Event) (exit, handled bool) {
 		}
 		if s.inputFocused {
 			s.inputFocused = false
+		}
+		consumed, hoverChanged := s.handleScrollOverlays(ev, dragging)
+		if consumed {
+			return false, true
+		}
+		if hoverChanged {
+			defer func() { handled = true }()
 		}
 		chipExit, chipHandled := s.handleAttachmentChip(ev, dragging)
 		// Both run on bare motion so each can clear its own hover.
@@ -626,6 +634,40 @@ func (s *dialogueHandler) Handle(ev term.Event) (exit, handled bool) {
 	}
 
 	return
+}
+
+// handleScrollOverlays resolves a mouse event over the messages area
+// against the pinned message and the jump-to-bottom arrow, both drawn
+// over the transcript. A click on either, or anywhere on the row the
+// arrow takes over, is consumed so it neither selects nor reaches the
+// content underneath; bare motion only updates their hover and pointer
+// and leaves the event to the content's own hovers.
+func (s *dialogueHandler) handleScrollOverlays(
+	ev term.Event, dragging bool,
+) (consumed, hoverChanged bool) {
+	if dragging {
+		return false, false
+	}
+	offset := s.comp.MessagesPosition()
+	pos := term.Coordinates{X: ev.MouseX - offset.X, Y: ev.MouseY - offset.Y}
+	switch ev.Key {
+	case 0:
+		if s.comp.ScrollOverlayAt(pos) {
+			term.SetPointerShape(ev, term.PointerLink)
+		}
+		return false, s.comp.HoverScrollOverlays(pos)
+	case term.MouseLeft:
+		if s.comp.JumpArrowAt(pos) {
+			s.comp.JumpToBottom()
+			return true, false
+		}
+		if s.comp.PinnedMessageAt(pos) {
+			s.comp.ScrollToPinnedMessage()
+			return true, false
+		}
+		return s.comp.JumpRowAt(pos), false
+	}
+	return false, false
 }
 
 // handleCodeCopy resolves a mouse event over the messages area against

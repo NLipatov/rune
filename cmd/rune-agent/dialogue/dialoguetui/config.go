@@ -46,6 +46,20 @@ type ComponentConfig struct {
 	// padding lives outside the message's background, preventing the
 	// background color from leaking into the gap.
 	SendMessageBottomPad int
+	// PinnedMessageMaxRows is how many rows the newest user message
+	// scrolled above the transcript's viewport may take when pinned over
+	// its top. Longer messages are cut short with an ellipsis, and the pin
+	// never takes more than half the transcript. Zero disables the pin.
+	PinnedMessageMaxRows int
+	// PinnedMessageHoverBackground replaces the pinned message's
+	// background under the pointer, as clicking it scrolls back to the
+	// message. ColorDefault defaults to silver.
+	PinnedMessageHoverBackground term.Color
+	// JumpToBottomAttr styles the arrow drawn at the bottom of the
+	// transcript while it is scrolled up, and JumpToBottomHoverAttr styles
+	// it under the pointer. Zero values default to silver and bold white.
+	JumpToBottomAttr      term.Attributes
+	JumpToBottomHoverAttr term.Attributes
 
 	// QueuedMessageStringConfig determines the StringConfig for queued
 	// (pending) messages displayed while the agent is busy.

@@ -36,6 +36,7 @@ extensions:
 | `max_tool_output_bytes` | integer | `40000` | Truncation limit, in bytes, for a single tool's output before it is trimmed in the transcript. |
 | `auto_compact_ratio` | float | `0.85` | Fraction of the model's context window that must be filled before the agent automatically compacts the conversation. |
 | `review_context_lines` | integer | `3` | How many surrounding lines of code to show around each hunk when you [review a chat's changes](./intro.md#reviewing-changes). Set it to `0` to show only the lines the agent actually changed. |
+| `pinned_user_msg_max_lines` | integer | `2` | How many lines of your last message stay pinned over the top of the chat once it scrolls out of sight. Longer messages are cut short with an ellipsis, and clicking the pin scrolls back to the message. Set it to `0` to disable the pin. |
 | `editor_modal_start_insert` | boolean | `true` | When the modal (vi-style) composer opens, start in insert mode so the first keystroke types instead of requiring `i`. Set to `false` to open in normal mode. Only affects the modal composer. |
 | `audit_enabled` | boolean | `false` | Record a per-request LLM token audit log you can review with `chatlog` or `agent chats export --audit`. |
 | `force_builtin_tools` | boolean | prompt | When set, decides up front whether bare `grep`-style shell commands are rejected in favor of the agent's built-in search tools. Left unset, the agent asks you the first time and remembers your choice. |

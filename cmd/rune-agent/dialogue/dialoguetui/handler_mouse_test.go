@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -29,8 +30,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
+	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/term/graphemecluster"
+	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/component/markdown"
 	"unstable.build/rune/internal/text/standard"
 )
@@ -1783,4 +1786,824 @@ func TestHandlerMouseSelectionFullConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandlerScrollOverlays(t *testing.T) {
+	arrow := term.Coordinates{X: 9, Y: 10}
+	suite := []struct {
+		desc           string
+		events         []term.Event
+		wantHandled    bool
+		wantOffset     int
+		wantHovered    bool
+		wantPinHovered bool
+		wantPointer    bool
+		wantSel        bool
+	}{
+		{
+			desc:        "motion over the arrow highlights it",
+			events:      []term.Event{mouseEv(arrow.X, arrow.Y, 0)},
+			wantHandled: true,
+			wantOffset:  8,
+			wantHovered: true,
+			wantPointer: true,
+		},
+		{
+			desc:           "motion over the pin highlights it",
+			events:         []term.Event{mouseEv(3, 1, 0)},
+			wantHandled:    true,
+			wantOffset:     8,
+			wantPinHovered: true,
+			wantPointer:    true,
+		},
+		{
+			desc:       "motion over the rest of the arrow row keeps the pointer",
+			events:     []term.Event{mouseEv(arrow.X+2, arrow.Y, 0)},
+			wantOffset: 8,
+		},
+		{
+			desc:        "clicking the rest of the arrow row is ignored",
+			events:      []term.Event{mouseEv(arrow.X+2, arrow.Y, term.MouseLeft)},
+			wantHandled: true,
+			wantOffset:  8,
+		},
+		{
+			desc: "motion off the arrow clears the highlight",
+			events: []term.Event{
+				mouseEv(arrow.X, arrow.Y, 0),
+				mouseEv(arrow.X+1, arrow.Y, 0),
+			},
+			wantHandled: true,
+			wantOffset:  8,
+		},
+		{
+			desc: "leaving the chat clears the highlight",
+			events: []term.Event{
+				mouseEv(arrow.X, arrow.Y, 0),
+				mouseEv(-1, -1, 0),
+			},
+			wantHandled: true,
+			wantOffset:  8,
+		},
+		{
+			desc:        "clicking the arrow jumps to the bottom",
+			events:      []term.Event{mouseEv(arrow.X, arrow.Y, term.MouseLeft)},
+			wantHandled: true,
+			wantOffset:  0,
+		},
+		{
+			desc:        "clicking the pin scrolls to its message",
+			events:      []term.Event{mouseEv(3, 1, term.MouseLeft)},
+			wantHandled: true,
+			wantOffset:  18,
+		},
+		{
+			desc: "dragging over the pin keeps selecting",
+			events: []term.Event{
+				mouseEv(3, 6, term.MouseLeft),
+				mouseEv(3, 4, term.MouseLeft),
+				mouseEv(3, 1, term.MouseLeft),
+			},
+			wantHandled: true,
+			// The drag reaching the top edge auto-scrolls by a row.
+			wantOffset: 9,
+			wantSel:    true,
+		},
+	}
+	for _, tc := range suite {
+		t.Run(tc.desc, func(t *testing.T) {
+			comp := newScrollOverlayComponent(ComponentConfig{PinnedMessageMaxRows: 2})
+			h, tx, _ := Handler(context.Background(), new(sync.Mutex), comp, term.NopInterrupter())
+			defer close(tx)
+			h.Resize(20, 14)
+			for range 8 {
+				comp.SeekUp()
+			}
+			h.Draw(term.NewStringWriter(20, 14))
+
+			var handled bool
+			pointer := new(term.Pointer)
+			for _, ev := range tc.events {
+				pointer = new(term.Pointer)
+				ev.Context = term.ContextWithPointer(context.Background(), pointer)
+				_, handled = h.Handle(ev)
+			}
+			assert.Equal(t, tc.wantHandled, handled, "handled")
+			assert.Equal(t, tc.wantOffset, comp.messages.Offset(), "offset")
+			assert.Equal(t, tc.wantHovered, comp.jumpHovered, "hovered")
+			assert.Equal(t, tc.wantPinHovered, comp.pin.hovered, "pin hovered")
+			shape, _ := pointer.Shape()
+			assert.Equal(t, tc.wantPointer, shape == term.PointerLink, "pointer")
+			_, sel := h.Selection()
+			assert.Equal(t, tc.wantSel, sel, "selection")
+		})
+	}
+}
+
+func TestHandlerScrollOverlaySequence(t *testing.T) {
+	padded := ComponentConfig{
+		PinnedMessageMaxRows: 2,
+		SendMessageBottomPad: 1,
+		MessagesRowConfig: component.SpanConfig{
+			PadHorizontal:    6,
+			ContentAlignment: component.AlignmentCentered,
+		},
+		SendMessageStringConfig: component.StringConfig{
+			BackgroundAttributes: term.Attributes{Bg: term.ColorGray},
+		},
+	}
+	withCfg := func(edit func(*ComponentConfig)) ComponentConfig {
+		cfg := padded
+		edit(&cfg)
+		return cfg
+	}
+	arrow := term.Coordinates{X: 14, Y: 10}
+	silver := term.Attributes{Fg: term.ColorSilver}
+	boldWhite := term.Attributes{Fg: term.ColorWhite, Attrs: term.AttrBold}
+	wheelUp := "<mouse-wheel-up>"
+	suite := []struct {
+		name          string
+		cfg           ComponentConfig
+		width, height int
+		// conversation sends overlayQuestions and their replies before
+		// steps run, without pinning those frames.
+		conversation bool
+		steps        []overlayStep
+	}{
+		{
+			name:  "scroll, hover and click through a conversation",
+			cfg:   padded,
+			width: 30, height: 14,
+			steps: []overlayStep{
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap        \n" +
+						"   twice                      \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					input: "first<space>question<space>that<space>is<space>long<space>" +
+						"enough<space>to<space>wrap<space>twice<enter>",
+				},
+				{
+					reply: overlayReplyText("reply"),
+					want: "" +
+						"                              \n" +
+						"   reply 1                    \n" +
+						"                              \n" +
+						"   reply 2                    \n" +
+						"                              \n" +
+						"   reply 3                    \n" +
+						"                              \n" +
+						"   reply 4                    \n" +
+						"                              \n" +
+						"   reply 5                    \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					input: "second<enter>",
+					want: "" +
+						"                              \n" +
+						"   reply 2                    \n" +
+						"                              \n" +
+						"   reply 3                    \n" +
+						"                              \n" +
+						"   reply 4                    \n" +
+						"                              \n" +
+						"   reply 5                    \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					reply: overlayReplyText("answer"),
+					want: "" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"                              \n" +
+						"   answer 4                   \n" +
+						"                              \n" +
+						"   answer 5                   \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					want: "" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"                              \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					input: strings.Repeat("<mouse-wheel-up>", 3),
+					attr:  map[term.Coordinates]term.Attributes{arrow: silver},
+				},
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					input: strings.Repeat("<mouse-wheel-up>", 3),
+					attr:  map[term.Coordinates]term.Attributes{arrow: silver},
+				},
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					events:  []term.Event{mouseEv(0, 1, 0)},
+					pointer: true,
+					bg: map[term.Coordinates]term.Color{
+						{X: 0, Y: 0}: term.ColorDefault,
+						{X: 3, Y: 0}: term.ColorSilver,
+						{X: 3, Y: 1}: term.ColorSilver,
+						{X: 2, Y: 3}: term.ColorDefault,
+						{X: 3, Y: 3}: term.ColorGray,
+					},
+					attr: map[term.Coordinates]term.Attributes{arrow: silver},
+				},
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					events:  []term.Event{mouseEv(arrow.X, arrow.Y, 0)},
+					pointer: true,
+					bg:      map[term.Coordinates]term.Color{{X: 3, Y: 0}: term.ColorGray},
+					attr:    map[term.Coordinates]term.Attributes{arrow: boldWhite},
+				},
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					events: []term.Event{
+						mouseEv(arrow.X+3, arrow.Y, 0),
+						mouseEv(arrow.X+3, arrow.Y, term.MouseLeft),
+						mouseEv(arrow.X+3, arrow.Y, term.MouseRelease),
+					},
+					attr: map[term.Coordinates]term.Attributes{arrow: silver},
+				},
+				{
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap        \n" +
+						"   twice                      \n" +
+						"                              \n" +
+						"   reply 0                    \n" +
+						"                              \n" +
+						"   reply 1                    \n" +
+						"                              \n" +
+						"   reply 2                    \n" +
+						"                              \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					input: "<mouse-left><mouse-release>",
+				},
+				{
+					want: "" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"                              \n" +
+						"   answer 4                   \n" +
+						"                              \n" +
+						"   answer 5                   \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+					events: []term.Event{
+						mouseEv(arrow.X, arrow.Y, term.MouseLeft),
+						mouseEv(arrow.X, arrow.Y, term.MouseRelease),
+					},
+				},
+				{
+					reply: "more\n\n",
+					want: "" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"                              \n" +
+						"   answer 4                   \n" +
+						"                              \n" +
+						"   answer 5                   \n" +
+						"                              \n" +
+						"   more                       \n" +
+						"                              \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+			},
+		},
+		{
+			name:  "the next question pushes the pin out row by row",
+			cfg:   padded,
+			width: 30, height: 14,
+			conversation: true,
+			steps: []overlayStep{
+				{
+					input: strings.Repeat(wheelUp, 3),
+					want: "" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"                              \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					input: wheelUp,
+					want: "" +
+						"\uf061  first question that is…    \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"   answer 3                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					input: wheelUp,
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"                              \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+			},
+		},
+		{
+			name:  "zero max rows disables the pin but keeps the icons",
+			cfg:   withCfg(func(c *ComponentConfig) { c.PinnedMessageMaxRows = 0 }),
+			width: 30, height: 14,
+			conversation: true,
+			steps: []overlayStep{
+				{
+					input: strings.Repeat(wheelUp, 6),
+					want: "" +
+						"                              \n" +
+						"   reply 5                    \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					events: []term.Event{mouseEv(0, 0, 0)},
+					bg:     map[term.Coordinates]term.Color{{X: 3, Y: 0}: term.ColorDefault},
+					want: "" +
+						"                              \n" +
+						"   reply 5                    \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+			},
+		},
+		{
+			name: "a transcript without left padding has no room for icons",
+			cfg: withCfg(func(c *ComponentConfig) {
+				c.MessagesRowConfig = component.SpanConfig{}
+			}),
+			width: 30, height: 14,
+			conversation: true,
+			steps: []overlayStep{
+				{
+					input: strings.Repeat(wheelUp, 6),
+					want: "" +
+						"first question that is long   \n" +
+						"enough to wrap twice          \n" +
+						"                              \n" +
+						"second                        \n" +
+						"                              \n" +
+						"answer 0                      \n" +
+						"                              \n" +
+						"answer 1                      \n" +
+						"                              \n" +
+						"answer 2                      \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					input: "<mouse-left><mouse-release>",
+					want: "" +
+						"first question that is long   \n" +
+						"enough to wrap twice          \n" +
+						"                              \n" +
+						"reply 0                       \n" +
+						"                              \n" +
+						"reply 1                       \n" +
+						"                              \n" +
+						"reply 2                       \n" +
+						"                              \n" +
+						"reply 3                       \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+			},
+		},
+		{
+			name:  "a short pane caps the pin at half the transcript",
+			cfg:   withCfg(func(c *ComponentConfig) { c.PinnedMessageMaxRows = 5 }),
+			width: 20, height: 9,
+			conversation: true,
+			steps: []overlayStep{
+				{
+					input: strings.Repeat(wheelUp, 8),
+					want: "" +
+						"\uf061  second           \n" +
+						"                    \n" +
+						"   answer 0         \n" +
+						"                    \n" +
+						"   answer 1         \n" +
+						"         \uf063          \n" +
+						" ┌──────────────┐   \n" +
+						" │▐             │   \n" +
+						" └──────────────┘   ",
+				},
+				{
+					input: strings.Repeat(wheelUp, 4),
+					want: "" +
+						"\uf061  first            \n" +
+						"   question that    \n" +
+						"   is long enoug…   \n" +
+						"                    \n" +
+						"\uf061  second           \n" +
+						"         \uf063          \n" +
+						" ┌──────────────┐   \n" +
+						" │▐             │   \n" +
+						" └──────────────┘   ",
+				},
+			},
+		},
+		{
+			name:  "the pointer leaving the chat takes the hovers off",
+			cfg:   padded,
+			width: 30, height: 14,
+			conversation: true,
+			steps: []overlayStep{
+				{
+					input: strings.Repeat(wheelUp, 6),
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					events:  []term.Event{mouseEv(4, 0, 0)},
+					pointer: true,
+					bg:      map[term.Coordinates]term.Color{{X: 3, Y: 0}: term.ColorSilver},
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					events: []term.Event{mouseEv(-1, -1, 0)},
+					bg:     map[term.Coordinates]term.Color{{X: 3, Y: 0}: term.ColorGray},
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					events:  []term.Event{mouseEv(arrow.X, arrow.Y, 0)},
+					pointer: true,
+					attr:    map[term.Coordinates]term.Attributes{arrow: boldWhite},
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+				{
+					events: []term.Event{mouseEv(30, 0, 0)},
+					attr:   map[term.Coordinates]term.Attributes{arrow: silver},
+					want: "" +
+						"\uf061  first question that is     \n" +
+						"   long enough to wrap twi…   \n" +
+						"                              \n" +
+						"\uf061  second                     \n" +
+						"                              \n" +
+						"   answer 0                   \n" +
+						"                              \n" +
+						"   answer 1                   \n" +
+						"                              \n" +
+						"   answer 2                   \n" +
+						"              \uf063               \n" +
+						"  ┌───────────────────────┐   \n" +
+						"  │▐                      │   \n" +
+						"  └───────────────────────┘   ",
+				},
+			},
+		},
+	}
+	for _, tc := range suite {
+		t.Run(tc.name, func(t *testing.T) {
+			runOverlaySequence(t, tc.cfg, tc.width, tc.height, tc.conversation, tc.steps)
+		})
+	}
+}
+
+// overlayStep is one frame of a dialogue whose transcript is scrolled
+// with the pointer: reply is delivered as an assistant message, events
+// as positioned pointer input, and then input runs and its frame is
+// compared against want. bg and attr pin the colors at chat coordinates, and
+// pointer whether the last event asked for the link pointer.
+type overlayStep struct {
+	input   string
+	want    string
+	reply   string
+	events  []term.Event
+	pointer bool
+	bg      map[term.Coordinates]term.Color
+	attr    map[term.Coordinates]term.Attributes
+}
+
+// overlayQuestions and overlayReplies make up a conversation long enough
+// to scroll: a question that wraps, its replies, a one-row question and
+// its replies.
+var (
+	overlayQuestions = []string{
+		"first<space>question<space>that<space>is<space>long<space>" +
+			"enough<space>to<space>wrap<space>twice<enter>",
+		"second<enter>",
+	}
+	overlayReplies = []string{overlayReplyText("reply"), overlayReplyText("answer")}
+)
+
+func overlayReplyText(prefix string) string {
+	var b strings.Builder
+	for i := range 6 {
+		fmt.Fprintf(&b, "%s %d\n\n", prefix, i)
+	}
+	return b.String()
+}
+
+func runOverlaySequence(
+	t *testing.T, cfg ComponentConfig, width, height int, conversation bool, steps []overlayStep,
+) {
+	t.Helper()
+	interrupt := make(chan struct{}, 1)
+	h, tx, rx := Handler(context.Background(), new(sync.Mutex), NewComponent(cfg),
+		term.FuncInterrupter(func(context.Context) error {
+			select {
+			case interrupt <- struct{}{}:
+			default:
+			}
+			return nil
+		}))
+	t.Cleanup(func() { close(tx) })
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		for {
+			select {
+			case <-rx:
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	reply := func(text string) {
+		tx <- MessageEvent{Type: MessageEventText, Text: text}
+		<-interrupt
+		tx <- MessageEvent{Type: MessageEventBreak}
+		<-interrupt
+	}
+
+	w := term.NewStringWriter(width, height)
+	h.Resize(width, height)
+	if conversation {
+		for i, question := range overlayQuestions {
+			keys, err := term.ParseKeys(question)
+			require.NoError(t, err)
+			for _, k := range keys {
+				h.Handle(term.Event{Type: term.EventKey, Ch: k.Ch, Mod: k.Mod, Key: k.Key})
+			}
+			reply(overlayReplies[i])
+		}
+	}
+	golden := os.Getenv("DIALOGUE_LAYOUT_GOLDEN") != ""
+	for i, step := range steps {
+		if step.reply != "" {
+			reply(step.reply)
+		}
+		pointer := new(term.Pointer)
+		for _, ev := range step.events {
+			pointer = new(term.Pointer)
+			ev.Context = term.ContextWithPointer(context.Background(), pointer)
+			h.Handle(ev)
+		}
+		if golden {
+			printOverlayGolden(t, h, w, i, step.input)
+			continue
+		}
+		handlertest.RunHandlerSequenceWriter(t, w, h, width, height,
+			[]handlertest.SequenceTestCase{{InputSequence: step.input, Expected: step.want}})
+		cells := w.Cells()
+		for pos, want := range step.bg {
+			assert.Equal(t, want, cells[pos.Y*width+pos.X].Bg, "step %d bg at %v", i, pos)
+		}
+		for pos, want := range step.attr {
+			assert.Equal(t, want, cells[pos.Y*width+pos.X].Attributes(), "step %d attr at %v", i, pos)
+		}
+		shape, _ := pointer.Shape()
+		assert.Equal(t, step.pointer, shape == term.PointerLink, "step %d pointer", i)
+	}
+}
+
+// printOverlayGolden runs input as handlertest does and prints the frame,
+// for DIALOGUE_LAYOUT_GOLDEN to regenerate the expected frames.
+func printOverlayGolden(t *testing.T, h tui.Handler, w *term.StringWriter, step int, input string) {
+	t.Helper()
+	keys, err := term.ParseKeys(input)
+	require.NoError(t, err)
+	for _, k := range keys {
+		ev := term.Event{Type: term.EventKey, Ch: k.Ch, Mod: k.Mod, Key: k.Key}
+		switch k.Key {
+		case term.MouseLeft, term.MouseMiddle, term.MouseRight, term.MouseRelease,
+			term.MouseWheelUp, term.MouseWheelDown:
+			ev.Type = term.EventMouse
+		}
+		h.Handle(ev)
+	}
+	require.NoError(t, w.Clear(term.Attributes{}))
+	h.Draw(w)
+	if cursor, _, ok := h.Cursor(); ok {
+		w.SetCursor(cursor)
+	}
+	require.NoError(t, w.Flush())
+	fmt.Printf("@@@STEP %s %d\n%s\n@@@END\n", t.Name(), step, w.String())
 }

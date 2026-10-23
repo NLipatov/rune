@@ -18,6 +18,7 @@ package dialoguetui
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -469,13 +470,15 @@ func TestMouseDelegateSelectionStartPinnedAcrossAutoScroll(t *testing.T) {
 }
 
 // gridRowOf returns the first grid row whose rendered text equals want, or
-// -1 when none match.
+// -1 when none match. The jump-to-bottom arrow drawn over the transcript
+// is not part of any row's text.
 func gridRowOf(g *tterm.SelectionWriter, want string) int {
 	for y := range g.Height() {
 		row := g.TextBetween(
 			term.Coordinates{X: 0, Y: y},
 			term.Coordinates{X: g.Width() - 1, Y: y},
 		)
+		row = strings.TrimRight(strings.ReplaceAll(row, string(jumpToBottomArrow), ""), " ")
 		if row == want {
 			return y
 		}
@@ -775,7 +778,7 @@ func TestMouseDelegateSelectionNegativeCoords(t *testing.T) {
 	}{
 		{
 			desc:         "drag above the top while scrolled selects off-screen content above",
-			preScroll:    5,
+			preScroll:    4,
 			pressText:    "message O",
 			pressX:       len("message O") - 1,
 			dragTo:       [2]int{2, -12},
@@ -783,7 +786,7 @@ func TestMouseDelegateSelectionNegativeCoords(t *testing.T) {
 		},
 		{
 			desc:            "drag to negative X stays on pressed row",
-			preScroll:       5,
+			preScroll:       4,
 			pressText:       "message O",
 			pressX:          len("message O") - 1,
 			dragTo:          [2]int{-20, 0},

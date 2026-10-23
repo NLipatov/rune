@@ -116,6 +116,10 @@ const (
 	dreamModelAlias   = "dream"
 )
 
+// defaultPinnedUserMsgMaxLines keeps the pinned message to a glimpse of
+// what was asked, as the reply it heads is what is being read.
+const defaultPinnedUserMsgMaxLines = 2
+
 var (
 	defaultComponentCfg = dialoguetui.ComponentConfig{
 		MessagesRowConfig: component.SpanConfig{
@@ -162,6 +166,7 @@ var (
 			ContentAlignment: component.AlignmentLeft,
 		},
 		SendMessageBottomPad: 1,
+		PinnedMessageMaxRows: defaultPinnedUserMsgMaxLines,
 		ToolCallStringConfig: component.StringConfig{
 			Alignment:            component.AlignmentLeft,
 			Attributes:           term.Attributes{Fg: term.ColorPurple},
@@ -533,6 +538,7 @@ func newCommandEventHandler(
 	} else {
 		ret.cfg.SendMessageStringConfig.Attributes = sendMsgAttr
 	}
+	ret.cfg.PinnedMessageMaxRows = resolvePinnedUserMsgMaxLines(pconfig)
 	recvMsgAttr, err := config.GetAttributes(pconfig, "assistant_msg_attr")
 	if err != nil {
 		if err != config.ErrNotFound {
@@ -2763,4 +2769,18 @@ func resolveInputBackgroundColor(def term.Color, pconfig config.Config) term.Col
 		return def
 	}
 	return attr.Bg
+}
+
+// resolvePinnedUserMsgMaxLines reads pinned_user_msg_max_lines, the rows
+// the pinned user message may take over the top of the transcript. Zero
+// disables the pin, and a negative value is clamped to it.
+func resolvePinnedUserMsgMaxLines(pconfig config.Config) int {
+	v, err := pconfig.GetInt("pinned_user_msg_max_lines")
+	if err != nil {
+		if !errors.Is(err, config.ErrNotFound) {
+			slog.Warn("get 'pinned_user_msg_max_lines' from config", "error", err)
+		}
+		return defaultPinnedUserMsgMaxLines
+	}
+	return max(0, v)
 }

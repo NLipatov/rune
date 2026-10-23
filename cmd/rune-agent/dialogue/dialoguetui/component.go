@@ -245,6 +245,12 @@ type Component struct {
 	// sent messages, paired with their list node so a mouse position can
 	// be resolved back to a chip.
 	sentAttachments []sentAttachmentGrid
+	// sentText maps the transcript nodes of sent messages to their text,
+	// for the newest one scrolled out of sight to be pinned.
+	sentText map[component.ListNode]string
+	pin      pinnedMessage
+	// jumpHovered is whether the pointer is over the jump-to-bottom arrow.
+	jumpHovered bool
 
 	interrupter term.Interrupter
 	mu          sync.Locker // set by Handler; used by AddCommand for async locking
@@ -288,6 +294,22 @@ func (c *Component) Init(cfg ComponentConfig) {
 	c.messages.Alignment = component.AlignmentBottom
 	c.spanMessages.Init(&c.messages, c.cfg.MessagesRowConfig)
 	c.msgArea.C = &c.spanMessages
+	c.sentText = make(map[component.ListNode]string)
+	c.pin.strCfg = component.StringResponsiveConfig{
+		NoSplitWords: true,
+		StringConfig: cfg.SendMessageStringConfig,
+	}
+	c.pin.spanCfg = cfg.SendMessageSpanConfig
+	c.pin.hoverBg = cfg.PinnedMessageHoverBackground
+	if c.pin.hoverBg == term.ColorDefault {
+		c.pin.hoverBg = term.ColorSilver
+	}
+	if c.cfg.JumpToBottomAttr == (term.Attributes{}) {
+		c.cfg.JumpToBottomAttr = term.Attributes{Fg: term.ColorSilver}
+	}
+	if c.cfg.JumpToBottomHoverAttr == (term.Attributes{}) {
+		c.cfg.JumpToBottomHoverAttr = term.Attributes{Fg: term.ColorWhite, Attrs: term.AttrBold}
+	}
 
 	c.input = c.newInputBackend(cfg)
 	c.box = handler.NewFrame(c.input)
@@ -368,6 +390,7 @@ func (c *Component) Draw(w term.Writer) {
 	}
 	vw := component.VirtualWriter{Writer: w, Height: c.height, Width: c.width}
 	c.msgArea.Draw(&vw)
+	c.drawScrollOverlays(&vw)
 	if c.completion != nil && c.completionRows > 0 {
 		cw := component.VirtualWriter{
 			Writer: &vw,
@@ -844,7 +867,7 @@ func (c *Component) AddSendMessageAttachments(msg string, atts []Attachment) {
 			StringConfig: c.cfg.SendMessageStringConfig,
 		})
 	strComp = component.NewSpan(strComp, c.cfg.SendMessageSpanConfig)
-	c.messages.PushBack(strComp)
+	c.sentText[c.messages.PushBack(strComp)] = msg
 	if c.cfg.SendMessageBottomPad > 0 {
 		c.messages.PushBack(spacer(c.cfg.SendMessageBottomPad))
 	}
@@ -932,7 +955,7 @@ func (c *Component) AddSendMessageMarkdown(msg string) {
 		strComp = md
 	}
 	strComp = component.NewSpan(strComp, c.cfg.SendMessageSpanConfig)
-	c.messages.PushBack(strComp)
+	c.sentText[c.messages.PushBack(strComp)] = msg
 	if c.cfg.SendMessageBottomPad > 0 {
 		c.messages.PushBack(spacer(c.cfg.SendMessageBottomPad))
 	}
@@ -1514,6 +1537,214 @@ func (c *Component) SeekUp() bool {
 	return c.messages.SeekUp()
 }
 
+// jumpToBottomArrow is nf-fa-arrow_down, as the tutorial uses to point
+// at copy below the tile. The bundled Nerd Font draws it one cell wide.
+const jumpToBottomArrow = '\uf063'
+
+// sendGutterIcon is nf-fa-arrow_right. It marks sent messages from the
+// gutter left of the transcript, which keeps their text aligned with the
+// replies'.
+const sendGutterIcon = '\uf061'
+
+// sendGutterWidth is how many cells left of a sent message its icon is
+// drawn, on the chat's own background, to stand apart from the message.
+const sendGutterWidth = 3
+
+// drawScrollOverlays draws the sent messages' icons, the pinned message
+// and the jump-to-bottom row over the transcript. They are not part of
+// the messages list, so copying a selection never picks them up.
+func (c *Component) drawScrollOverlays(w term.Writer) {
+	width, height := c.messages.SizeWidth(), c.messages.SizeHeight()
+	if width <= 0 || height <= 0 {
+		return
+	}
+	origin := c.spanMessages.ContentOffset()
+	c.drawSendIcons(w, origin)
+	if _, ok := c.pinnedLayout(); ok {
+		for y := range c.pin.rows {
+			c.clearRow(w, origin.Y+y)
+		}
+		c.drawSendIcon(w, origin)
+		c.pin.draw(&component.VirtualWriter{
+			Writer: w, Offset: origin, Width: width, Height: height,
+		})
+	}
+	if pos, ok := c.jumpArrowPosition(); ok {
+		c.clearRow(w, origin.Y+pos.Y)
+		attr := c.cfg.JumpToBottomAttr
+		if c.jumpHovered {
+			attr = c.cfg.JumpToBottomHoverAttr
+		}
+		if attr.Bg == term.ColorDefault {
+			attr.Bg = c.cfg.BackgroundColor
+		}
+		w.SetCell(term.CoordinatesSum(origin, pos), term.NewCell(jumpToBottomArrow, 1, attr))
+	}
+}
+
+// clearRow blanks the chat's row y across its whole width, transcript
+// padding included, for an overlay to take it over.
+func (c *Component) clearRow(w term.Writer, y int) {
+	blank := term.NewCell(' ', 1, term.Attributes{Bg: c.cfg.BackgroundColor})
+	for x := range c.width {
+		w.SetCell(term.Coordinates{X: x, Y: y}, blank)
+	}
+}
+
+// gutterWidth is how far left of a sent message its icon is drawn, in
+// the transcript's left padding. Panes too narrow to pad the transcript
+// have no room for it.
+func (c *Component) gutterWidth() int {
+	return min(sendGutterWidth, c.spanMessages.ContentOffset().X)
+}
+
+// drawSendIcon draws the sent message icon left of the message whose
+// first row starts at pos.
+func (c *Component) drawSendIcon(w term.Writer, pos term.Coordinates) {
+	if c.gutterWidth() <= 0 {
+		return
+	}
+	w.SetCell(term.Coordinates{X: pos.X - c.gutterWidth(), Y: pos.Y},
+		term.NewCell(sendGutterIcon, 1, term.Attributes{Bg: c.cfg.BackgroundColor}))
+}
+
+// drawSendIcons draws the icons of the sent messages whose first row is
+// in view.
+func (c *Component) drawSendIcons(w term.Writer, origin term.Coordinates) {
+	if c.gutterWidth() <= 0 || len(c.sentText) == 0 {
+		return
+	}
+	width, height := c.messages.SizeWidth(), c.messages.SizeHeight()
+	y := c.messages.Offset() - c.messages.MaxOffset()
+	for n, more := c.messages.Front(); more && y < height; n, more = n.Next() {
+		resp, ok := n.Value().(component.Responsive)
+		if !ok {
+			continue
+		}
+		if _, sent := c.sentText[n]; sent && y >= 0 {
+			c.drawSendIcon(w, term.Coordinates{X: origin.X, Y: origin.Y + y})
+		}
+		y += resp.Height(width)
+	}
+}
+
+// jumpArrowPosition returns where, relative to the messages area, the
+// jump-to-bottom arrow is drawn. It is only shown while scrolled up, and
+// takes the transcript's last row over.
+func (c *Component) jumpArrowPosition() (term.Coordinates, bool) {
+	width, height := c.messages.SizeWidth(), c.messages.SizeHeight()
+	if width <= 0 || height <= 0 || !c.messages.CanSeekUp() {
+		return term.Coordinates{}, false
+	}
+	return term.Coordinates{X: (width - 1) / 2, Y: height - 1}, true
+}
+
+// JumpArrowAt reports whether the jump-to-bottom arrow is shown at the
+// messages-relative pos.
+func (c *Component) JumpArrowAt(pos term.Coordinates) bool {
+	arrow, ok := c.jumpArrowPosition()
+	return ok && arrow == pos
+}
+
+// JumpRowAt reports whether the messages-relative pos is on the row the
+// jump-to-bottom arrow takes over, which hides the transcript beneath.
+func (c *Component) JumpRowAt(pos term.Coordinates) bool {
+	arrow, ok := c.jumpArrowPosition()
+	return ok && arrow.Y == pos.Y
+}
+
+// ScrollOverlayAt reports whether a click at the messages-relative pos
+// lands on the jump-to-bottom arrow or the pinned message.
+func (c *Component) ScrollOverlayAt(pos term.Coordinates) bool {
+	return c.JumpArrowAt(pos) || c.PinnedMessageAt(pos)
+}
+
+// HoverScrollOverlays highlights the jump-to-bottom arrow or the pinned
+// message while the messages-relative pos is over it, and reports
+// whether either highlight changed.
+func (c *Component) HoverScrollOverlays(pos term.Coordinates) bool {
+	jump, pin := c.JumpArrowAt(pos), c.PinnedMessageAt(pos)
+	changed := jump != c.jumpHovered || pin != c.pin.hovered
+	c.jumpHovered, c.pin.hovered = jump, pin
+	return changed
+}
+
+// JumpToBottom scrolls the transcript to its end, from where it follows
+// new content again.
+func (c *Component) JumpToBottom() {
+	c.toggleAnchorValid = false
+	c.jumpHovered = false
+	c.pin.hovered = false
+	// SeekEnd cannot be used: on a bottom-aligned list it seeks to the
+	// start of the transcript instead.
+	for c.messages.SeekDown() {
+	}
+}
+
+// pinnedSent returns the node of the newest sent message whose top has
+// scrolled above the transcript's viewport, and how many of the rows it
+// may be pinned to are free. The next sent message pushes the pin out as
+// it scrolls up into those rows rather than being covered by it. Nothing
+// is pinned at the end of the transcript, which is where replies are
+// followed as they stream.
+func (c *Component) pinnedSent() (node component.ListNode, rows int, ok bool) {
+	// The pin takes at most half the transcript, for the conversation it
+	// heads to stay readable on short panes.
+	rows = min(c.cfg.PinnedMessageMaxRows, c.messages.SizeHeight()/2)
+	if rows <= 0 || len(c.sentText) == 0 || !c.messages.CanSeekUp() {
+		return component.ListNode{}, 0, false
+	}
+	viewTop := c.messages.MaxOffset() - c.messages.Offset()
+	width := c.messages.SizeWidth()
+	top := 0
+	for n, more := c.messages.Front(); more && top < viewTop+rows; n, more = n.Next() {
+		if _, sent := c.sentText[n]; sent {
+			if top >= viewTop {
+				return node, min(rows, top-viewTop), ok
+			}
+			node, ok = n, true
+		}
+		if resp, isResp := n.Value().(component.Responsive); isResp {
+			top += resp.Height(width)
+		}
+	}
+	return node, rows, ok
+}
+
+// pinnedLayout lays out the pinned message, if any, and returns its node.
+func (c *Component) pinnedLayout() (component.ListNode, bool) {
+	node, rows, ok := c.pinnedSent()
+	if !ok || rows <= 0 {
+		return component.ListNode{}, false
+	}
+	if c.pin.layout(c.sentText[node], c.messages.SizeWidth(), rows) <= 0 {
+		return component.ListNode{}, false
+	}
+	return node, true
+}
+
+// PinnedMessageAt reports whether the pinned message, gutter included, is
+// drawn at the messages-relative pos.
+func (c *Component) PinnedMessageAt(pos term.Coordinates) bool {
+	if _, ok := c.pinnedLayout(); !ok {
+		return false
+	}
+	return pos.X >= -c.gutterWidth() && pos.X < c.pin.width &&
+		pos.Y >= 0 && pos.Y < c.pin.rows
+}
+
+// ScrollToPinnedMessage scrolls the pinned message's top to the top of
+// the transcript, which unpins it.
+func (c *Component) ScrollToPinnedMessage() {
+	node, ok := c.pinnedLayout()
+	if !ok {
+		return
+	}
+	c.toggleAnchorValid = false
+	c.pin.hovered = false
+	c.alignVisibleAnchorTop(node, c.messages.Offset())
+}
+
 func (c *Component) refreshMessagesLayout() {
 	width, height := c.messages.SizeWidth(), c.messages.SizeHeight()
 	if width <= 0 || height <= 0 {
@@ -1689,6 +1920,9 @@ func (c *Component) resetContent() {
 	}
 	c.queuedNodes = nil
 	c.sentAttachments = nil
+	clear(c.sentText)
+	c.jumpHovered = false
+	c.pin.hovered = false
 	c.msg.Reset()
 	c.tail = nil
 	c.tailMd = nil

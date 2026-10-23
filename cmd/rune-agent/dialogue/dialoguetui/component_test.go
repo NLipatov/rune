@@ -80,7 +80,7 @@ func TestComponentDraw(t *testing.T) {
 						assert.True(t, comp.SeekUp())
 						assert.False(t, comp.SeekUp())
 					},
-					Expected: "wasup bro            \nI am a AI assistant  \nblabla.              \n                     \nSpeak in bro.        \nYo, wa'tup.          \n                     \n ┌──────────────┐    \n │              │    \n └──────────────┘    \n                     ",
+					Expected: "wasup bro            \nI am a AI assistant  \nblabla.              \n                     \nSpeak in bro.        \nYo, wa'tup.          \n         \uf063           \n ┌──────────────┐    \n │              │    \n └──────────────┘    \n                     ",
 				},
 				{
 					Action: func() {
@@ -166,7 +166,7 @@ func TestComponentScrollPreservedOnAppend(t *testing.T) {
 				"line5                \n" +
 				"line6                \n" +
 				"line7                \n" +
-				"line8                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -179,7 +179,7 @@ func TestComponentScrollPreservedOnAppend(t *testing.T) {
 				"line5                \n" +
 				"line6                \n" +
 				"line7                \n" +
-				"line8                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -195,7 +195,7 @@ func TestComponentScrollPreservedOnAppend(t *testing.T) {
 				"line4                \n" +
 				"line5                \n" +
 				"line6                \n" +
-				"line7                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -208,7 +208,7 @@ func TestComponentScrollPreservedOnAppend(t *testing.T) {
 				"line4                \n" +
 				"line5                \n" +
 				"line6                \n" +
-				"line7                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -298,7 +298,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line7                \n" +
 				"line8                \n" +
 				"line9                \n" +
-				"line10               \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -310,7 +310,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line7                \n" +
 				"line8                \n" +
 				"line9                \n" +
-				"line10               \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -358,7 +358,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line8                \n" +
 				"line9                \n" +
 				"line10               \n" +
-				"a                    \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -370,7 +370,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line8                \n" +
 				"line9                \n" +
 				"line10               \n" +
-				"a                    \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -422,7 +422,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line6                \n" +
 				"line7                \n" +
 				"line8                \n" +
-				"line9                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -434,7 +434,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line6                \n" +
 				"line7                \n" +
 				"line8                \n" +
-				"line9                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -488,7 +488,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line7                \n" +
 				"line8                \n" +
 				"line9                \n" +
-				"line10               \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -500,7 +500,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line7                \n" +
 				"line8                \n" +
 				"line9                \n" +
-				"line10               \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -548,7 +548,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line5                \n" +
 				"line6                \n" +
 				"line7                \n" +
-				"line8                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │              │    \n" +
 				" └──────────────┘    \n" +
@@ -558,7 +558,7 @@ func TestComponentScrollPreservedOnInPlaceGrowth(t *testing.T) {
 				"line3                \n" +
 				"line4                \n" +
 				"line5                \n" +
-				"line6                \n" +
+				"         \uf063           \n" +
 				" ┌──────────────┐    \n" +
 				" │x             │    \n" +
 				" │y             │    \n" +
@@ -683,7 +683,7 @@ func TestComponentToggleContractedPreservesVisibleAnchor(t *testing.T) {
 				"file data                                \n" +
 				"file data                                \n" +
 				"...                                      \n" +
-				"✓ read_file c3.go                        \n" +
+				"                   \uf063                     \n" +
 				"   ┌───────────────────────────────┐     \n" +
 				"   │                               │     \n" +
 				"   └───────────────────────────────┘     \n" +
@@ -719,7 +719,7 @@ func TestComponentToggleContractedPreservesVisibleAnchor(t *testing.T) {
 				"file data                                \n" +
 				"file data                                \n" +
 				"...                                      \n" +
-				"✓ read_file c3.go                        \n" +
+				"                   \uf063                     \n" +
 				"   ┌───────────────────────────────┐     \n" +
 				"   │                               │     \n" +
 				"   └───────────────────────────────┘     \n" +
@@ -4398,4 +4398,232 @@ func TestComponentRestoreDraftDoesNotSynthesizeLinks(t *testing.T) {
 	assert.Empty(t, comp.Input().Links(),
 		"plain text that happens to match a chip must stay unlinked")
 	assert.Len(t, comp.Attachments(), 1)
+}
+
+// newScrollOverlayComponent lays out a 20x14 chat whose transcript holds
+// a long question and a one-row one, each followed by six replies.
+func newScrollOverlayComponent(cfg ComponentConfig) *Component {
+	comp := NewComponent(cfg)
+	comp.Resize(20, 14)
+	comp.AddSendMessage("first question that is long enough to wrap over several rows")
+	for i := range 6 {
+		comp.AddReceiveMessage(fmt.Sprintf("reply %d", i))
+	}
+	comp.AddSendMessage("second")
+	for i := range 6 {
+		comp.AddReceiveMessage(fmt.Sprintf("answer %d", i))
+	}
+	return comp
+}
+
+func TestComponentScrollOverlays(t *testing.T) {
+	const width, height = 20, 14
+	arrow := term.Coordinates{X: (width - 1) / 2, Y: 10}
+	suite := []struct {
+		desc      string
+		maxRows   int
+		up        int
+		hover     bool
+		wantRows  []string
+		wantArrow term.Attributes
+	}{
+		{
+			desc:     "at the bottom nothing is pinned and no arrow is drawn",
+			maxRows:  2,
+			wantRows: []string{"", "answer 1"},
+		},
+		{
+			desc:      "a question at the top of the view is not pinned",
+			maxRows:   2,
+			up:        2,
+			wantRows:  []string{"second", "answer 0"},
+			wantArrow: term.Attributes{Fg: term.ColorSilver},
+		},
+		{
+			desc:      "the next question pushes the pin out",
+			maxRows:   2,
+			up:        3,
+			wantRows:  []string{"first question that…", "second"},
+			wantArrow: term.Attributes{Fg: term.ColorSilver},
+		},
+		{
+			desc:      "a long question is cut short after max rows",
+			maxRows:   2,
+			up:        5,
+			wantRows:  []string{"first question that", "is long enough to w…", ""},
+			wantArrow: term.Attributes{Fg: term.ColorSilver},
+		},
+		{
+			desc:      "hovering the arrow highlights it",
+			maxRows:   2,
+			up:        5,
+			hover:     true,
+			wantRows:  []string{"first question that", "is long enough to w…", ""},
+			wantArrow: term.Attributes{Fg: term.ColorWhite, Attrs: term.AttrBold},
+		},
+		{
+			desc:      "zero max rows disables the pin",
+			up:        5,
+			wantRows:  []string{"", "reply 5", "", "second"},
+			wantArrow: term.Attributes{Fg: term.ColorSilver},
+		},
+		{
+			desc:      "nothing is pinned at the start of the transcript",
+			maxRows:   2,
+			up:        100,
+			wantRows:  []string{"first question that", "is long enough to"},
+			wantArrow: term.Attributes{Fg: term.ColorSilver},
+		},
+	}
+	for _, tc := range suite {
+		t.Run(tc.desc, func(t *testing.T) {
+			comp := newScrollOverlayComponent(ComponentConfig{PinnedMessageMaxRows: tc.maxRows})
+			for range tc.up {
+				comp.SeekUp()
+			}
+			if tc.hover {
+				require.True(t, comp.HoverScrollOverlays(arrow))
+			}
+			w := term.NewStringWriter(width, height)
+			comp.Draw(w)
+			require.NoError(t, w.Flush())
+
+			rows := strings.Split(w.String(), "\n")
+			for i, want := range tc.wantRows {
+				assert.Equal(t, want, strings.TrimRight(rows[i], " "), "row %d", i)
+			}
+			cell := w.Cells()[arrow.Y*width+arrow.X]
+			if tc.wantArrow == (term.Attributes{}) {
+				assert.NotEqual(t, jumpToBottomArrow, cell.Ch)
+				return
+			}
+			assert.Equal(t, jumpToBottomArrow, cell.Ch)
+			assert.Equal(t, tc.wantArrow, cell.Attributes())
+			assert.Equal(t, string(jumpToBottomArrow), strings.TrimSpace(rows[arrow.Y]),
+				"the arrow takes its row over")
+		})
+	}
+}
+
+func TestComponentSendIcon(t *testing.T) {
+	const width, height = 20, 14
+	cfg := ComponentConfig{
+		PinnedMessageMaxRows: 2,
+		MessagesRowConfig: component.SpanConfig{
+			PadHorizontal:    6,
+			ContentAlignment: component.AlignmentCentered,
+		},
+		SendMessageStringConfig: component.StringConfig{
+			Attributes:           term.Attributes{Fg: term.ColorYellow},
+			BackgroundAttributes: term.Attributes{Bg: term.ColorGray},
+		},
+	}
+	type row struct {
+		icon bool
+		// textBg is the background where the message text starts.
+		textBg term.Color
+	}
+	suite := []struct {
+		desc  string
+		up    int
+		hover bool
+		want  map[int]row
+	}{
+		{
+			desc: "sent messages have an icon left of their first row only",
+			up:   18,
+			want: map[int]row{
+				0: {icon: true, textBg: term.ColorGray},
+				1: {textBg: term.ColorGray},
+				4: {},
+			},
+		},
+		{
+			desc: "the pinned message has the same icon",
+			up:   5,
+			want: map[int]row{
+				0: {icon: true, textBg: term.ColorGray},
+				1: {textBg: term.ColorGray},
+				2: {},
+				3: {icon: true, textBg: term.ColorGray},
+			},
+		},
+		{
+			desc:  "hovering the pinned message lightens its background",
+			up:    5,
+			hover: true,
+			want: map[int]row{
+				0: {icon: true, textBg: term.ColorSilver},
+				1: {textBg: term.ColorSilver},
+				3: {icon: true, textBg: term.ColorGray},
+			},
+		},
+	}
+	for _, tc := range suite {
+		t.Run(tc.desc, func(t *testing.T) {
+			comp := newScrollOverlayComponent(cfg)
+			for range tc.up {
+				comp.SeekUp()
+			}
+			if tc.hover {
+				require.True(t, comp.HoverScrollOverlays(term.Coordinates{X: -3, Y: 0}))
+			}
+			w := term.NewStringWriter(width, height)
+			comp.Draw(w)
+			require.NoError(t, w.Flush())
+			cells := w.Cells()
+			for y, want := range tc.want {
+				gutter := cells[y*width : y*width+3]
+				if want.icon {
+					assert.Equal(t, term.NewCell(sendGutterIcon, 1, term.Attributes{}), gutter[0],
+						"row %d icon", y)
+				} else {
+					assert.NotEqual(t, sendGutterIcon, gutter[0].Ch, "row %d icon", y)
+				}
+				for x, c := range gutter {
+					assert.Equal(t, term.ColorDefault, c.Bg, "row %d gutter cell %d", y, x)
+				}
+				assert.Equal(t, want.textBg, cells[y*width+3].Bg, "row %d text", y)
+			}
+		})
+	}
+}
+
+func TestComponentJumpToBottom(t *testing.T) {
+	arrow := term.Coordinates{X: 9, Y: 10}
+	comp := newScrollOverlayComponent(ComponentConfig{})
+	for range 5 {
+		comp.SeekUp()
+	}
+	require.True(t, comp.JumpArrowAt(arrow))
+	require.True(t, comp.HoverScrollOverlays(arrow))
+
+	comp.JumpToBottom()
+	assert.Zero(t, comp.messages.Offset())
+	assert.False(t, comp.JumpArrowAt(arrow))
+	assert.False(t, comp.jumpHovered)
+
+	comp.AddReceiveMessage("follows new content")
+	assert.Zero(t, comp.messages.Offset())
+}
+
+func TestComponentScrollToPinnedMessage(t *testing.T) {
+	comp := newScrollOverlayComponent(ComponentConfig{PinnedMessageMaxRows: 2})
+	for range 8 {
+		comp.SeekUp()
+	}
+	require.True(t, comp.PinnedMessageAt(term.Coordinates{X: 0, Y: 1}))
+	require.False(t, comp.PinnedMessageAt(term.Coordinates{X: 0, Y: 2}))
+
+	comp.ScrollToPinnedMessage()
+	w := term.NewStringWriter(20, 14)
+	comp.Draw(w)
+	require.NoError(t, w.Flush())
+	rows := strings.Split(w.String(), "\n")
+	assert.Equal(t, []string{"first question that", "is long enough to", "wrap over several", "rows"},
+		[]string{
+			strings.TrimRight(rows[0], " "), strings.TrimRight(rows[1], " "),
+			strings.TrimRight(rows[2], " "), strings.TrimRight(rows[3], " "),
+		})
+	assert.False(t, comp.PinnedMessageAt(term.Coordinates{X: 0, Y: 0}))
 }
