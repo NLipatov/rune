@@ -46,6 +46,11 @@ type ComponentConfig struct {
 	// padding lives outside the message's background, preventing the
 	// background color from leaking into the gap.
 	SendMessageBottomPad int
+	// SendMessageIcon marks each sent message from the transcript's left
+	// padding, left of its first row. It is drawn one cell wide, and not
+	// at all when zero or when the pane is too narrow to pad the
+	// transcript.
+	SendMessageIcon rune
 	// PinnedMessageMaxRows is how many rows the newest user message
 	// scrolled above the transcript's viewport may take when pinned over
 	// its top. Longer messages are cut short with an ellipsis, and the pin

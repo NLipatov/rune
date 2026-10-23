@@ -1903,6 +1903,7 @@ func TestHandlerScrollOverlays(t *testing.T) {
 func TestHandlerScrollOverlaySequence(t *testing.T) {
 	padded := ComponentConfig{
 		PinnedMessageMaxRows: 2,
+		SendMessageIcon:      DefaultSendMessageIcon,
 		SendMessageBottomPad: 1,
 		MessagesRowConfig: component.SpanConfig{
 			PadHorizontal:    6,

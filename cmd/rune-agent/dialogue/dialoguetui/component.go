@@ -1541,10 +1541,10 @@ func (c *Component) SeekUp() bool {
 // at copy below the tile. The bundled Nerd Font draws it one cell wide.
 const jumpToBottomArrow = '\uf063'
 
-// sendGutterIcon is nf-fa-arrow_right. It marks sent messages from the
-// gutter left of the transcript, which keeps their text aligned with the
-// replies'.
-const sendGutterIcon = '\uf061'
+// DefaultSendMessageIcon is nf-fa-arrow_right. Marking sent messages
+// from the gutter left of the transcript keeps their text aligned with
+// the replies'.
+const DefaultSendMessageIcon = '\uf061'
 
 // sendGutterWidth is how many cells left of a sent message its icon is
 // drawn, on the chat's own background, to stand apart from the message.
@@ -1601,17 +1601,17 @@ func (c *Component) gutterWidth() int {
 // drawSendIcon draws the sent message icon left of the message whose
 // first row starts at pos.
 func (c *Component) drawSendIcon(w term.Writer, pos term.Coordinates) {
-	if c.gutterWidth() <= 0 {
+	if c.cfg.SendMessageIcon == 0 || c.gutterWidth() <= 0 {
 		return
 	}
 	w.SetCell(term.Coordinates{X: pos.X - c.gutterWidth(), Y: pos.Y},
-		term.NewCell(sendGutterIcon, 1, term.Attributes{Bg: c.cfg.BackgroundColor}))
+		term.NewCell(c.cfg.SendMessageIcon, 1, term.Attributes{Bg: c.cfg.BackgroundColor}))
 }
 
 // drawSendIcons draws the icons of the sent messages whose first row is
 // in view.
 func (c *Component) drawSendIcons(w term.Writer, origin term.Coordinates) {
-	if c.gutterWidth() <= 0 || len(c.sentText) == 0 {
+	if c.cfg.SendMessageIcon == 0 || c.gutterWidth() <= 0 || len(c.sentText) == 0 {
 		return
 	}
 	width, height := c.messages.SizeWidth(), c.messages.SizeHeight()

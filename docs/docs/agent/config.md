@@ -314,6 +314,7 @@ an optional `fg` (foreground color), `bg` (background color), and `flags`
 | `background_attr` | The chat tab background. |
 | `user_msg_attr` | Your messages in the transcript. |
 | `user_msg_background_attr` | The background behind your messages. |
+| `user_msg_icon` | The character marking each of your messages, left of its first line. Defaults to a Nerd Font right arrow; set it to an empty string to hide it. |
 | `assistant_msg_attr` | The agent's messages in the transcript. |
 | `input_box_attr` | The composer's text content. |
 | `input_box_placeholder_attr` | The composer's placeholder text. |

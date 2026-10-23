@@ -17,11 +17,16 @@
 package extension
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"gopkg.in/yaml.v3"
+
+	"unstable.build/rune/cmd/rune-agent/dialogue/dialoguetui"
 )
 
 func TestResolveInputBackgroundColor(t *testing.T) {
@@ -72,4 +77,44 @@ func TestResolveInputBackgroundColor(t *testing.T) {
 func TestDefaultComponentInputBackgroundIsDefault(t *testing.T) {
 	assert.Equal(t, term.ColorDefault, defaultComponentCfg.InputBackgroundColor,
 		"compose input must default to the terminal default background")
+}
+
+func TestResolveUserMsgIcon(t *testing.T) {
+	const def = '→'
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want rune
+	}{
+		{name: "unset keeps the default", cfg: map[string]any{}, want: def},
+		{name: "a character replaces it", cfg: map[string]any{"user_msg_icon": "\uf054"}, want: '\uf054'},
+		{name: "empty hides it", cfg: map[string]any{"user_msg_icon": ""}, want: 0},
+		{name: "several characters keep the default", cfg: map[string]any{"user_msg_icon": ">>"}, want: def},
+		{name: "a non-string keeps the default", cfg: map[string]any{"user_msg_icon": true}, want: def},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resolveUserMsgIcon(def, config.MapConfig(tc.cfg)))
+		})
+	}
+}
+
+func TestShippedAgentConfigUserMsgIconMatchesDefault(t *testing.T) {
+	raw, err := os.ReadFile(agentYAMLPath)
+	require.NoError(t, err)
+	var doc struct {
+		Extensions struct {
+			RuneAgent struct {
+				Config map[string]any `yaml:"config"`
+			} `yaml:"rune-agent"`
+		} `yaml:"extensions"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &doc))
+	pconfig := config.MapConfig(doc.Extensions.RuneAgent.Config)
+
+	_, err = pconfig.GetString("user_msg_icon")
+	require.NoError(t, err, "user_msg_icon missing from %s", agentYAMLPath)
+	assert.Equal(t, dialoguetui.DefaultSendMessageIcon, defaultComponentCfg.SendMessageIcon)
+	assert.Equal(t, defaultComponentCfg.SendMessageIcon, resolveUserMsgIcon(0, pconfig),
+		"user_msg_icon in %s", agentYAMLPath)
 }

@@ -166,6 +166,7 @@ var (
 			ContentAlignment: component.AlignmentLeft,
 		},
 		SendMessageBottomPad: 1,
+		SendMessageIcon:      dialoguetui.DefaultSendMessageIcon,
 		PinnedMessageMaxRows: defaultPinnedUserMsgMaxLines,
 		ToolCallStringConfig: component.StringConfig{
 			Alignment:            component.AlignmentLeft,
@@ -539,6 +540,7 @@ func newCommandEventHandler(
 		ret.cfg.SendMessageStringConfig.Attributes = sendMsgAttr
 	}
 	ret.cfg.PinnedMessageMaxRows = resolvePinnedUserMsgMaxLines(pconfig)
+	ret.cfg.SendMessageIcon = resolveUserMsgIcon(ret.cfg.SendMessageIcon, pconfig)
 	recvMsgAttr, err := config.GetAttributes(pconfig, "assistant_msg_attr")
 	if err != nil {
 		if err != config.ErrNotFound {
@@ -2783,4 +2785,27 @@ func resolvePinnedUserMsgMaxLines(pconfig config.Config) int {
 		return defaultPinnedUserMsgMaxLines
 	}
 	return max(0, v)
+}
+
+// resolveUserMsgIcon reads user_msg_icon, the character marking each of
+// the user's messages in the chat. An empty string hides the icon. Any
+// other value must be a single character, as the icon takes exactly one
+// cell; a longer value keeps def rather than being cut short.
+func resolveUserMsgIcon(def rune, pconfig config.Config) rune {
+	v, err := pconfig.GetString("user_msg_icon")
+	if err != nil {
+		if !errors.Is(err, config.ErrNotFound) {
+			slog.Warn("get 'user_msg_icon' from config", "error", err)
+		}
+		return def
+	}
+	icon := []rune(v)
+	switch len(icon) {
+	case 0:
+		return 0
+	case 1:
+		return icon[0]
+	}
+	slog.Warn("'user_msg_icon' must be a single character", "value", v)
+	return def
 }

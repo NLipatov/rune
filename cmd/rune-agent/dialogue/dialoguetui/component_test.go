@@ -4509,6 +4509,7 @@ func TestComponentSendIcon(t *testing.T) {
 	const width, height = 20, 14
 	cfg := ComponentConfig{
 		PinnedMessageMaxRows: 2,
+		SendMessageIcon:      DefaultSendMessageIcon,
 		MessagesRowConfig: component.SpanConfig{
 			PadHorizontal:    6,
 			ContentAlignment: component.AlignmentCentered,
@@ -4524,10 +4525,11 @@ func TestComponentSendIcon(t *testing.T) {
 		textBg term.Color
 	}
 	suite := []struct {
-		desc  string
-		up    int
-		hover bool
-		want  map[int]row
+		desc   string
+		noIcon bool
+		up     int
+		hover  bool
+		want   map[int]row
 	}{
 		{
 			desc: "sent messages have an icon left of their first row only",
@@ -4549,6 +4551,15 @@ func TestComponentSendIcon(t *testing.T) {
 			},
 		},
 		{
+			desc:   "no icon leaves the padding blank",
+			noIcon: true,
+			up:     5,
+			want: map[int]row{
+				0: {textBg: term.ColorGray},
+				3: {textBg: term.ColorGray},
+			},
+		},
+		{
 			desc:  "hovering the pinned message lightens its background",
 			up:    5,
 			hover: true,
@@ -4561,6 +4572,10 @@ func TestComponentSendIcon(t *testing.T) {
 	}
 	for _, tc := range suite {
 		t.Run(tc.desc, func(t *testing.T) {
+			cfg := cfg
+			if tc.noIcon {
+				cfg.SendMessageIcon = 0
+			}
 			comp := newScrollOverlayComponent(cfg)
 			for range tc.up {
 				comp.SeekUp()
@@ -4575,10 +4590,11 @@ func TestComponentSendIcon(t *testing.T) {
 			for y, want := range tc.want {
 				gutter := cells[y*width : y*width+3]
 				if want.icon {
-					assert.Equal(t, term.NewCell(sendGutterIcon, 1, term.Attributes{}), gutter[0],
+					assert.Equal(t, term.NewCell(DefaultSendMessageIcon, 1, term.Attributes{}), gutter[0],
 						"row %d icon", y)
 				} else {
-					assert.NotEqual(t, sendGutterIcon, gutter[0].Ch, "row %d icon", y)
+					assert.NotEqual(t, DefaultSendMessageIcon, gutter[0].Ch, "row %d icon", y)
+					assert.Contains(t, []rune{0, ' '}, gutter[0].Ch, "row %d icon", y)
 				}
 				for x, c := range gutter {
 					assert.Equal(t, term.ColorDefault, c.Bg, "row %d gutter cell %d", y, x)

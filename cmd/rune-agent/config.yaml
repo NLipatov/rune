@@ -33,6 +33,10 @@ extensions:
         flags: dim
       user_msg_background_attr:
         bg: gray
+      # Marks each of your messages in the chat, left of its first line
+      # (nf-fa-arrow_right). Must be a single character; set it to an
+      # empty string to hide it.
+      user_msg_icon: ""
       assistant_msg_attr:
         fg: default
         bg: default
