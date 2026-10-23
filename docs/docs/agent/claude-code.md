@@ -72,15 +72,22 @@ Start `claude` in a Rune terminal and run:
 The plugin is installed once for your user and works in every Rune
 workspace.
 
-### 3. Start Claude Code in a Rune terminal
+### 3. Start Claude Code
 
-The package turns on Claude Code's IDE auto-connect in Rune's terminals,
-so a session you start in one connects to Rune by itself. This applies
-to terminals opened after the package is installed.
+Run `claude` from Rune's [command prompt](../learn/command-prompt.md).
+It opens a terminal tab and starts Claude Code there, connected to the
+workspace you ran it in. Options go to Claude Code, so `claude --resume`
+picks a past session to resume.
+
+Claude Code that you start yourself in a Rune terminal connects too: the
+package turns on Claude Code's IDE auto-connect in Rune's terminals
+opened after it is installed. When workspaces are nested, see [Several
+workspaces](#several-workspaces).
 
 To connect only when you ask, set the variable to `false` under
-[`gui.env`](../config.md#gui) in your config, and start sessions with
-`claude --ide` or run `/ide` and pick Rune:
+[`gui.env`](../config.md#gui) in your config. Sessions started with
+`claude` from the command prompt still connect; in one you start
+yourself, run `/ide` and pick Rune:
 
 ```yaml
 gui:
@@ -99,7 +106,7 @@ In a Claude Code session started from a Rune terminal:
 
 - **Your selection as context.** Select code in Rune and Claude Code
   shows it beside the prompt and includes it with your next message.
-  Run `claude send` from Rune's [command
+  Run `claudesend` from Rune's [command
   prompt](../learn/command-prompt.md) to insert an `@`-mention of the
   current file, with the selected lines, into Claude Code's prompt.
 - **Edits reviewed in Rune.** When Claude Code proposes an edit, Rune
@@ -134,10 +141,17 @@ In a Claude Code session started from a Rune terminal:
 
 ### Several workspaces
 
-Each Rune workspace serves its own connection, and Claude Code connects
-to the workspace that contains its working directory. When one
-workspace's root is inside another's, a session connects to the
-workspace whose terminal started it.
+Each Rune workspace serves its own connection. A session started with
+`claude` from the command prompt connects to the workspace you ran it
+in. One you start yourself in a terminal connects to the workspace that
+contains its working directory.
+
+When one open workspace's root is inside another's, for example with a
+workspace open on your home folder, a session you start yourself in the
+inner workspace matches both, and Claude Code does not connect to either
+by itself. Start it with `claude` from the command prompt instead, or
+run `/ide` and pick Rune. Rune's tools in `/mcp` connect to the
+workspace whose terminal started the session either way.
 
 ### Troubleshooting
 
@@ -149,7 +163,9 @@ workspace whose terminal started it.
   Claude Code from the workspace's own Rune terminal, and make sure the
   package is installed with `pkg current claude-code`.
 - **Claude Code does not connect by itself.** The terminal was opened
-  before the package was installed. Open a new terminal, or run `/ide`
+  before the package was installed, or the workspace is nested in
+  another open one (see [Several workspaces](#several-workspaces)).
+  Start Claude Code with `claude` from the command prompt, or run `/ide`
   and pick Rune.
 - **A status line asks you to update.** The package and the plugin are
   released together. Update the package with `pkg install claude-code`
