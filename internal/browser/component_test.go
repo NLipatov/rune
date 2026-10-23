@@ -3699,6 +3699,93 @@ func TestTabStatusRecords(t *testing.T) {
 	})
 }
 
+func TestContentSeen(t *testing.T) {
+	type windows struct {
+		tab, float, other Window
+	}
+	for _, tc := range []struct {
+		name   string
+		before func(b *Component, w windows)
+		act    func(b *Component, w windows)
+		// focus names the handler of the focus window: "tab", "float"
+		// or "other". seen names what comes in sight, or is empty when
+		// nothing does.
+		focus, seen string
+	}{{
+		name:  "focusing a window that is no tab",
+		act:   func(b *Component, w windows) { b.SetFocus(w.float) },
+		focus: "float", seen: "float",
+	}, {
+		name:  "focusing the window showing a tab",
+		act:   func(b *Component, w windows) { b.SetFocus(w.tab) },
+		focus: "tab", seen: "tab",
+	}, {
+		name:  "losing focus",
+		act:   func(b *Component, _ windows) { b.OnFocusChange(false) },
+		focus: "other",
+	}, {
+		name: "focusing a window out of focus",
+		before: func(b *Component, _ windows) {
+			b.OnFocusChange(false)
+		},
+		act:   func(b *Component, w windows) { b.SetFocus(w.float) },
+		focus: "float",
+	}, {
+		name: "regaining focus",
+		before: func(b *Component, w windows) {
+			b.SetFocus(w.tab)
+			b.OnFocusChange(false)
+		},
+		act:   func(b *Component, _ windows) { b.OnFocusChange(true) },
+		focus: "tab", seen: "tab",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen []browserapi.Handler
+			cfg := DefaultConfig()
+			cfg.OnContentSeen = func(content browserapi.Handler) { seen = append(seen, content) }
+			b := NewComponent(cfg)
+			b.SetInterrupter(term.NopInterrupter())
+			b.Resize(60, 20)
+			t.Cleanup(func() { _ = b.Close() })
+			uri, err := workspaceapi.ParseURI("rune-agent://model/chat")
+			require.NoError(t, err)
+			handlers := map[string]*nopHandler{
+				"tab": newTestHandler(), "float": newTestHandler(), "other": newTestHandler(),
+			}
+			b.NewTab(uri, 'o', "chat", handlers["tab"], handlers["tab"])
+			w := windows{tab: b.Focus()}
+			require.True(t, b.SetContentToTab(w.tab, 0))
+			w.float = b.Floating(handlers["float"], browserapi.FloatingConfig{})
+			var ok bool
+			w.other, ok = b.Split(browserapi.OrientationRight, w.tab, handlers["other"])
+			require.True(t, ok)
+			b.SetFocus(w.other)
+			if tc.before != nil {
+				tc.before(b, w)
+			}
+			require.True(t, b.SetTabStatus(uri, programstatus.Report{State: programstatus.Error, Progress: -1}))
+			seen = nil
+
+			tc.act(b, w)
+
+			assert.Same(t, handlers[tc.focus], b.FocusHandler())
+			status, _ := b.TabStatus(uri)
+			if tc.seen == "" {
+				assert.Empty(t, seen)
+				assert.Equal(t, programstatus.Error, status.State)
+				return
+			}
+			require.Len(t, seen, 1)
+			assert.Same(t, handlers[tc.seen], seen[0])
+			wantState := programstatus.Error
+			if tc.seen == "tab" {
+				wantState = programstatus.Idle
+			}
+			assert.Equal(t, wantState, status.State, "only the tab in sight is acknowledged")
+		})
+	}
+}
+
 // pictureWallpaper writes two marks on its first row, coloring the second
 // one by attributes, and draws its picture under them, or hashes where
 // the writer cannot draw the picture, as the logo falls back to blocks.

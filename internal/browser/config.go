@@ -241,6 +241,12 @@ type Config struct {
 	// tabs by status can drop the tab rather than see it go idle first.
 	// The tabs closed along with the Component are not reported.
 	OnTabRemoved func(uri workspaceapi.URI)
+	// OnContentSeen is called on the event loop each time the user
+	// comes to see the focus window: when that window gains focus, or
+	// when the Component regains focus. It receives the window's
+	// content or, for a window showing a tab, the tab's handler. What
+	// the program behind that content reported has been seen.
+	OnContentSeen func(content browserapi.Handler)
 	// TabStatus styles the decorations that reflect a tab's status.
 	TabStatus TabStatusConfig
 

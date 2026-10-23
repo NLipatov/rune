@@ -209,6 +209,9 @@ type workspaceManagerHandler struct {
 	workspaces          [workspaceSlots]*workspaceHandler
 	workspaceCount      int
 	focus               int
+	// unfocused is set while the host terminal reports that Rune lost
+	// focus, when the user sees none of the workspaces.
+	unfocused           bool
 	defAttr             term.Attributes
 	homeURI             workspaceapi.URI
 	homeWorkspace       workspace.Workspace
@@ -1318,6 +1321,9 @@ func (h *workspaceManagerHandler) onBarTabClick(barIdx int) bool {
 func (h *workspaceManagerHandler) Handle(ev term.Event) (exit, handled bool) {
 	h.macro.BeginEvent(ev)
 	defer h.macro.EndEvent()
+	if ev.Type == term.EventFocus || ev.Type == term.EventUnfocus {
+		h.unfocused = ev.Type == term.EventUnfocus
+	}
 	focus := h.focusHandler()
 	if ev.Type == term.EventMouse && h.drawBar() {
 		// The union must see every motion, not only the bar's, to tell
@@ -1545,6 +1551,11 @@ func (h *workspaceManagerHandler) textOpts(
 		}),
 		text.WithOnTabRemoved(func(tab workspaceapi.URI) {
 			h.status.tabRemoved(uri, tab)
+		}),
+		text.WithOnContentSeen(func(content browserapi.Handler) {
+			if seen, ok := statusURIOf(content); ok && !h.unfocused {
+				h.status.ackDetached(uri, seen)
+			}
 		}),
 		text.WithTabStatusConfig(tabStatusConfigFor(cfg)),
 		text.WithIconSet(cfg.icons()),
@@ -3697,18 +3708,29 @@ func statusWindowOf(e *ex, uri workspaceapi.URI) (browser.Window, bool) {
 		if err != nil {
 			return
 		}
-		switch c := content.(type) {
-		case statusReporter:
-			if c.StatusURI().Equal(uri) {
-				ret = win
-			}
-		case interface{ URI() workspaceapi.URI }:
-			if c.URI().Equal(uri) {
-				ret = win
-			}
+		if shown, ok := statusURIOf(content); ok && shown.Equal(uri) {
+			ret = win
 		}
 	})
 	return ret, ret != nil
+}
+
+// statusURIOf returns the uri the program content shows reports its
+// statuses under: its own for a program that names one, that of the
+// current run for a task, or else the uri of content. It returns false
+// when content has no uri, or a task has not run yet.
+func statusURIOf(content browserapi.Handler) (workspaceapi.URI, bool) {
+	switch c := content.(type) {
+	case statusReporter:
+		return c.StatusURI(), true
+	case interface {
+		StatusURI() (workspaceapi.URI, bool)
+	}:
+		return c.StatusURI()
+	case interface{ URI() workspaceapi.URI }:
+		return c.URI(), true
+	}
+	return workspaceapi.URI{}, false
 }
 
 func (h *workspaceManagerHandler) statusTabIcon(ws, uri workspaceapi.URI) (rune, bool) {
@@ -3730,6 +3752,15 @@ func (h *workspaceManagerHandler) statusInSight(ws, uri workspaceapi.URI) bool {
 	}
 	focused, ok := e.comp.FocusTab()
 	return ok && focused.URI().Equal(uri)
+}
+
+func (h *workspaceManagerHandler) statusSeen(ws, uri workspaceapi.URI) bool {
+	e := h.exForWorkspace(ws)
+	if h.unfocused || e == nil || h.focusEx() != e {
+		return false
+	}
+	seen, ok := statusURIOf(e.comp.Browser().FocusHandler())
+	return ok && seen.Equal(uri)
 }
 
 func (h *workspaceManagerHandler) notifyStatus(ws workspaceapi.URI, level browserapi.NotificationLevel, msg string) {

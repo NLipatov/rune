@@ -2068,7 +2068,10 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 	}, {
 		name: "floating command", here: true, state: programstatus.Done, key: del,
 		open: func(t *testing.T, pr *program) {
+			tiled := pr.e.comp.Browser().Focus()
 			require.NoError(t, pr.e.executePlugin(ctx, "make"))
+			// Reported on its window in focus, it would be seen at once.
+			pr.e.comp.Browser().SetFocus(tiled)
 		},
 		closed: func(t *testing.T, pr *program) {
 			assert.True(t, pr.p.calledClose, "the program is closed")
@@ -2234,6 +2237,171 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, inboxWin.WindowID(), win.WindowID(), "the inbox keeps the focus")
 			})
+		})
+	}
+}
+
+func TestWorkspaceBarStatusSeenFromTerminalWithoutTab(t *testing.T) {
+	type program struct {
+		e   *ex
+		uri workspaceapi.URI
+		p   *statusTestProgram
+	}
+	ctx := context.Background()
+	focusWindow := func(t *testing.T, pr *program) {
+		win, ok := statusWindowOf(pr.e, pr.uri)
+		require.True(t, ok, "a window shows the program")
+		pr.e.comp.Browser().SetFocus(win)
+	}
+	focusTask := func(t *testing.T, pr *program) {
+		require.True(t, pr.e.tasks.FocusTask("build"))
+	}
+	for _, tc := range []struct {
+		name  string
+		open  func(t *testing.T, pr *program)
+		focus func(t *testing.T, pr *program)
+	}{{
+		name: "floating command",
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.executePlugin(ctx, "make"))
+		},
+		focus: focusWindow,
+	}, {
+		name: "companion terminal",
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.toggleCompanionTerminal())
+		},
+		focus: focusWindow,
+	}, {
+		name: "terminal in a split",
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.terminalneworsplit(ctx))
+		},
+		focus: focusWindow,
+	}, {
+		name: "floating task",
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.newTask(ctx, "build", "left", "--", "make"))
+		},
+		focus: focusTask,
+	}, {
+		name: "task in a tab",
+		open: func(t *testing.T, pr *program) {
+			require.NoError(t, pr.e.newTaskTab(ctx, "build", "--", "make"))
+		},
+		focus: focusTask,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, otherSlot := newActivityTestManager(t, defaultConfigWithWrap(false))
+			t.Cleanup(func() { _ = m.Close() })
+			style := browser.DefaultTabStatusConfig().WorkspaceTab
+			pr := program{uri: mustURI(t, "file:///dev/ttys061")}
+			var (
+				slot  int
+				ws    workspaceapi.URI
+				notes *recordingNotifications
+				away  browser.Window
+			)
+			m.locked(func() {
+				slot = m.focus
+				w := m.workspaces[slot]
+				pr.e, ws = w.ex, w.uri
+				notes = &recordingNotifications{inner: w.notifications}
+				w.notifications = notes
+				pr.e.Resize(80, 30)
+				pr.p = newStatusTestProgram(pr.e.tm, pr.uri, "make")
+				pr.e.newEmulatorHandler = func([]string) (vtereservoir.VTE, error) { return pr.p, nil }
+				pr.e.newPluginHandler = func(int, ...string) (pluginHandler, error) { return pr.p, nil }
+				pr.e.tasks.SetProgramBuilder(func(
+					browser.EventPublisher, browser.Notifications, schemeapi.Executor,
+					schemeapi.Terminal, browser.TabManager, []string, int, ...plugin.Option,
+				) (browser.ScrollableFloating, error) {
+					return pr.p, nil
+				})
+				b := pr.e.comp.Browser()
+				tiled := b.Focus()
+				other, err := pr.e.comp.Tab(mustURI(t, "rune-agent://model/other"), 'x', "other",
+					browsertest.NewTestHandler())
+				require.NoError(t, err)
+				require.NoError(t, tiled.SetContent(other))
+				tc.open(t, &pr)
+				var ok bool
+				away, ok = b.Split(browserapi.OrientationRight, tiled, browsertest.NewTestHandler())
+				require.True(t, ok)
+				b.SetFocus(away)
+			})
+			m.quiesce()
+			require.Eventually(t, func() bool {
+				ok := true
+				m.locked(func() {
+					if len(pr.e.tasks.ListTasks()) > 0 {
+						_, ok = pr.e.tasks.StatusTask(pr.uri)
+					}
+				})
+				return ok
+			}, 5*time.Second, time.Millisecond, "a task runs its program")
+
+			report := func(msg string) {
+				t.Helper()
+				m.locked(func() {
+					require.NoError(t, pr.e.tm.SetTabStatus(pr.uri, programstatus.Report{
+						State: programstatus.Error, Progress: -1, App: "make", Msg: msg,
+					}))
+				})
+				m.quiesce()
+			}
+			assertSeen := func(seen bool, msgAndArgs ...any) {
+				t.Helper()
+				m.locked(func() {
+					sum, _ := m.workspaceStatus(slot)
+					_, listed := m.status.status(ws, pr.uri)
+					barIdx := slices.Index(m.barIdxToSlot, slot)
+					require.GreaterOrEqual(t, barIdx, 0)
+					if seen {
+						assert.Equal(t, programstatus.Idle, sum.State, msgAndArgs...)
+						assert.False(t, listed, msgAndArgs...)
+						assert.Equal(t, term.Attributes{}, m.bar.TabAttr(barIdx), msgAndArgs...)
+					} else {
+						assert.Equal(t, programstatus.Error, sum.State, msgAndArgs...)
+						assert.True(t, listed, msgAndArgs...)
+						assert.Equal(t, style.ErrorAttr, m.bar.TabAttr(barIdx), msgAndArgs...)
+					}
+				})
+			}
+
+			report("failed out of sight")
+			assertSeen(false, "reported while another window has focus")
+
+			m.locked(func() { tc.focus(t, &pr) })
+			m.quiesce()
+			assertSeen(true, "focusing its window sees it")
+
+			report("failed in sight")
+			assertSeen(true, "reported while its window has focus")
+			assert.Contains(t, notes.snapshot(),
+				capturedNote{level: browserapi.LevelError, msg: "make: failed in sight"},
+				"its message is notified all the same")
+
+			m.locked(func() { require.True(t, m.switchToWorkspace(otherSlot)) })
+			report("failed in another workspace")
+			assertSeen(false, "reported while its workspace is out of focus")
+			m.locked(func() { require.True(t, m.switchToWorkspace(slot)) })
+			m.quiesce()
+			assertSeen(true, "switching to its workspace sees it")
+
+			m.locked(func() { m.Handle(term.Event{Type: term.EventUnfocus}) })
+			report("failed out of focus")
+			assertSeen(false, "reported while Rune is out of focus")
+			m.locked(func() {
+				require.True(t, m.switchToWorkspace(otherSlot))
+				require.True(t, m.switchToWorkspace(slot))
+			})
+			m.quiesce()
+			report("failed out of focus again")
+			assertSeen(false, "switching workspaces leaves Rune out of focus")
+			m.locked(func() { m.Handle(term.Event{Type: term.EventFocus}) })
+			m.quiesce()
+			assertSeen(true, "focus coming back sees it")
 		})
 	}
 }

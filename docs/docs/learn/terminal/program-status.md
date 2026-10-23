@@ -178,8 +178,8 @@ workspaces, most pressing first, then by workspace and tab. Each shows:
 
 A tab stays listed until you close it, even once you have seen what it
 reported: it then reads `idle`, followed by the `app` it last reported. A
-terminal that is not a tab leaves the list once it holds no record, as when it
-closes.
+terminal that is not a tab leaves the list once it holds no record: once you
+have seen what it reported, or once it closes.
 
 When the programs don't all fit, the sidebar scrolls to keep the selected one
 in sight: moving past the last program shown scrolls down, and past the first
@@ -230,7 +230,7 @@ alive.
 | --- | --- |
 | `working`, `blocked` | The terminal's process exits, or the shell starts a new prompt and marks it with OSC 133 `A`. |
 | `idle` | Either of the above, or you see it, as for `done` and `error`. |
-| `done`, `error` | You see it: you focus its tab, press a key in it, or it is reported on the tab you are already looking at. A terminal that is not a tab, such as a floating `!` command or a minimized task, keeps it until the terminal closes. |
+| `done`, `error` | You see it: you focus the tab or the window showing the terminal, such as a floating `!` command or a task, press a key in its tab, or it is reported on what you are already looking at. |
 
 In every state a record also goes away when the program reports another one
 with the same `id`, when the program reports `clear` for it or one of its
@@ -472,7 +472,8 @@ terminal. Otherwise, check that `terminal.status.enabled` is not `false`.
 **A status never goes away.** A `working` or `blocked` record whose program
 died needs the shell's next prompt to be marked with OSC 133, or a `clear`;
 see [When a status goes away](#when-a-status-goes-away). A `done` or `error`
-record on a terminal that is not a tab stays until that terminal closes.
+record stays until you see it: focus the tab or the window showing the
+terminal, or choose it in the status inbox.
 
 **Too many notifications.** Remove states from `terminal.status.notify`, or
 raise `terminal.status.notify_interval`. Messages are notified once each, so a

@@ -780,6 +780,15 @@ func WithOnTabRemoved(fn func(uri workspaceapi.URI)) Option {
 	}
 }
 
+// WithOnContentSeen registers fn to be called on the host event loop
+// each time the user comes to see the focus window, with what it shows,
+// as browser.Config.OnContentSeen describes.
+func WithOnContentSeen(fn func(content browserapi.Handler)) Option {
+	return func(cfg *Config) {
+		cfg.OnContentSeen = fn
+	}
+}
+
 // WithCommandOverlayConfig defines the command overlay interface properties.
 func WithCommandOverlayConfig(c CommandOverlayConfig) Option {
 	return func(cfg *Config) {

@@ -67,6 +67,10 @@ type statusHost interface {
 	// no tab, as it floats over its workspace, while the workspace is
 	// in focus.
 	statusInSight(ws, uri workspaceapi.URI) bool
+	// statusSeen reports whether the user sees what reported at uri in
+	// the workspace at ws, which is no tab: Rune is in focus and the
+	// focus window of the workspace in focus shows it.
+	statusSeen(ws, uri workspaceapi.URI) bool
 	// notifyStatus tells the user msg at level in the workspace at ws,
 	// if it is still open.
 	notifyStatus(ws workspaceapi.URI, level browserapi.NotificationLevel, msg string)
@@ -382,7 +386,8 @@ func (s *statusStore) name(src *statusSource) string {
 }
 
 // updateDetached applies fn to the records kept for uri in the
-// workspace at ws, which is no tab.
+// workspace at ws, which is no tab. Done, error and idle records the
+// user already sees are acknowledged once they are reported.
 func (s *statusStore) updateDetached(
 	ws, uri workspaceapi.URI, fn func(*programstatus.Store),
 ) {
@@ -394,6 +399,20 @@ func (s *statusStore) updateDetached(
 		}
 	}
 	fn(src.records)
+	s.update(src, src.records.Summary())
+	if s.host.statusSeen(ws, uri) && src.records.Ack() {
+		s.update(src, src.records.Summary())
+	}
+}
+
+// ackDetached drops the done, error and idle records kept for uri in
+// the workspace at ws, as the user has seen them. It leaves a tab
+// alone, as its browser acknowledges it.
+func (s *statusStore) ackDetached(ws, uri workspaceapi.URI) {
+	src, ok := s.sources[statusKey{ws: ws.String(), uri: uri.String()}]
+	if !ok || src.records == nil || !src.records.Ack() {
+		return
+	}
 	s.update(src, src.records.Summary())
 }
 

@@ -417,12 +417,43 @@ func (c *Component) SetTabStatus(uri workspaceapi.URI, report programstatus.Repo
 // workspace it belongs to loses or regains it. A Component starts in
 // focus. Out of focus no tab is in sight, so done, error and idle
 // records stay until focus comes back and acknowledges those of the tab
-// in the focus window.
+// in the focus window, and Config.OnContentSeen is told about what it
+// shows.
 func (c *Component) OnFocusChange(inFocus bool) {
 	c.inFocus = inFocus
-	if t, ok := c.tabInSight(); ok {
+	c.ackInSight()
+}
+
+// FocusHandler returns the handler drawn in the focus window: its
+// content or, when it shows a tab, the tab's handler.
+func (c *Component) FocusHandler() browserapi.Handler {
+	return c.windowHandler(c.wm.Focus())
+}
+
+// ackInSight acknowledges the status of the tab in sight and tells
+// Config.OnContentSeen what the focus window shows, while the Component
+// is in focus.
+func (c *Component) ackInSight() {
+	if !c.inFocus || c.focusWindow == (thandler.Window{}) {
+		return
+	}
+	if t, ok := c.focusWindow.Content().(*Tab); ok {
 		t.AckStatus()
 	}
+	if c.config.OnContentSeen != nil {
+		c.config.OnContentSeen(c.windowHandler(c.focusWindow))
+	}
+}
+
+// windowHandler returns the handler drawn in win. It reads win rather
+// than the browserWindow tracking it, as restoring a layout focuses a
+// window before it is tracked.
+func (c *Component) windowHandler(win thandler.Window) browserapi.Handler {
+	content := win.Content().(browserapi.Handler)
+	if t, ok := content.(*Tab); ok {
+		return t.Handler()
+	}
+	return c.unwrapContent(content)
 }
 
 // tabInSight returns the tab the user sees: the one in the focus window
@@ -2228,16 +2259,14 @@ func (c *browserScrollableContent) MaxSeekOffset() int {
 }
 
 // satisfies handler.WindowSubscriber to override union attrs of the
-// focus window and to acknowledge the status of the tab it shows.
+// focus window and to acknowledge what it shows.
 type wmSubscriber Component
 
 func (s *wmSubscriber) OnFocus(prev, focus thandler.Window) {
 	c := (*Component)(s)
 	c.focusWindow = focus
 	c.dirtyTabs = true
-	if t, ok := c.tabInSight(); ok {
-		t.AckStatus()
-	}
+	c.ackInSight()
 }
 
 // OnBarClose routes window-bar close icon clicks through closeWindow so

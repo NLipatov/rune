@@ -2115,6 +2115,8 @@ type statusStoreTestHost struct {
 	names      map[statusKey]string
 	tabs       map[statusKey]*browser.Tab
 	previews   map[statusKey]statusPreview
+	seen       map[statusKey]bool
+	notified   []string
 	changed    []workspaceapi.URI
 	shown      []statusKey
 	closed     []statusKey
@@ -2155,9 +2157,14 @@ func (h *statusStoreTestHost) statusTabIcon(ws, uri workspaceapi.URI) (rune, boo
 	}
 	return 'x', true
 }
-func (h *statusStoreTestHost) statusInSight(workspaceapi.URI, workspaceapi.URI) bool               { return false }
-func (h *statusStoreTestHost) notifyStatus(workspaceapi.URI, browserapi.NotificationLevel, string) {}
-func (h *statusStoreTestHost) statusChanged(ws workspaceapi.URI)                                   { h.changed = append(h.changed, ws) }
+func (h *statusStoreTestHost) statusInSight(workspaceapi.URI, workspaceapi.URI) bool { return false }
+func (h *statusStoreTestHost) statusSeen(ws, uri workspaceapi.URI) bool {
+	return h.seen[statusKey{ws.String(), uri.String()}]
+}
+func (h *statusStoreTestHost) notifyStatus(_ workspaceapi.URI, _ browserapi.NotificationLevel, msg string) {
+	h.notified = append(h.notified, msg)
+}
+func (h *statusStoreTestHost) statusChanged(ws workspaceapi.URI) { h.changed = append(h.changed, ws) }
 func (h *statusStoreTestHost) showStatus(ws, uri workspaceapi.URI) {
 	h.shown = append(h.shown, statusKey{ws.String(), uri.String()})
 }
@@ -2210,6 +2217,7 @@ func newStatusStoreTestWith(
 		names:      make(map[statusKey]string),
 		tabs:       make(map[statusKey]*browser.Tab),
 		previews:   make(map[statusKey]statusPreview),
+		seen:       make(map[statusKey]bool),
 	}
 	host.addWorkspace(ws, "1 home")
 	return host, newStatusStore(host, cfg, tabStatusNotifyConfig{}, statusTestStyle(), host.schedule, interrupter), ws
@@ -2787,4 +2795,112 @@ func TestStatusStoreDetached(t *testing.T) {
 		assert.Equal(t, "a", sum.Msg)
 		assert.Equal(t, ttyA, uri)
 	})
+}
+
+func TestStatusStoreAckDetached(t *testing.T) {
+	report := func(id string, state programstatus.State) programstatus.Report {
+		return programstatus.Report{ID: id, State: state, Progress: -1}
+	}
+	for _, tc := range []struct {
+		name    string
+		tab     bool
+		reports []programstatus.Report
+		// kept holds the ids of the records left, or nil when nothing
+		// is listed.
+		kept    []string
+		changed bool
+	}{{
+		name: "nothing reported",
+	}, {
+		name: "done", reports: []programstatus.Report{report("", programstatus.Done)}, changed: true,
+	}, {
+		name: "error", reports: []programstatus.Report{report("", programstatus.Error)}, changed: true,
+	}, {
+		name: "idle", reports: []programstatus.Report{report("", programstatus.Idle)}, changed: true,
+	}, {
+		name: "working and blocked stay",
+		reports: []programstatus.Report{
+			report("w", programstatus.Working), report("b", programstatus.Blocked),
+			report("e", programstatus.Error),
+		},
+		kept: []string{"b", "w"}, changed: true,
+	}, {
+		name:    "nothing to acknowledge",
+		reports: []programstatus.Report{report("w", programstatus.Working)},
+		kept:    []string{"w"},
+	}, {
+		name: "tab", tab: true,
+		reports: []programstatus.Report{report("", programstatus.Error)},
+		kept:    []string{""},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, store, ws := newStatusStoreTest(t)
+			uri := statusStoreTestURI(t, "file:///dev/ttys001")
+			if tc.tab {
+				records := programstatus.New()
+				for _, r := range tc.reports {
+					records.Apply(r)
+				}
+				store.tabStatusChanged(ws, uri, records.Summary())
+			} else {
+				for _, r := range tc.reports {
+					store.updateDetached(ws, uri, func(s *programstatus.Store) { s.Apply(r) })
+				}
+			}
+			n := len(host.changed)
+
+			store.ackDetached(ws, uri)
+
+			assert.Equal(t, tc.changed, len(host.changed) != n, "the change is reported")
+			status, listed := store.status(ws, uri)
+			if tc.kept == nil {
+				assert.False(t, listed)
+				assert.Empty(t, store.items())
+				return
+			}
+			require.True(t, listed)
+			var ids []string
+			for _, rec := range status.Records {
+				ids = append(ids, rec.ID)
+			}
+			assert.Equal(t, tc.kept, ids)
+		})
+	}
+}
+
+func TestStatusStoreUpdateDetachedSeen(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		seen   bool
+		state  programstatus.State
+		listed bool
+	}{
+		{name: "done seen", seen: true, state: programstatus.Done},
+		{name: "error seen", seen: true, state: programstatus.Error},
+		{name: "idle seen", seen: true, state: programstatus.Idle},
+		{name: "working seen", seen: true, state: programstatus.Working, listed: true},
+		{name: "blocked seen", seen: true, state: programstatus.Blocked, listed: true},
+		{name: "error out of sight", state: programstatus.Error, listed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, store, ws := newStatusStoreTest(t)
+			store.notify.messages = true
+			uri := statusStoreTestURI(t, "file:///dev/ttys001")
+			host.seen[statusKey{ws.String(), uri.String()}] = tc.seen
+
+			store.updateDetached(ws, uri, func(s *programstatus.Store) {
+				s.Apply(programstatus.Report{State: tc.state, Progress: -1, App: "make", Msg: "boom"})
+			})
+
+			assert.Equal(t, []string{"make: boom"}, host.notified, "its message is notified all the same")
+			_, listed := store.status(ws, uri)
+			assert.Equal(t, tc.listed, listed)
+			sum, _ := store.rollup(ws)
+			want := programstatus.Idle
+			if tc.listed {
+				want = tc.state
+			}
+			assert.Equal(t, want, sum.State)
+		})
+	}
 }
