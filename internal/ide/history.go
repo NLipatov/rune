@@ -25,6 +25,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	tcomponent "unstable.build/rune/internal/component"
 	"unstable.build/rune/internal/ide/idehistory"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/idetask"
 	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/workspace"
@@ -39,7 +40,7 @@ type exSnapshotter struct {
 	// the subscription, via workspacerename.
 	wh *workspaceHandler
 	// status, when set, holds the programs the workspace of wh lists.
-	status *statusStore
+	status *idestatus.Store
 }
 
 func (s exSnapshotter) Name() string {
@@ -130,7 +131,7 @@ func (s exSnapshotter) Programs() []idehistory.Program {
 	if s.status == nil || s.wh == nil {
 		return nil
 	}
-	return s.status.programs(s.wh.uri)
+	return s.status.Programs(s.wh.uri)
 }
 
 func (s exSnapshotter) Layout() (tcomponent.TileLayout, bool) {

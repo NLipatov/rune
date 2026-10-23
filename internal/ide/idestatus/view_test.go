@@ -14,31 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package ide
+package idestatus
 
 import (
-	"cmp"
 	"context"
-	"errors"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/component"
-	"github.com/unstablebuild/rune-go-sdk/handler"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/handler/handlertest"
-	"unstable.build/rune/internal/ide/idehistory"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -71,31 +65,31 @@ func TestStatusInboxEntries(t *testing.T) {
 	assert.Empty(t, in.entries(nil))
 
 	reported := func(state programstatus.State) []programstatus.Record {
-		return []programstatus.Record{{Report: programstatus.Report{State: state, Progress: -1}}}
+		return []programstatus.Record{{State: state, Progress: -1}}
 	}
-	sources := []statusItem{
-		{slot: 0, wsName: "1 home", uri: worker, name: "worker", icon: 'w', status: programstatus.Summary{
+	sources := []Item{
+		{Slot: 0, WorkspaceName: "1 home", URI: worker, Name: "worker", Icon: 'w', Status: programstatus.Summary{
 			State: programstatus.Working, Progress: 40, Title: "cargo build",
 		}},
-		{slot: 1, wsName: "2 proj", uri: build, name: "build", status: programstatus.Summary{
+		{Slot: 1, WorkspaceName: "2 proj", URI: build, Name: "build", Status: programstatus.Summary{
 			State: programstatus.Error, Progress: -1, Msg: "exit status 2", App: "build",
 		}},
-		{slot: 1, wsName: "2 proj", uri: agent, name: "agent", icon: 'a', status: programstatus.Summary{
+		{Slot: 1, WorkspaceName: "2 proj", URI: agent, Name: "agent", Icon: 'a', Status: programstatus.Summary{
 			State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
 			App: "claude", Msg: "run make test?",
 			Records: []programstatus.Record{
-				{Report: programstatus.Report{State: programstatus.Working, Progress: -1, App: "claude"}},
-				{Report: programstatus.Report{
+				{State: programstatus.Working, Progress: -1, App: "claude"},
+				{
 					ID: "tool/bash", State: programstatus.Blocked,
 					Kind: programstatus.KindPermission, Progress: -1, App: "claude", Msg: "run make test?",
-				}},
+				},
 			},
 		}},
-		{slot: 1, wsName: "2 proj", uri: idle, name: "idle", app: "rune-agent", status: programstatus.Summary{Progress: -1}},
-		{slot: 0, wsName: "1 home", uri: waiting, name: "waiting", icon: 'z', status: programstatus.Summary{
+		{Slot: 1, WorkspaceName: "2 proj", URI: idle, Name: "idle", App: "rune-agent", Status: programstatus.Summary{Progress: -1}},
+		{Slot: 0, WorkspaceName: "1 home", URI: waiting, Name: "waiting", Icon: 'z', Status: programstatus.Summary{
 			Progress: -1, App: "opencode", Records: reported(programstatus.Idle),
 		}},
-		{slot: 1, wsName: "2 proj", uri: pty, name: detachedStatusLabel, status: programstatus.Summary{
+		{Slot: 1, WorkspaceName: "2 proj", URI: pty, Name: detachedStatusLabel, Status: programstatus.Summary{
 			State: programstatus.Done, Progress: -1, Msg: "ok", App: "make",
 		}},
 	}
@@ -137,15 +131,15 @@ func TestStatusInboxEntries(t *testing.T) {
 
 	t.Run("sources are left untouched", func(t *testing.T) {
 		assert.Len(t, sources, 6)
-		assert.Equal(t, worker, sources[0].uri)
+		assert.Equal(t, worker, sources[0].URI)
 	})
 
 	t.Run("ties sort by slot then name", func(t *testing.T) {
 		working := programstatus.Summary{State: programstatus.Working, Progress: -1}
-		got := in.entries([]statusItem{
-			{slot: 1, uri: build, name: "zeta", status: working},
-			{slot: 1, uri: agent, name: "alpha", status: working},
-			{slot: 0, uri: worker, name: "omega", status: working},
+		got := in.entries([]Item{
+			{Slot: 1, URI: build, Name: "zeta", Status: working},
+			{Slot: 1, URI: agent, Name: "alpha", Status: working},
+			{Slot: 0, URI: worker, Name: "omega", Status: working},
 		})
 		var names []string
 		for _, e := range got {
@@ -212,10 +206,10 @@ func statusViewTestConfig() browser.TabStatusConfig {
 type statusViewFixture struct {
 	t     *testing.T
 	host  *statusStoreTestHost
-	store *statusStore
+	store *Store
 	ws    workspaceapi.URI
 	b     *browser.Component
-	v     *statusView
+	v     *View
 }
 
 func newStatusViewFixture(t *testing.T) *statusViewFixture {
@@ -223,9 +217,9 @@ func newStatusViewFixture(t *testing.T) *statusViewFixture {
 	host.workspaces[ws.String()] = "1 home"
 	cfg := browser.DefaultConfig()
 	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) {
-		store.tabStatusChanged(ws, uri, next)
+		store.TabStatusChanged(ws, uri, next)
 	}
-	cfg.OnTabRemoved = func(uri workspaceapi.URI) { store.tabRemoved(ws, uri) }
+	cfg.OnTabRemoved = func(uri workspaceapi.URI) { store.TabRemoved(ws, uri) }
 	b := browser.NewComponent(cfg)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	b.Resize(120, 60)
@@ -259,11 +253,11 @@ func (f *statusViewFixture) tab(name string, r programstatus.Report) {
 	tab := f.b.NewTab(uri, 'x', name, h, h)
 	key := statusKey{f.ws.String(), uri.String()}
 	f.host.names[key], f.host.tabs[key] = name, tab
-	require.NoError(f.t, f.store.setTabStatus(f.ws, statusStoreTestTabs{component: f.b}, uri, r))
+	require.NoError(f.t, f.store.SetTabStatus(f.ws, statusStoreTestTabs{component: f.b}, uri, r))
 }
 
 // preview makes the terminal at file:///path previewed as p.
-func (f *statusViewFixture) preview(path string, p statusPreview) {
+func (f *statusViewFixture) preview(path string, p Preview) {
 	f.host.previews[statusKey{f.ws.String(), f.uri(path).String()}] = p
 }
 
@@ -1088,18 +1082,18 @@ func TestStatusView(t *testing.T) {
 				// Larger than the preview: it loses its top rows and right
 				// columns.
 				f.report("a", statusTestReport(blocked, "large", -1))
-				f.preview("a", statusPreview{
-					content: &statusPreviewTestHandler{name: "L", width: 20, height: 6}, width: 20, height: 6,
+				f.preview("a", Preview{
+					Content: &statusPreviewTestHandler{name: "L", width: 20, height: 6}, Width: 20, Height: 6,
 				})
 				// Smaller: drawn whole at its own size.
 				f.report("b", statusTestReport(failed, "small", -1))
-				f.preview("b", statusPreview{
-					content: &statusPreviewTestHandler{name: "S", width: 4, height: 2}, width: 4, height: 2,
+				f.preview("b", Preview{
+					Content: &statusPreviewTestHandler{name: "S", width: 4, height: 2}, Width: 4, Height: 2,
 				})
 				// Shown nowhere: fit to the preview.
 				f.report("c", statusTestReport(done, "hidden", -1))
 				hidden := &statusPreviewTestHandler{name: "H"}
-				f.preview("c", statusPreview{content: hidden, fit: hidden.Resize, hidden: true})
+				f.preview("c", Preview{Content: hidden, Fit: hidden.Resize, Hidden: true})
 				// Its window closed.
 				f.report("d", statusTestReport(working, "gone", -1))
 			},
@@ -1131,7 +1125,7 @@ func TestStatusView(t *testing.T) {
 				// A preview drawing the inbox, as previewing the workspace it
 				// floats over would, leaves the nested inbox blank.
 				{do: func(f *statusViewFixture) {
-					f.preview("d", statusPreview{content: f.v, width: 15, height: 4})
+					f.preview("d", Preview{Content: f.v, Width: 15, Height: 4})
 				}, want: `
                         │               
  ▌   1 home             │               
@@ -1409,7 +1403,7 @@ func TestStatusView(t *testing.T) {
 			if tc.setup != nil {
 				tc.setup(f)
 			}
-			f.v = f.store.view()
+			f.v = f.store.View(nil)
 			t.Cleanup(func() { require.NoError(t, f.v.Close()) })
 			width, height := 0, 0
 			for i, step := range tc.steps {
@@ -1470,7 +1464,7 @@ func TestStatusViewMouse(t *testing.T) {
 			r.Apply(detachedTestReport(programstatus.Done, ""))
 		})
 	}
-	v := store.view()
+	v := store.View(nil)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	// 0 padding, 1-3 a, 4 gap, 5-7 b, 8 below them.
 	v.Resize(40, 9)
@@ -1543,7 +1537,7 @@ func TestStatusViewPointerLeaves(t *testing.T) {
 			f.report(path, statusTestReport(programstatus.Working, "make", 40))
 		}
 		f.tab("chat", statusTestReport(programstatus.Done, "", -1))
-		v := f.store.view()
+		v := f.store.View(nil)
 		t.Cleanup(func() { require.NoError(t, v.Close()) })
 		sel := v.sel
 		handlertest.RunPointerLeaves(t, v, size.X, size.Y)
@@ -1558,7 +1552,7 @@ func TestStatusViewPointerLeaves(t *testing.T) {
 
 func TestStatusViewSidebarWidth(t *testing.T) {
 	_, store, ws := newStatusStoreTest(t)
-	v := store.view()
+	v := store.View(nil)
 	defer v.Close()
 	for _, tc := range []struct {
 		name, app, wsName string
@@ -1571,9 +1565,9 @@ func TestStatusViewSidebarWidth(t *testing.T) {
 			want: statusTextX + len([]rune("idle · ")) + 20 + statusSelectionPad + statusPadRight},
 		{name: "short", wsName: strings.Repeat("c", 25), want: statusTextX + 25 + statusSelectionPad + statusPadRight},
 	} {
-		v.set(statusInbox{}.entries([]statusItem{{ws: ws, wsName: tc.wsName, name: tc.name, status: programstatus.Summary{
+		v.set(statusInbox{}.entries([]Item{{WS: ws, WorkspaceName: tc.wsName, Name: tc.name, Status: programstatus.Summary{
 			Progress: -1, App: tc.app,
-			Records: []programstatus.Record{{Report: programstatus.Report{Progress: -1}}},
+			Records: []programstatus.Record{{Progress: -1}},
 		}}}))
 		w, _ := v.sidebarSize()
 		assert.Equal(t, tc.want, w, "%q %q %q", tc.name, tc.app, tc.wsName)
@@ -1583,7 +1577,7 @@ func TestStatusViewSidebarWidth(t *testing.T) {
 func TestStatusViewPreview(t *testing.T) {
 	host, store, ws := newStatusStoreTest(t)
 	cfg := browser.DefaultConfig()
-	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) { store.tabStatusChanged(ws, uri, next) }
+	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) { store.TabStatusChanged(ws, uri, next) }
 	b := browser.NewComponent(cfg)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	b.Resize(120, 60)
@@ -1594,7 +1588,7 @@ func TestStatusViewPreview(t *testing.T) {
 		tab := b.NewTab(uri, 'x', name, h, h)
 		key := statusKey{ws.String(), uri.String()}
 		host.names[key], host.tabs[key] = name, tab
-		require.NoError(t, store.setTabStatus(ws, tabs, uri, programstatus.Report{State: state, Progress: -1}))
+		require.NoError(t, store.SetTabStatus(ws, tabs, uri, programstatus.Report{State: state, Progress: -1}))
 		return tab, h
 	}
 	freeTab, free := open("f", programstatus.Blocked)
@@ -1608,7 +1602,7 @@ func TestStatusViewPreview(t *testing.T) {
 	// A terminal outside of a tab, in a window of its own.
 	pty := statusStoreTestURI(t, "file:///dev/ttys001")
 	term1 := &statusPreviewTestHandler{name: "t", width: 20, height: 5}
-	host.previews[statusKey{ws.String(), pty.String()}] = statusPreview{content: term1, width: 20, height: 5}
+	host.previews[statusKey{ws.String(), pty.String()}] = Preview{Content: term1, Width: 20, Height: 5}
 	store.updateDetached(ws, pty, func(r *programstatus.Store) {
 		r.Apply(detachedTestReport(programstatus.Done, "ok"))
 	})
@@ -1617,7 +1611,7 @@ func TestStatusViewPreview(t *testing.T) {
 		r.Apply(detachedTestReport(programstatus.Done, "ok"))
 	})
 
-	v := store.view()
+	v := store.View(nil)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	const sideW = statusSidebarMin + statusDividerWidth
 	w, h := v.Dimensions()
@@ -1689,18 +1683,18 @@ func TestStatusViewHiddenPreview(t *testing.T) {
 	hidden, shown := statusStoreTestURI(t, "file:///hidden"), statusStoreTestURI(t, "file:///shown")
 	program := &statusPreviewTestHandler{name: "h", width: 3, height: 1}
 	fits := 0
-	host.previews[statusKey{ws.String(), hidden.String()}] = statusPreview{
-		content: program, hidden: true,
-		fit: func(w, h int) { fits++; program.Resize(w, h) },
+	host.previews[statusKey{ws.String(), hidden.String()}] = Preview{
+		Content: program, Hidden: true,
+		Fit: func(w, h int) { fits++; program.Resize(w, h) },
 	}
 	other := &statusPreviewTestHandler{name: "s", width: 5, height: 2}
-	host.previews[statusKey{ws.String(), shown.String()}] = statusPreview{content: other, width: 5, height: 2}
+	host.previews[statusKey{ws.String(), shown.String()}] = Preview{Content: other, Width: 5, Height: 2}
 	for _, uri := range []workspaceapi.URI{hidden, shown} {
 		store.updateDetached(ws, uri, func(r *programstatus.Store) {
 			r.Apply(detachedTestReport(programstatus.Done, ""))
 		})
 	}
-	v := store.view()
+	v := store.View(nil)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	require.Equal(t, hidden.String(), v.sel.uri)
 
@@ -1735,7 +1729,7 @@ func TestStatusViewStyle(t *testing.T) {
 	} {
 		store.updateDetached(ws, statusStoreTestURI(t, "file:///"+path), func(r *programstatus.Store) { r.Apply(report) })
 	}
-	v := store.view()
+	v := store.View(nil)
 	t.Cleanup(func() { require.NoError(t, v.Close()) })
 	const width = statusSidebarMin + 10
 	v.Resize(width, 14)
@@ -1784,7 +1778,7 @@ func TestStatusViewStyle(t *testing.T) {
 		return slices.Repeat([]term.Attributes{attr}, n)
 	}
 	selected := func(attr term.Attributes) term.Attributes {
-		return term.AttributesUnion(attr, statusTestStyle().selectedAttr)
+		return term.AttributesUnion(attr, statusTestStyle().SelectedAttr)
 	}
 	for _, tc := range []struct {
 		name               string
@@ -1804,40 +1798,40 @@ func TestStatusViewStyle(t *testing.T) {
 	}
 	style := statusTestStyle()
 	wsName := func(y int) []term.Attributes { return attrs(y, statusTextX, statusTextX+len("1 home")) }
-	assert.Equal(t, repeat(term.AttributesUnion(style.selectedAttr, style.workspaceHighlightAttr), len("1 home")), wsName(1),
+	assert.Equal(t, repeat(term.AttributesUnion(style.SelectedAttr, style.WorkspaceHighlightAttr), len("1 home")), wsName(1),
 		"the workspace of the selected program stands out from the selection")
 	for _, y := range []int{5, 9} {
-		assert.Equal(t, repeat(style.workspaceAttr, len("1 home")), wsName(y), "the workspace at %d", y)
+		assert.Equal(t, repeat(style.WorkspaceAttr, len("1 home")), wsName(y), "the workspace at %d", y)
 	}
 	const barW, doneW = 11, 5
 	bar := func() []term.Attributes { return attrs(12, statusTextX, statusTextX+barW) }
 	label := func() []term.Attributes { return attrs(12, statusTextX+barW+1, statusTextX+barW+5) }
 	onBar := func(base, attr term.Attributes) term.Attributes {
-		return term.AttributesUnion(term.AttributesUnion(base, style.progressAttr), attr)
+		return term.AttributesUnion(term.AttributesUnion(base, style.ProgressAttr), attr)
 	}
-	assert.Equal(t, append(repeat(onBar(term.Attributes{}, style.progressDoneAttr), doneW),
-		repeat(onBar(term.Attributes{}, style.progressRemainingAttr), barW-doneW)...), bar(),
+	assert.Equal(t, append(repeat(onBar(term.Attributes{}, style.ProgressDoneAttr), doneW),
+		repeat(onBar(term.Attributes{}, style.ProgressRemainingAttr), barW-doneW)...), bar(),
 		"half of the bar is done, over the bar's own background")
-	assert.Equal(t, repeat(style.progressLabelAttr, 4), label(), "the percentage")
-	marker := term.Attributes{Fg: style.markerAttr.Fg, Bg: style.selectedAttr.Bg}
+	assert.Equal(t, repeat(style.ProgressLabelAttr, 4), label(), "the percentage")
+	marker := term.Attributes{Fg: style.MarkerAttr.Fg, Bg: style.SelectedAttr.Bg}
 	selEnd := statusSidebarMin - 2*statusPadTop
 	for _, y := range []int{1, 2, 3} {
 		assert.Equal(t, marker, cells[y][statusPadLeft].Attributes(),
 			"the marker at %d takes the background of the selection it leaves unset", y)
 		assert.Equal(t, ' ', cells[y][statusPadLeft+1].Ch,
 			"a column of row %d stands between the marker and the icon", y)
-		assert.Equal(t, style.selectedAttr, cells[y][statusPadLeft+1].Attributes(),
+		assert.Equal(t, style.SelectedAttr, cells[y][statusPadLeft+1].Attributes(),
 			"the column between the marker and the icon of row %d is selected", y)
-		assert.Equal(t, repeat(style.selectedAttr, 5), attrs(y, selEnd-5, selEnd),
+		assert.Equal(t, repeat(style.SelectedAttr, 5), attrs(y, selEnd-5, selEnd),
 			"the selection paints row %d past its text, into the padding", y)
 		assert.Equal(t, repeat(term.Attributes{}, statusPadLeft), attrs(y, 0, statusPadLeft),
 			"the left padding of row %d is not selected", y)
 		assert.Equal(t, repeat(term.Attributes{}, 2*statusPadTop), attrs(y, selEnd, statusSidebarMin),
 			"cells being about twice as tall as wide, the selection leaves twice as many columns of row %d "+
 				"empty on its right as rows above it, for the padding to look even", y)
-		assert.Equal(t, style.frame.VerticalLeft, cells[y][statusSidebarMin].Ch,
+		assert.Equal(t, style.Frame.VerticalLeft, cells[y][statusSidebarMin].Ch,
 			"a line stands between the sidebar and the preview")
-		assert.Equal(t, style.dividerAttr, cells[y][statusSidebarMin].Attributes())
+		assert.Equal(t, style.DividerAttr, cells[y][statusSidebarMin].Attributes())
 	}
 	assert.Equal(t, repeat(term.Attributes{}, statusSidebarMin), attrs(0, 0, statusSidebarMin), "the padding is not selected")
 	assert.Equal(t, repeat(term.Attributes{}, statusSidebarMin), attrs(4, 0, statusSidebarMin), "the gap is not selected")
@@ -1847,11 +1841,11 @@ func TestStatusViewStyle(t *testing.T) {
 		v.Draw(w)
 		cells = w.RawCells()
 	}
-	store.style.markerAttr.Bg = term.ColorRed
+	store.style.MarkerAttr.Bg = term.ColorRed
 	redraw()
 	assert.Equal(t, term.Attributes{Fg: term.ColorPurple, Bg: term.ColorRed}, cells[1][statusPadLeft].Attributes(),
 		"the marker keeps a background of its own over the selection")
-	store.style.markerAttr.Bg = term.ColorDefault
+	store.style.MarkerAttr.Bg = term.ColorDefault
 
 	hover := func(y int) {
 		_, handled := v.Handle(term.Event{Type: term.EventMouse, MouseX: statusTextX, MouseY: y})
@@ -1860,35 +1854,35 @@ func TestStatusViewStyle(t *testing.T) {
 	}
 	hover(7)
 	for _, y := range []int{5, 6, 7} {
-		assert.Equal(t, repeat(style.hoverAttr, 5), attrs(y, selEnd-5, selEnd),
+		assert.Equal(t, repeat(style.HoverAttr, 5), attrs(y, selEnd-5, selEnd),
 			"the hover paints row %d of the program under the mouse, as the selection does", y)
 		assert.Equal(t, repeat(term.Attributes{}, statusPadLeft), attrs(y, 0, statusPadLeft))
 	}
-	assert.Equal(t, repeat(term.AttributesUnion(term.Attributes{Fg: term.ColorGreen}, style.hoverAttr), len("terminal")),
+	assert.Equal(t, repeat(term.AttributesUnion(term.Attributes{Fg: term.ColorGreen}, style.HoverAttr), len("terminal")),
 		attrs(6, statusTextX, statusTextX+len("terminal")), "the name takes the colors the hover sets")
-	assert.Equal(t, repeat(term.AttributesUnion(style.hoverAttr, style.workspaceHighlightAttr), len("1 home")), wsName(5),
+	assert.Equal(t, repeat(term.AttributesUnion(style.HoverAttr, style.WorkspaceHighlightAttr), len("1 home")), wsName(5),
 		"the workspace of the program under the mouse stands out as the selected one's does")
-	assert.Equal(t, repeat(style.selectedAttr, 5), attrs(1, selEnd-5, selEnd), "the hover leaves the selection alone")
+	assert.Equal(t, repeat(style.SelectedAttr, 5), attrs(1, selEnd-5, selEnd), "the hover leaves the selection alone")
 	hover(2)
-	assert.Equal(t, repeat(term.AttributesUnion(style.hoverAttr, style.selectedAttr), 5), attrs(1, selEnd-5, selEnd),
+	assert.Equal(t, repeat(term.AttributesUnion(style.HoverAttr, style.SelectedAttr), 5), attrs(1, selEnd-5, selEnd),
 		"the selection's colors win over the hover's")
-	assert.Equal(t, term.AttributesUnion(term.AttributesUnion(style.hoverAttr, style.selectedAttr), style.markerAttr),
+	assert.Equal(t, term.AttributesUnion(term.AttributesUnion(style.HoverAttr, style.SelectedAttr), style.MarkerAttr),
 		cells[1][statusPadLeft].Attributes(), "the marker is drawn over both")
 	assert.Equal(t, repeat(term.Attributes{}, 5), attrs(6, selEnd-5, selEnd), "the hover moves off")
-	assert.Equal(t, repeat(style.workspaceAttr, len("1 home")), wsName(5), "and so does the workspace's highlight")
+	assert.Equal(t, repeat(style.WorkspaceAttr, len("1 home")), wsName(5), "and so does the workspace's highlight")
 	hover(0)
 
 	v.move(2)
 	redraw()
-	assert.Equal(t, append(repeat(onBar(style.selectedAttr, style.progressDoneAttr), doneW),
-		repeat(onBar(style.selectedAttr, style.progressRemainingSelectedAttr), barW-doneW)...), bar(),
+	assert.Equal(t, append(repeat(onBar(style.SelectedAttr, style.ProgressDoneAttr), doneW),
+		repeat(onBar(style.SelectedAttr, style.ProgressRemainingSelectedAttr), barW-doneW)...), bar(),
 		"selected, the bar keeps its own background and what is not done stands out from the selection")
-	assert.Equal(t, repeat(selected(style.progressLabelAttr), 4), label(), "the percentage is selected as text is")
+	assert.Equal(t, repeat(selected(style.ProgressLabelAttr), 4), label(), "the percentage is selected as text is")
 	assert.Equal(t, '%', cells[12][selEnd-statusSelectionPad-1].Ch, "the widest text stops short of the selection's edge")
-	assert.Equal(t, repeat(style.selectedAttr, statusSelectionPad), attrs(12, selEnd-statusSelectionPad, selEnd))
-	store.style.progressAttr = term.Attributes{}
+	assert.Equal(t, repeat(style.SelectedAttr, statusSelectionPad), attrs(12, selEnd-statusSelectionPad, selEnd))
+	store.style.ProgressAttr = term.Attributes{}
 	redraw()
-	assert.Equal(t, slices.Repeat([]term.Color{style.selectedAttr.Bg}, barW), func() []term.Color {
+	assert.Equal(t, slices.Repeat([]term.Color{style.SelectedAttr.Bg}, barW), func() []term.Color {
 		var ret []term.Color
 		for _, a := range bar() {
 			ret = append(ret, a.Bg)
@@ -1901,11 +1895,11 @@ func TestStatusViewStyle(t *testing.T) {
 	v.Resize(width, 9)
 	redraw()
 	arrowX := statusPadLeft + (selEnd-statusPadLeft-1)/2
-	assert.Equal(t, style.moreBelow, cells[8][arrowX].Ch, "an arrow points at the program out of sight")
-	assert.Equal(t, style.moreBelowAttr, cells[8][arrowX].Attributes())
+	assert.Equal(t, style.MoreBelow, cells[8][arrowX].Ch, "an arrow points at the program out of sight")
+	assert.Equal(t, style.MoreBelowAttr, cells[8][arrowX].Attributes())
 
 	_, empty, _ := newStatusStoreTestWith(t, statusViewTestConfig(), nil)
-	ev := empty.view()
+	ev := empty.View(nil)
 	t.Cleanup(func() { require.NoError(t, ev.Close()) })
 	const emptyW, emptyH = 60, 5
 	ev.Resize(emptyW, emptyH)
@@ -1918,7 +1912,7 @@ func TestStatusViewStyle(t *testing.T) {
 				continue
 			}
 			screen.WriteRune(c.Ch)
-			assert.Equal(t, style.placeholderAttr, c.Attributes(), "%q stands in for what there is not", c.Ch)
+			assert.Equal(t, style.PlaceholderAttr, c.Attributes(), "%q stands in for what there is not", c.Ch)
 		}
 	}
 	assert.Equal(t, strings.ReplaceAll(statusViewEmpty+statusPreviewNone, " ", ""), screen.String())
@@ -1931,7 +1925,7 @@ func TestStatusViewSpinnerTurns(t *testing.T) {
 	store.updateDetached(ws, statusStoreTestURI(t, "file:///w"), func(r *programstatus.Store) {
 		r.Apply(detachedTestReport(programstatus.Working, ""))
 	})
-	v := store.view()
+	v := store.View(nil)
 	v.Resize(statusSidebarMin, 6)
 	draw := func() [][]term.Cell {
 		w := cell.NewBufferWriter(context.Background(), statusSidebarMin, 6)
@@ -2009,7 +2003,7 @@ func TestStatusProgress(t *testing.T) {
 	} {
 		chars := tc.chars
 		if chars == (component.ProgressBarCharSet{}) {
-			chars = defaultStatusInboxStyle().progressBar
+			chars = DefaultInboxStyle().ProgressBar
 		}
 		w := cell.NewBufferWriter(context.Background(), tc.width, 1)
 		statusProgress(w, 0, 0, tc.width, tc.pct, chars, done, remaining, labelAttr)
@@ -2037,30 +2031,6 @@ func TestStatusProgress(t *testing.T) {
 		assert.Equal(t, slices.Repeat([]term.Attributes{labelAttr}, len(strings.TrimSpace(tc.label))), gotLabelAttrs,
 			"%s: the percentage", tc.desc)
 	}
-}
-
-func detachedTestReport(state programstatus.State, msg string) programstatus.Report {
-	return programstatus.Report{State: state, Progress: -1, Msg: msg}
-}
-
-func statusTestStyle() statusInboxStyle {
-	style := defaultStatusInboxStyle()
-	style.markerAttr = term.Attributes{Fg: term.ColorPurple}
-	style.selectedAttr = term.Attributes{Bg: term.ColorNavy}
-	style.hoverAttr = term.Attributes{Bg: term.ColorTeal, Attrs: term.AttrBold}
-	style.workspaceAttr = term.Attributes{Fg: term.ColorBlue}
-	style.workspaceHighlightAttr = term.Attributes{Fg: term.ColorBlack}
-	style.progressAttr = term.Attributes{Bg: term.ColorMaroon}
-	style.progressDoneAttr = term.Attributes{Fg: term.ColorLime}
-	style.progressRemainingAttr = term.Attributes{Fg: term.ColorSilver}
-	style.progressRemainingSelectedAttr = term.Attributes{Fg: term.ColorWhite}
-	style.progressLabelAttr = term.Attributes{Fg: term.ColorAqua}
-	// Unlike the default, it shows in snapshots without a Nerd Font.
-	style.moreBelow = '↓'
-	style.moreBelowAttr = term.Attributes{Fg: term.ColorYellow}
-	style.dividerAttr = term.Attributes{Fg: term.ColorOlive}
-	style.placeholderAttr = term.Attributes{Fg: term.ColorFuchsia}
-	return style
 }
 
 type statusTestInterrupter struct{ count atomic.Int64 }
@@ -2107,800 +2077,4 @@ func statusPreviewTestRow(name string, y, width int) string {
 		}
 	}
 	return b.String()
-}
-
-type statusStoreTestHost struct {
-	workspaces map[string]string
-	order      []workspaceapi.URI
-	names      map[statusKey]string
-	tabs       map[statusKey]*browser.Tab
-	previews   map[statusKey]statusPreview
-	seen       map[statusKey]bool
-	notified   []string
-	changed    []workspaceapi.URI
-	shown      []statusKey
-	closed     []statusKey
-	// onClose, when set, closes what closeStatus is asked to.
-	onClose func(statusKey)
-	// confirms holds the questions confirmStatus asked, and yes what
-	// answering the last one yes does.
-	confirms []string
-	yes      func()
-	mu       sync.Mutex
-	queued   []func()
-}
-
-func (h *statusStoreTestHost) addWorkspace(ws workspaceapi.URI, name string) {
-	h.workspaces[ws.String()] = name
-	h.order = append(h.order, ws)
-}
-func (h *statusStoreTestHost) statusWorkspace(ws workspaceapi.URI) (int, string, bool) {
-	name, ok := h.workspaces[ws.String()]
-	return slices.IndexFunc(h.order, ws.Equal), name, ok
-}
-func (h *statusStoreTestHost) statusTabName(ws, uri workspaceapi.URI) (string, bool) {
-	name, ok := h.names[statusKey{ws.String(), uri.String()}]
-	return name, ok
-}
-func (h *statusStoreTestHost) statusPreview(ws, uri workspaceapi.URI) (statusPreview, bool) {
-	key := statusKey{ws.String(), uri.String()}
-	if tab, ok := h.tabs[key]; ok {
-		w, hh := tab.ContentSize()
-		return statusPreview{content: tab, width: w, height: hh, fit: tab.Resize}, true
-	}
-	p, ok := h.previews[key]
-	return p, ok
-}
-func (h *statusStoreTestHost) statusTabIcon(ws, uri workspaceapi.URI) (rune, bool) {
-	if _, ok := h.tabs[statusKey{ws.String(), uri.String()}]; !ok {
-		return 0, false
-	}
-	return 'x', true
-}
-func (h *statusStoreTestHost) statusInSight(workspaceapi.URI, workspaceapi.URI) bool { return false }
-func (h *statusStoreTestHost) statusSeen(ws, uri workspaceapi.URI) bool {
-	return h.seen[statusKey{ws.String(), uri.String()}]
-}
-func (h *statusStoreTestHost) notifyStatus(_ workspaceapi.URI, _ browserapi.NotificationLevel, msg string) {
-	h.notified = append(h.notified, msg)
-}
-func (h *statusStoreTestHost) statusChanged(ws workspaceapi.URI) { h.changed = append(h.changed, ws) }
-func (h *statusStoreTestHost) showStatus(ws, uri workspaceapi.URI) {
-	h.shown = append(h.shown, statusKey{ws.String(), uri.String()})
-}
-func (h *statusStoreTestHost) closeStatus(ws, uri workspaceapi.URI) {
-	key := statusKey{ws.String(), uri.String()}
-	h.closed = append(h.closed, key)
-	if h.onClose != nil {
-		h.onClose(key)
-	}
-}
-func (h *statusStoreTestHost) confirmStatus(message string, yes func()) {
-	h.confirms = append(h.confirms, message)
-	h.yes = yes
-}
-func (h *statusStoreTestHost) schedule(fn func()) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.queued = append(h.queued, fn)
-	return true
-}
-func (h *statusStoreTestHost) drain() {
-	h.mu.Lock()
-	queued := h.queued
-	h.queued = nil
-	h.mu.Unlock()
-	for _, fn := range queued {
-		fn()
-	}
-}
-
-func statusStoreTestURI(t *testing.T, raw string) workspaceapi.URI {
-	t.Helper()
-	uri, err := workspaceapi.ParseURI(raw)
-	require.NoError(t, err)
-	return uri
-}
-
-func newStatusStoreTest(t *testing.T) (*statusStoreTestHost, *statusStore, workspaceapi.URI) {
-	t.Helper()
-	return newStatusStoreTestWith(t, browser.TabStatusConfig{}, nil)
-}
-
-func newStatusStoreTestWith(
-	t *testing.T, cfg browser.TabStatusConfig, interrupter term.Interrupter,
-) (*statusStoreTestHost, *statusStore, workspaceapi.URI) {
-	t.Helper()
-	ws := statusStoreTestURI(t, "file:///workspace")
-	host := &statusStoreTestHost{
-		workspaces: make(map[string]string),
-		names:      make(map[statusKey]string),
-		tabs:       make(map[statusKey]*browser.Tab),
-		previews:   make(map[statusKey]statusPreview),
-		seen:       make(map[statusKey]bool),
-	}
-	host.addWorkspace(ws, "1 home")
-	return host, newStatusStore(host, cfg, tabStatusNotifyConfig{}, statusTestStyle(), host.schedule, interrupter), ws
-}
-
-type statusStoreDetachedTest struct {
-	store *statusStore
-	ws    workspaceapi.URI
-}
-
-func newStatusStoreDetachedTest(t *testing.T) statusStoreDetachedTest {
-	_, store, ws := newStatusStoreTest(t)
-	return statusStoreDetachedTest{store, ws}
-}
-func (d *statusStoreDetachedTest) get(uri workspaceapi.URI) (programstatus.Summary, bool) {
-	if d.store == nil {
-		return programstatus.Summary{}, false
-	}
-	return d.store.status(d.ws, uri)
-}
-func (d *statusStoreDetachedTest) list() []statusItem {
-	if d.store == nil {
-		return nil
-	}
-	return d.store.items()
-}
-func (d *statusStoreDetachedTest) rollup() (programstatus.Summary, workspaceapi.URI) {
-	if d.store == nil {
-		return programstatus.Summary{Progress: -1}, workspaceapi.URI{}
-	}
-	return d.store.rollup(d.ws)
-}
-func (d *statusStoreDetachedTest) update(uri workspaceapi.URI, fn func(*programstatus.Store)) (programstatus.Summary, programstatus.Summary, bool) {
-	prev, ok := d.get(uri)
-	if !ok {
-		prev = programstatus.Summary{Progress: -1}
-	}
-	host := d.store.host.(*statusStoreTestHost)
-	n := len(host.changed)
-	d.store.updateDetached(d.ws, uri, fn)
-	next, ok := d.get(uri)
-	if !ok {
-		next = programstatus.Summary{Progress: -1}
-	}
-	return prev, next, len(host.changed) != n
-}
-
-func TestStatusStoreLiveViews(t *testing.T) {
-	host, store, ws := newStatusStoreTest(t)
-	a, b := statusStoreTestURI(t, "file:///a"), statusStoreTestURI(t, "file:///b")
-	v, other := store.view(), store.view()
-	t.Cleanup(func() { require.NoError(t, v.Close()); require.NoError(t, other.Close()) })
-	v.Resize(60, 14)
-	apply := func(uri workspaceapi.URI, id string, state programstatus.State) {
-		store.updateDetached(ws, uri, func(r *programstatus.Store) { r.Apply(programstatus.Report{ID: id, State: state, Progress: -1}) })
-	}
-	program := func(uri workspaceapi.URI) statusRef { return statusRef{ws: ws.String(), uri: uri.String()} }
-	_, ok := v.Selection()
-	require.False(t, ok, "with no program, nothing is selected")
-	apply(a, "", programstatus.Working)
-	assert.Equal(t, program(a), v.sel, "the first program is selected as it comes")
-	apply(b, "", programstatus.Done)
-	require.Len(t, v.entries, 2)
-	assert.Equal(t, program(a), v.sel, "the selection stays as programs come")
-	assert.Equal(t, program(a), other.sel)
-	v.Handle(term.Event{Type: term.EventKey, Ch: 'j'})
-	require.Equal(t, program(b), v.sel)
-	apply(a, "", programstatus.Blocked)
-	assert.Equal(t, program(b), v.sel, "the selection follows a reordered source")
-	assert.Equal(t, program(a), other.sel)
-	apply(a, "tool/edit", programstatus.Working)
-	require.Len(t, v.entries, 2, "a record of a listed source adds no entry")
-	apply(a, "", programstatus.Working)
-	assert.Equal(t, program(b), v.sel, "the selection follows a reordered source")
-	w := term.NewStringWriter(60, 14)
-	v.Draw(w)
-	require.NoError(t, w.Flush())
-	assert.Contains(t, w.String(), detachedStatusLabel, "rebuilt entries retain the open view's size")
-	require.NoError(t, other.Close())
-	frozen := append([]statusEntry(nil), other.entries...)
-	apply(a, "tool/edit", programstatus.Done)
-	assert.Equal(t, frozen, other.entries)
-	assert.Len(t, store.views, 1)
-	exit, handled := v.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
-	assert.True(t, exit)
-	assert.True(t, handled)
-	assert.Empty(t, host.shown)
-	host.drain()
-	assert.Equal(t, []statusKey{{ws.String(), b.String()}}, host.shown)
-	apply(a, "", programstatus.Clear)
-	require.Len(t, v.entries, 1)
-	assert.Equal(t, program(b), v.sel)
-	apply(b, "", programstatus.Clear)
-	assert.Empty(t, v.entries)
-	_, ok = v.Selection()
-	assert.False(t, ok, "with no program left, nothing is selected")
-	w = term.NewStringWriter(60, 14)
-	v.Draw(w)
-	require.NoError(t, w.Flush())
-	assert.Contains(t, w.String(), statusViewEmpty)
-}
-
-func TestStatusStoreWorkspaceCleanup(t *testing.T) {
-	host, store, ws := newStatusStoreTest(t)
-	other := statusStoreTestURI(t, "file:///other")
-	uri := statusStoreTestURI(t, "file:///terminal")
-	host.addWorkspace(other, "2 other")
-	for _, workspace := range []workspaceapi.URI{ws, other} {
-		store.updateDetached(workspace, uri, func(r *programstatus.Store) { r.Apply(detachedTestReport(programstatus.Error, "boom")) })
-		key := statusKey{workspace.String(), uri.String()}
-		store.lastNotified[key] = time.Now()
-		store.pendingNotify[key] = 1
-	}
-	v := store.view()
-	defer v.Close()
-	require.Len(t, v.entries, 2)
-	store.dropWorkspace(ws)
-	require.Len(t, v.entries, 1)
-	assert.Equal(t, other, v.entries[0].ws)
-	_, ok := store.status(ws, uri)
-	assert.False(t, ok)
-	assert.Len(t, store.lastNotified, 1)
-	assert.Len(t, store.pendingNotify, 1)
-	n := len(host.changed)
-	store.dropWorkspace(ws)
-	assert.Len(t, host.changed, n)
-	delete(host.workspaces, other.String())
-	assert.Empty(t, store.items(), "workspaces without a slot are hidden")
-	store.dropWorkspace(other)
-	assert.Empty(t, store.sources)
-	assert.Empty(t, store.lastNotified)
-	assert.Empty(t, store.pendingNotify)
-	assert.Empty(t, v.entries)
-}
-
-func TestStatusStoreSourceBecomesTab(t *testing.T) {
-	host, store, ws := newStatusStoreTest(t)
-	uri := statusStoreTestURI(t, "file:///terminal")
-	store.updateDetached(ws, uri, func(r *programstatus.Store) {
-		r.Apply(detachedTestReport(programstatus.Working, ""))
-	})
-	v := store.view()
-	defer v.Close()
-	host.names[statusKey{ws.String(), uri.String()}] = "build"
-	records := programstatus.New()
-	records.Apply(detachedTestReport(programstatus.Working, ""))
-	store.tabStatusChanged(ws, uri, records.Summary())
-	require.Nil(t, store.sources[statusKey{ws.String(), uri.String()}].records)
-	require.Len(t, v.entries, 1)
-	assert.Equal(t, "build", v.entries[0].name)
-}
-
-type statusStoreTestTabs struct {
-	browser.TabManager
-	component *browser.Component
-}
-
-type statusStoreTestHandler struct{ handler.TestHandler }
-
-func (*statusStoreTestHandler) Close() error { return nil }
-func (b statusStoreTestTabs) SetTabStatus(uri workspaceapi.URI, r programstatus.Report) error {
-	if !b.component.SetTabStatus(uri, r) {
-		return errors.New("missing tab")
-	}
-	return nil
-}
-func (b statusStoreTestTabs) EndTabStatus(uri workspaceapi.URI) error {
-	if !b.component.EndTabStatus(uri) {
-		return errors.New("missing tab")
-	}
-	return nil
-}
-
-func TestStatusStoreTabLifecycle(t *testing.T) {
-	host, store, ws := newStatusStoreTest(t)
-	cfg := browser.DefaultConfig()
-	cfg.OnTabStatus = func(uri workspaceapi.URI, _, next programstatus.Summary) { store.tabStatusChanged(ws, uri, next) }
-	cfg.OnTabRemoved = func(uri workspaceapi.URI) { store.tabRemoved(ws, uri) }
-	b := browser.NewComponent(cfg)
-	t.Cleanup(func() { require.NoError(t, b.Close()) })
-	uri := statusStoreTestURI(t, "file:///tab")
-	key := statusKey{ws.String(), uri.String()}
-	host.names[key] = "build"
-	h := &statusStoreTestHandler{}
-	tab := b.NewTab(uri, 'b', "build", h, h)
-	tabs := statusStoreTestTabs{component: b}
-	v := store.view()
-	defer v.Close()
-	for _, state := range []programstatus.State{programstatus.Done, programstatus.Error} {
-		store.setTabStatus(ws, tabs, uri, programstatus.Report{State: state, Progress: -1, App: "make", Msg: "result"})
-		require.Len(t, v.entries, 1)
-		assert.Equal(t, "build", v.entries[0].name)
-		assert.Equal(t, state, v.entries[0].state)
-		require.Nil(t, store.sources[key].records)
-		changed := len(host.changed)
-		tab.AckStatus()
-		require.Len(t, v.entries, 1, "seen, the tab stays listed until it is removed")
-		assert.Equal(t, programstatus.Idle, v.entries[0].state)
-		assert.Equal(t, "idle · make", v.entries[0].sub, "it keeps the app it last reported")
-		sum, ok := store.status(ws, uri)
-		require.True(t, ok)
-		assert.Empty(t, sum.Records)
-		assert.Len(t, host.changed, changed+1, "the workspace learns its status went")
-		rollup, _ := store.rollup(ws)
-		assert.Empty(t, rollup.Records, "nothing it no longer reports weighs on the workspace")
-	}
-	store.setTabStatus(ws, tabs, uri, programstatus.Report{ID: "working", State: programstatus.Working, Progress: -1})
-	store.setTabStatus(ws, tabs, uri, programstatus.Report{ID: "done", State: programstatus.Done, Progress: -1})
-	store.endTabStatus(ws, tabs, uri)
-	sum, ok := store.status(ws, uri)
-	require.True(t, ok)
-	require.Len(t, sum.Records, 1)
-	assert.Equal(t, programstatus.Done, sum.State)
-	changed := len(host.changed)
-	require.True(t, b.RemoveTab(tab))
-	assert.Empty(t, v.entries)
-	_, ok = store.status(ws, uri)
-	assert.False(t, ok)
-	assert.Len(t, host.changed, changed+1, "removed with a record, the workspace learns its status went once")
-
-	// Seen before it is removed, the tab goes all the same.
-	tab = b.NewTab(uri, 'b', "build", h, h)
-	store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Done, ""))
-	tab.AckStatus()
-	require.Len(t, v.entries, 1)
-	require.True(t, b.RemoveTab(tab))
-	assert.Empty(t, v.entries)
-	assert.Empty(t, store.sources)
-
-	// A tab that never reported leaves nothing behind.
-	silent := statusStoreTestURI(t, "file:///silent")
-	require.True(t, b.RemoveTab(b.NewTab(silent, 's', "silent", h, h)))
-	assert.Empty(t, store.sources)
-
-	tab = b.NewTab(uri, 'b', "build", h, h)
-	require.True(t, b.RemoveTab(tab))
-	require.Error(t, store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Working, "")))
-	require.Error(t, store.endTabStatus(ws, tabs, uri))
-	assert.Empty(t, store.sources, "a tab error must not create a detached source")
-	delete(host.names, key)
-	store.setTabStatus(ws, tabs, uri, detachedTestReport(programstatus.Working, ""))
-	require.Len(t, v.entries, 1)
-	assert.Equal(t, detachedStatusLabel, v.entries[0].name)
-	store.endTabStatus(ws, tabs, uri)
-	assert.Empty(t, v.entries)
-}
-
-func TestStatusStoreRestore(t *testing.T) {
-	parse := func(raw string) workspaceapi.URI { return statusStoreTestURI(t, raw) }
-	other, closed := parse("file:///other"), parse("file:///closed")
-	// The tabs back, silent and live came back with the workspace, and
-	// elsewhere with other; gone did not, and pty is a terminal that is
-	// no tab.
-	back, silent, live := parse("rune-agent://model/back"), parse("rune-agent://model/silent"),
-		parse("rune-agent://model/live")
-	gone, pty, elsewhere := parse("rune-agent://model/gone"), parse("file:///dev/ttys001"),
-		parse("rune-agent://model/elsewhere")
-	setup := func(t *testing.T) (*statusStoreTestHost, *statusStore, workspaceapi.URI, *statusView) {
-		host, store, ws := newStatusStoreTest(t)
-		host.addWorkspace(other, "2 other")
-		for _, uri := range []workspaceapi.URI{back, silent, live} {
-			host.names[statusKey{ws.String(), uri.String()}] = uri.Name()
-		}
-		host.names[statusKey{other.String(), elsewhere.String()}] = elsewhere.Name()
-		v := store.view()
-		t.Cleanup(func() { _ = v.Close() })
-		return host, store, ws, v
-	}
-	working := func(app string) programstatus.Summary {
-		records := programstatus.New()
-		records.Apply(programstatus.Report{State: programstatus.Working, Progress: -1, App: app})
-		return records.Summary()
-	}
-	type row struct{ uri, sub string }
-	rows := func(v *statusView) []row {
-		var ret []row
-		for _, e := range v.entries {
-			ret = append(ret, row{e.uri.String(), e.sub})
-		}
-		return ret
-	}
-
-	suite := []struct {
-		name string
-		// reported is where a program reported working with the app
-		// fresh before the restore, as a tab or as a terminal that is
-		// no tab, whichever it is.
-		reported []workspaceapi.URI
-		// into is the workspace restored: the one setup opens when it
-		// is zero.
-		into     workspaceapi.URI
-		programs []idehistory.Program
-		want     []row
-	}{
-		{
-			name: "with no program saved, no tab that came back is listed",
-		},
-		{
-			name:     "a program whose tab came back is listed idle, with the app it last reported",
-			programs: []idehistory.Program{{URI: back, App: "rune-agent"}},
-			want:     []row{{back.String(), "idle · rune-agent"}},
-		},
-		{
-			name:     "a program that reported no app is listed idle",
-			programs: []idehistory.Program{{URI: back}},
-			want:     []row{{back.String(), "idle"}},
-		},
-		{
-			name:     "a program whose tab did not come back is not listed",
-			programs: []idehistory.Program{{URI: gone, App: "rune-agent"}},
-		},
-		{
-			name: "the programs whose tab came back are listed, those whose tab did not are not",
-			programs: []idehistory.Program{
-				{URI: gone, App: "a"}, {URI: live, App: "b"}, {URI: pty, App: "c"}, {URI: back, App: "d"},
-			},
-			want: []row{{back.String(), "idle · d"}, {live.String(), "idle · b"}},
-		},
-		{
-			name:     "a program saved twice is listed once, with the app saved first",
-			programs: []idehistory.Program{{URI: back, App: "first"}, {URI: back, App: "second"}},
-			want:     []row{{back.String(), "idle · first"}},
-		},
-		{
-			name:     "a program that reported since keeps what it reported",
-			reported: []workspaceapi.URI{live},
-			programs: []idehistory.Program{{URI: live, App: "stale"}},
-			want:     []row{{live.String(), "working · fresh"}},
-		},
-		{
-			name:     "a program saved for a terminal that is no tab is not listed",
-			programs: []idehistory.Program{{URI: pty, App: "make"}},
-		},
-		{
-			name:     "a terminal that is no tab and reported since keeps what it reported",
-			reported: []workspaceapi.URI{pty},
-			programs: []idehistory.Program{{URI: pty, App: "stale"}},
-			want:     []row{{pty.String(), "working"}},
-		},
-		{
-			name:     "a program whose tab came back in another workspace is not listed in this one",
-			programs: []idehistory.Program{{URI: elsewhere, App: "rune-agent"}},
-		},
-		{
-			name:     "a program is listed in the workspace restored only",
-			into:     other,
-			programs: []idehistory.Program{{URI: elsewhere, App: "a"}, {URI: back, App: "b"}},
-			want:     []row{{elsewhere.String(), "idle · a"}},
-		},
-		{
-			name:     "a program restored into a workspace that is not open is not listed",
-			into:     closed,
-			programs: []idehistory.Program{{URI: back, App: "rune-agent"}},
-		},
-	}
-	for _, tcase := range suite {
-		t.Run(tcase.name, func(t *testing.T) {
-			host, store, ws, v := setup(t)
-			for _, uri := range tcase.reported {
-				if _, ok := host.statusTabName(ws, uri); ok {
-					store.tabStatusChanged(ws, uri, working("fresh"))
-					continue
-				}
-				store.updateDetached(ws, uri, func(r *programstatus.Store) {
-					r.Apply(programstatus.Report{State: programstatus.Working, Progress: -1, App: "fresh"})
-				})
-			}
-			into := cmp.Or(tcase.into, ws)
-			changed := len(host.changed)
-			sources := len(store.sources)
-
-			store.restore(into, tcase.programs)
-			assert.Equal(t, tcase.want, rows(v))
-			assert.Len(t, store.sources, sources+len(tcase.want)-len(tcase.reported),
-				"what is not listed is not kept either")
-			assert.Len(t, host.changed, changed, "what was restored weighs nothing on any workspace")
-		})
-	}
-
-	t.Run("restoring twice lists a program once", func(t *testing.T) {
-		_, store, ws, v := setup(t)
-		programs := []idehistory.Program{{URI: back, App: "rune-agent"}}
-		store.restore(ws, programs)
-		store.restore(ws, programs)
-		assert.Equal(t, []row{{back.String(), "idle · rune-agent"}}, rows(v))
-	})
-
-	t.Run("a restored program is saved as it was, for the next session to list it again", func(t *testing.T) {
-		_, store, ws, _ := setup(t)
-		programs := []idehistory.Program{{URI: back, App: "rune-agent"}, {URI: live}}
-		store.restore(ws, programs)
-		assert.Equal(t, programs, store.programs(ws))
-		assert.Empty(t, store.programs(other))
-
-		_, next, _, v := setup(t)
-		next.restore(ws, store.programs(ws))
-		assert.Equal(t, []row{{back.String(), "idle · rune-agent"}, {live.String(), "idle"}}, rows(v))
-	})
-
-	t.Run("a restored program lists what it reports next, and keeps the app it reports", func(t *testing.T) {
-		host, store, ws, v := setup(t)
-		store.restore(ws, []idehistory.Program{{URI: back, App: "stale"}})
-		store.tabStatusChanged(ws, back, working("fresh"))
-		assert.Equal(t, []row{{back.String(), "working · fresh"}}, rows(v))
-		assert.Len(t, host.changed, 1, "what it reports weighs on its workspace")
-		store.tabStatusChanged(ws, back, programstatus.Summary{Progress: -1})
-		assert.Equal(t, []row{{back.String(), "idle · fresh"}}, rows(v))
-		assert.Equal(t, []idehistory.Program{{URI: back, App: "fresh"}}, store.programs(ws))
-	})
-
-	t.Run("a restored program goes with its tab", func(t *testing.T) {
-		host, store, ws, v := setup(t)
-		store.restore(ws, []idehistory.Program{{URI: back, App: "rune-agent"}, {URI: live}})
-		store.tabRemoved(ws, back)
-		assert.Equal(t, []row{{live.String(), "idle"}}, rows(v))
-		assert.Empty(t, host.changed, "as it reported nothing, no workspace learns it went")
-		assert.Equal(t, []idehistory.Program{{URI: live}}, store.programs(ws))
-	})
-
-	t.Run("a restored program goes with its workspace", func(t *testing.T) {
-		_, store, ws, v := setup(t)
-		store.restore(ws, []idehistory.Program{{URI: back, App: "rune-agent"}})
-		store.dropWorkspace(ws)
-		assert.Empty(t, rows(v))
-		assert.Empty(t, store.programs(ws))
-	})
-}
-
-func TestStatusSourceLabel(t *testing.T) {
-	for _, tc := range []struct {
-		name, app, want string
-	}{
-		{"rolling-fox", "", "rolling-fox"},
-		{"rolling-fox", "rune-agent", "rolling-fox (rune-agent)"},
-		{"cargo", "cargo", "cargo"},
-		{detachedStatusLabel, "", detachedStatusLabel},
-		{detachedStatusLabel, "make", "make"},
-		{"", "make", "make"},
-		{"", "", ""},
-	} {
-		assert.Equal(t, tc.want, statusSourceLabel(tc.name, tc.app), "%q, %q", tc.name, tc.app)
-	}
-}
-
-func TestStatusStoreDetached(t *testing.T) {
-	idle := programstatus.Summary{Progress: -1}
-	parse := func(s string) workspaceapi.URI {
-		uri, err := workspaceapi.ParseURI(s)
-		require.NoError(t, err)
-		return uri
-	}
-	ttyA := parse("file:///dev/ttys001")
-	ttyB := parse("file:///dev/ttys002")
-	clearAll := programstatus.Report{State: programstatus.Clear}
-	apply := func(d *statusStoreDetachedTest, uri workspaceapi.URI, r programstatus.Report) (
-		prev, status programstatus.Summary, changed bool,
-	) {
-		return d.update(uri, func(s *programstatus.Store) { s.Apply(r) })
-	}
-
-	t.Run("zero value reads as empty", func(t *testing.T) {
-		var d statusStoreDetachedTest
-		_, ok := d.get(ttyA)
-		assert.False(t, ok)
-		assert.Empty(t, d.list())
-		sum, uri := d.rollup()
-		assert.Equal(t, idle, sum)
-		assert.Equal(t, workspaceapi.URI{}, uri)
-	})
-
-	t.Run("update reports both statuses and whether they differ", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		prev, status, changed := apply(&d, ttyA, detachedTestReport(programstatus.Working, ""))
-		assert.True(t, changed)
-		assert.Equal(t, idle, prev, "an unknown uri was idle")
-		assert.Equal(t, programstatus.Working, status.State)
-
-		working := status
-		prev, status, changed = apply(&d, ttyA, detachedTestReport(programstatus.Working, ""))
-		assert.False(t, changed, "the same report again is not a change")
-		assert.True(t, working.Equal(prev))
-		assert.True(t, working.Equal(status))
-
-		prev, status, changed = apply(&d, ttyA, detachedTestReport(programstatus.Done, "ok"))
-		assert.True(t, changed)
-		assert.True(t, working.Equal(prev))
-		got, ok := d.get(ttyA)
-		require.True(t, ok)
-		assert.True(t, status.Equal(got))
-		assert.Equal(t, "ok", got.Msg)
-	})
-
-	t.Run("ending keeps done and error", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, _, _ = apply(&d, ttyA, programstatus.Report{ID: "w", State: programstatus.Working, Progress: -1})
-		_, _, _ = apply(&d, ttyA, programstatus.Report{ID: "d", State: programstatus.Done, Progress: -1})
-		_, status, changed := d.update(ttyA, func(s *programstatus.Store) { s.DropTransient() })
-		assert.True(t, changed)
-		assert.Equal(t, programstatus.Done, status.State)
-		require.Len(t, status.Records, 1)
-	})
-
-	t.Run("no record left forgets the uri", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, done, _ := apply(&d, ttyA, detachedTestReport(programstatus.Done, "ok"))
-
-		prev, status, changed := apply(&d, ttyA, clearAll)
-		assert.True(t, changed)
-		assert.True(t, done.Equal(prev))
-		assert.Equal(t, idle, status)
-		_, ok := d.get(ttyA)
-		assert.False(t, ok)
-		assert.Empty(t, d.list())
-
-		_, _, changed = apply(&d, ttyA, clearAll)
-		assert.False(t, changed, "clearing an unknown uri is not a change")
-		assert.Empty(t, d.list())
-	})
-
-	t.Run("a reported idle is kept apart from silence", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, reportedIdle, changed := apply(&d, ttyA, detachedTestReport(programstatus.Idle, ""))
-		assert.True(t, changed)
-		require.Len(t, reportedIdle.Records, 1)
-		got, ok := d.get(ttyA)
-		require.True(t, ok)
-		assert.True(t, reportedIdle.Equal(got))
-		sum, uri := d.rollup()
-		assert.True(t, reportedIdle.Equal(sum))
-		assert.Equal(t, ttyA, uri)
-	})
-
-	t.Run("list is sorted by uri", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, _, _ = apply(&d, ttyB, detachedTestReport(programstatus.Working, ""))
-		_, _, _ = apply(&d, ttyA, detachedTestReport(programstatus.Done, ""))
-		got := d.list()
-		require.Len(t, got, 2)
-		assert.Equal(t, ttyA, got[0].uri)
-		assert.Equal(t, programstatus.Done, got[0].status.State)
-		assert.Equal(t, ttyB, got[1].uri)
-		assert.Equal(t, programstatus.Working, got[1].status.State)
-	})
-
-	t.Run("rollup picks the most pressing status", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, _, _ = apply(&d, ttyA, detachedTestReport(programstatus.Working, ""))
-		sum, uri := d.rollup()
-		assert.Equal(t, programstatus.Working, sum.State)
-		assert.Equal(t, ttyA, uri)
-
-		_, _, _ = apply(&d, ttyB, detachedTestReport(programstatus.Error, "boom"))
-		sum, uri = d.rollup()
-		assert.Equal(t, programstatus.Error, sum.State)
-		assert.Equal(t, "boom", sum.Msg)
-		assert.Equal(t, ttyB, uri)
-
-		_, _, _ = apply(&d, ttyA, detachedTestReport(programstatus.Blocked, "approve?"))
-		sum, uri = d.rollup()
-		assert.Equal(t, programstatus.Blocked, sum.State)
-		assert.Equal(t, ttyA, uri)
-
-		_, _, _ = apply(&d, ttyA, clearAll)
-		_, _, _ = apply(&d, ttyB, clearAll)
-		sum, uri = d.rollup()
-		assert.Equal(t, idle, sum)
-		assert.Equal(t, workspaceapi.URI{}, uri)
-	})
-
-	t.Run("rollup breaks ties by uri order", func(t *testing.T) {
-		d := newStatusStoreDetachedTest(t)
-		_, _, _ = apply(&d, ttyB, detachedTestReport(programstatus.Error, "b"))
-		_, _, _ = apply(&d, ttyA, detachedTestReport(programstatus.Error, "a"))
-		sum, uri := d.rollup()
-		assert.Equal(t, "a", sum.Msg)
-		assert.Equal(t, ttyA, uri)
-	})
-}
-
-func TestStatusStoreAckDetached(t *testing.T) {
-	report := func(id string, state programstatus.State) programstatus.Report {
-		return programstatus.Report{ID: id, State: state, Progress: -1}
-	}
-	for _, tc := range []struct {
-		name    string
-		tab     bool
-		reports []programstatus.Report
-		// kept holds the ids of the records left, or nil when nothing
-		// is listed.
-		kept    []string
-		changed bool
-	}{{
-		name: "nothing reported",
-	}, {
-		name: "done", reports: []programstatus.Report{report("", programstatus.Done)}, changed: true,
-	}, {
-		name: "error", reports: []programstatus.Report{report("", programstatus.Error)}, changed: true,
-	}, {
-		name: "idle", reports: []programstatus.Report{report("", programstatus.Idle)}, changed: true,
-	}, {
-		name: "working and blocked stay",
-		reports: []programstatus.Report{
-			report("w", programstatus.Working), report("b", programstatus.Blocked),
-			report("e", programstatus.Error),
-		},
-		kept: []string{"b", "w"}, changed: true,
-	}, {
-		name:    "nothing to acknowledge",
-		reports: []programstatus.Report{report("w", programstatus.Working)},
-		kept:    []string{"w"},
-	}, {
-		name: "tab", tab: true,
-		reports: []programstatus.Report{report("", programstatus.Error)},
-		kept:    []string{""},
-	}} {
-		t.Run(tc.name, func(t *testing.T) {
-			host, store, ws := newStatusStoreTest(t)
-			uri := statusStoreTestURI(t, "file:///dev/ttys001")
-			if tc.tab {
-				records := programstatus.New()
-				for _, r := range tc.reports {
-					records.Apply(r)
-				}
-				store.tabStatusChanged(ws, uri, records.Summary())
-			} else {
-				for _, r := range tc.reports {
-					store.updateDetached(ws, uri, func(s *programstatus.Store) { s.Apply(r) })
-				}
-			}
-			n := len(host.changed)
-
-			store.ackDetached(ws, uri)
-
-			assert.Equal(t, tc.changed, len(host.changed) != n, "the change is reported")
-			status, listed := store.status(ws, uri)
-			if tc.kept == nil {
-				assert.False(t, listed)
-				assert.Empty(t, store.items())
-				return
-			}
-			require.True(t, listed)
-			var ids []string
-			for _, rec := range status.Records {
-				ids = append(ids, rec.ID)
-			}
-			assert.Equal(t, tc.kept, ids)
-		})
-	}
-}
-
-func TestStatusStoreUpdateDetachedSeen(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		seen   bool
-		state  programstatus.State
-		listed bool
-	}{
-		{name: "done seen", seen: true, state: programstatus.Done},
-		{name: "error seen", seen: true, state: programstatus.Error},
-		{name: "idle seen", seen: true, state: programstatus.Idle},
-		{name: "working seen", seen: true, state: programstatus.Working, listed: true},
-		{name: "blocked seen", seen: true, state: programstatus.Blocked, listed: true},
-		{name: "error out of sight", state: programstatus.Error, listed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			host, store, ws := newStatusStoreTest(t)
-			store.notify.messages = true
-			uri := statusStoreTestURI(t, "file:///dev/ttys001")
-			host.seen[statusKey{ws.String(), uri.String()}] = tc.seen
-
-			store.updateDetached(ws, uri, func(s *programstatus.Store) {
-				s.Apply(programstatus.Report{State: tc.state, Progress: -1, App: "make", Msg: "boom"})
-			})
-
-			assert.Equal(t, []string{"make: boom"}, host.notified, "its message is notified all the same")
-			_, listed := store.status(ws, uri)
-			assert.Equal(t, tc.listed, listed)
-			sum, _ := store.rollup(ws)
-			want := programstatus.Idle
-			if tc.listed {
-				want = tc.state
-			}
-			assert.Equal(t, want, sum.State)
-		})
-	}
 }

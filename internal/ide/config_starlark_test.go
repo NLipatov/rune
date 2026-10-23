@@ -37,6 +37,7 @@ import (
 	"unstable.build/rune/internal/component/shader/shaderloop"
 	"unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/ide/idepreset"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/workspace"
 )
 
@@ -406,9 +407,9 @@ func TestRuneStarFixture(t *testing.T) {
 			assert.Equal(t, defaults.Shine.Direction, wsShine.Direction)
 			wsParams.Shine = defaults.Shine
 			assert.Equal(t, defaults, wsParams, "workspace tabs only retune the shine")
-			inbox, want := ide.statusInboxStyle(), defaultStatusInboxStyle()
-			want.markerAttr = term.Attributes{Fg: ide.highlightTabAttr().Fg, Attrs: ide.highlightTabAttr().Attrs}
-			want.frame = ide.frameUnionCharset()
+			inbox, want := ide.statusInboxStyle(), idestatus.DefaultInboxStyle()
+			want.MarkerAttr = term.Attributes{Fg: ide.highlightTabAttr().Fg, Attrs: ide.highlightTabAttr().Attrs}
+			want.Frame = ide.frameUnionCharset()
 			assert.Equal(t, want, inbox, "rune.star spells out the inbox defaults")
 			assert.Empty(t, ide.errors)
 		})

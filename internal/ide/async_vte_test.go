@@ -614,7 +614,7 @@ func TestAsyncVTETabNameAliasing(t *testing.T) {
 				var tabURI workspaceapi.URI
 				m.locked(func() {
 					w := m.workspaces[slot]
-					sum, ok := m.status.status(w.uri, pty)
+					sum, ok := m.status.Status(w.uri, pty)
 					require.True(t, ok)
 					assert.Equal(t, programstatus.Blocked, sum.State)
 					av := &asyncVTE{e: w.ex, uri: mustURI("terminal://loading/9000"), animStopped: true}
@@ -633,10 +633,10 @@ func TestAsyncVTETabNameAliasing(t *testing.T) {
 				m.quiesce()
 				m.locked(func() {
 					w := m.workspaces[slot]
-					_, ok := m.status.status(w.uri, pty)
+					_, ok := m.status.Status(w.uri, pty)
 					assert.False(t, ok, "migration must remove the detached PTY source")
 					// The tab is still open, so it stays listed, holding nothing.
-					sum, _ := m.status.status(w.uri, tabURI)
+					sum, _ := m.status.Status(w.uri, tabURI)
 					assert.Empty(t, sum.Records, "delayed replay must not outlive cleanup")
 					sum, _ = m.workspaceStatus(slot)
 					assert.Empty(t, sum.Records)

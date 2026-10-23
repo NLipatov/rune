@@ -65,6 +65,7 @@ import (
 	"unstable.build/rune/internal/ide/hostenv"
 	"unstable.build/rune/internal/ide/idedebug"
 	"unstable.build/rune/internal/ide/idelsp"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/keymeta"
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/starlarkconfig"
@@ -5033,11 +5034,11 @@ func (c ideConfig) terminalStatus() (config.Config, bool) {
 // marker of the focused tab, browser.focus_tab_highlight_attr, but its
 // background, which is the selection's, and its lines the browser's
 // frame.
-func (c ideConfig) statusInboxStyle() statusInboxStyle {
-	ret := defaultStatusInboxStyle()
-	ret.markerAttr = c.highlightTabAttr()
-	ret.markerAttr.Bg = term.ColorDefault
-	ret.frame = c.frameUnionCharset()
+func (c ideConfig) statusInboxStyle() idestatus.InboxStyle {
+	ret := idestatus.DefaultInboxStyle()
+	ret.MarkerAttr = c.highlightTabAttr()
+	ret.MarkerAttr.Bg = term.ColorDefault
+	ret.Frame = c.frameUnionCharset()
 	if c.cfg == nil {
 		return ret
 	}
@@ -5047,17 +5048,17 @@ func (c ideConfig) statusInboxStyle() statusInboxStyle {
 	}
 	const prefix = "program_status."
 	if marker, err := cfg.GetRune("marker"); err == nil {
-		ret.marker = marker
+		ret.Marker = marker
 	} else if err != config.ErrNotFound {
 		c.errors[prefix+"marker"] = err
 	}
 	if attr, err := config.GetAttributes(cfg, "marker_attr"); err == nil {
-		ret.markerAttr = term.AttributesUnion(ret.markerAttr, attr)
+		ret.MarkerAttr = term.AttributesUnion(ret.MarkerAttr, attr)
 	} else if err != config.ErrNotFound {
 		c.errors[prefix+"marker_attr"] = err
 	}
 	if arrow, err := cfg.GetRune("more_below"); err == nil {
-		ret.moreBelow = arrow
+		ret.MoreBelow = arrow
 	} else if err != config.ErrNotFound {
 		c.errors[prefix+"more_below"] = err
 	}
@@ -5065,18 +5066,18 @@ func (c ideConfig) statusInboxStyle() statusInboxStyle {
 		key string
 		dst *term.Attributes
 	}{
-		{"selected_attr", &ret.selectedAttr},
-		{"hover_attr", &ret.hoverAttr},
-		{"workspace_attr", &ret.workspaceAttr},
-		{"workspace_highlight_attr", &ret.workspaceHighlightAttr},
-		{"progress_attr", &ret.progressAttr},
-		{"progress_done_attr", &ret.progressDoneAttr},
-		{"progress_remaining_attr", &ret.progressRemainingAttr},
-		{"progress_remaining_selected_attr", &ret.progressRemainingSelectedAttr},
-		{"progress_label_attr", &ret.progressLabelAttr},
-		{"more_below_attr", &ret.moreBelowAttr},
-		{"divider_attr", &ret.dividerAttr},
-		{"placeholder_attr", &ret.placeholderAttr},
+		{"selected_attr", &ret.SelectedAttr},
+		{"hover_attr", &ret.HoverAttr},
+		{"workspace_attr", &ret.WorkspaceAttr},
+		{"workspace_highlight_attr", &ret.WorkspaceHighlightAttr},
+		{"progress_attr", &ret.ProgressAttr},
+		{"progress_done_attr", &ret.ProgressDoneAttr},
+		{"progress_remaining_attr", &ret.ProgressRemainingAttr},
+		{"progress_remaining_selected_attr", &ret.ProgressRemainingSelectedAttr},
+		{"progress_label_attr", &ret.ProgressLabelAttr},
+		{"more_below_attr", &ret.MoreBelowAttr},
+		{"divider_attr", &ret.DividerAttr},
+		{"placeholder_attr", &ret.PlaceholderAttr},
 	} {
 		if attr, err := config.GetAttributes(cfg, a.key); err == nil {
 			*a.dst = attr
@@ -5086,7 +5087,7 @@ func (c ideConfig) statusInboxStyle() statusInboxStyle {
 	}
 	if bar, err := cfg.GetString("progress_bar"); err == nil {
 		if chars, err := parseProgressBarCharSet(bar); err == nil {
-			ret.progressBar = chars
+			ret.ProgressBar = chars
 		} else {
 			c.errors[prefix+"progress_bar"] = err
 		}
@@ -5131,12 +5132,21 @@ func (c ideConfig) tabStatusEnabled() bool {
 	return enabled
 }
 
+// tabStatusConfigFor returns the tab status styling cfg asks for, or
+// no styling at all when terminal.status is disabled.
+func tabStatusConfigFor(cfg ideConfig) browser.TabStatusConfig {
+	if !cfg.tabStatusEnabled() {
+		return browser.TabStatusConfig{}
+	}
+	return cfg.tabStatusConfig()
+}
+
 // tabStatusNotifyConfig reads terminal.status.notify, the states a tab
 // entering raises a notification for when it is out of sight, and
 // terminal.status.notify_interval, the minimum time between two
 // notifications for the same tab.
-func (c ideConfig) tabStatusNotifyConfig() tabStatusNotifyConfig {
-	ret := defaultTabStatusNotifyConfig()
+func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
+	ret := idestatus.DefaultNotifyConfig()
 	cfg, ok := c.terminalStatus()
 	if !ok {
 		return ret
@@ -5158,12 +5168,12 @@ func (c ideConfig) tabStatusNotifyConfig() tabStatusNotifyConfig {
 					"unknown state %q: expected blocked, error, done or working", name)
 			}
 		}
-		ret.states = states
+		ret.States = states
 	} else if err != config.ErrNotFound {
 		c.errors["terminal.status.notify"] = err
 	}
-	if d, err := config.GetDuration(cfg, "notify_interval", ret.interval); err == nil {
-		ret.interval = d
+	if d, err := config.GetDuration(cfg, "notify_interval", ret.Interval); err == nil {
+		ret.Interval = d
 	} else if err != config.ErrNotFound {
 		c.errors["terminal.status.notify_interval"] = err
 	}

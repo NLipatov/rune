@@ -84,6 +84,7 @@ import (
 	"unstable.build/rune/internal/ide/idepkg/pkgrpc"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/ide/idescavenger"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/idetask"
 	"unstable.build/rune/internal/ide/syntax/symboldb"
 	"unstable.build/rune/internal/ide/syntax/treesitter"
@@ -203,7 +204,7 @@ type workspaceManagerHandler struct {
 	barNonFocusAttr     term.Attributes
 	barFocusIconAttr    term.Attributes
 	barNonFocusIconAttr term.Attributes
-	status              *statusStore
+	status              *idestatus.Store
 	focusProxy          handler.Proxy
 	width, height       int
 	workspaces          [workspaceSlots]*workspaceHandler
@@ -706,9 +707,9 @@ func (h *workspaceManagerHandler) init(
 	h.extHandleWait = extensionHandleWait
 	notifyStatus := cfg.tabStatusNotifyConfig()
 	if !cfg.tabStatusEnabled() {
-		notifyStatus = tabStatusNotifyConfig{}
+		notifyStatus = idestatus.NotifyConfig{}
 	}
-	h.status = newStatusStore(h, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
+	h.status = idestatus.New(statusWorkspaces{h}, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
 		h.scheduleNextTick, h.events.globalInterrupter())
 
 	// Files and workspaces under the home directory share this manager
@@ -1547,14 +1548,14 @@ func (h *workspaceManagerHandler) textOpts(
 		text.WithOnTabStatus(func(
 			tab workspaceapi.URI, _, status programstatus.Summary,
 		) {
-			h.status.tabStatusChanged(uri, tab, status)
+			h.status.TabStatusChanged(uri, tab, status)
 		}),
 		text.WithOnTabRemoved(func(tab workspaceapi.URI) {
-			h.status.tabRemoved(uri, tab)
+			h.status.TabRemoved(uri, tab)
 		}),
 		text.WithOnContentSeen(func(content browserapi.Handler) {
 			if seen, ok := statusURIOf(content); ok && !h.unfocused {
-				h.status.ackDetached(uri, seen)
+				h.status.Ack(uri, seen)
 			}
 		}),
 		text.WithTabStatusConfig(tabStatusConfigFor(cfg)),
@@ -2712,7 +2713,7 @@ func (h *workspaceManagerHandler) restorePreviousSession(
 		ret = multierror.Append(ret, h.openPrevSessionFiles(ex, state.Files, windows))
 	}
 	// Last, for the tabs the programs report from to be back.
-	h.status.restore(uri, state.Programs)
+	h.status.Restore(uri, state.Programs)
 	return ret.ErrorOrNil()
 }
 
@@ -2865,7 +2866,7 @@ func (h *workspaceManagerHandler) commandRenameWorkspace(args ...string) error {
 	name := args[0]
 	handler := h.workspaces[h.focus]
 	handler.tabname = name
-	h.status.refreshViews()
+	h.status.Refresh()
 	h.Resize(h.width, h.height)
 	if err := h.state.PersistWorkspaceState(
 		context.Background(), handler.uri); err != nil {
@@ -3111,7 +3112,7 @@ func (h *workspaceManagerHandler) closeWorkspace() (
 	if err := hm.ex.Close(); err != nil {
 		log.Error(err)
 	}
-	h.status.dropWorkspace(uri)
+	h.status.DropWorkspace(uri)
 	// Detach the raw workspace so the background managerWorkspace.Close
 	// cannot write the manager maps off-loop. While other holders share
 	// the entry nothing is detached, and cwd must not be closed.
@@ -3209,7 +3210,7 @@ func (h *workspaceManagerHandler) moveWorkspace(args ...string) error {
 	h.workspaces[curr] = h.workspaces[next]
 	h.workspaces[next] = temp
 	h.focus = next
-	h.status.refreshViews()
+	h.status.Refresh()
 	h.events.setFocus(h.focusURI())
 	h.persistLastSession()
 	h.Resize(h.width, h.height)
@@ -3428,8 +3429,10 @@ func (h *workspaceManagerHandler) workspaceStatus(slot int) (
 	if w == nil {
 		return programstatus.Summary{Progress: -1}, workspaceapi.URI{}
 	}
-	return h.status.rollup(w.uri)
+	return h.status.Rollup(w.uri)
 }
+
+const cmdProgramStatus = "programstatus"
 
 // commandProgramStatus opens the status inbox over the focused workspace:
 // a floating list of every reported status across workspaces, where
@@ -3439,11 +3442,10 @@ func (h *workspaceManagerHandler) commandProgramStatus(args ...string) error {
 		return errors.New("expected no arguments")
 	}
 	b := h.focusEx().comp.Browser()
-	v := h.status.view()
-	v.minWidth = func() int {
+	v := h.status.View(func() int {
 		w, _ := b.WindowManagerSize()
 		return w * statusMinWidthPercent / 100
-	}
+	})
 	// Pinned to the top, the window grows and shrinks downwards as the
 	// preview changes size instead of jumping up and down.
 	_, err := h.focusEx().Browser().Floating(v, browserapi.FloatingConfig{
@@ -3459,13 +3461,13 @@ func (h *workspaceManagerHandler) commandProgramStatus(args ...string) error {
 // width the status inbox takes.
 const statusMinWidthPercent = 60
 
-// focusStatusEntry switches to the workspace of entry and shows its
-// tab in the focused window, or focuses the window already showing
-// it. For what is no tab, it focuses the task or the window showing
-// it, or shows the hidden companion terminal. It fails when the
-// workspace or the tab is gone.
-func (h *workspaceManagerHandler) focusStatusEntry(entry statusEntry) error {
-	slot, _, ok := h.statusWorkspace(entry.ws)
+// focusStatusEntry switches to the workspace at ws and shows the tab at
+// uri in the focused window, or focuses the window already showing it.
+// For what is no tab, it focuses the task or the window showing it, or
+// shows the hidden companion terminal. It fails when the workspace or
+// the tab is gone.
+func (h *workspaceManagerHandler) focusStatusEntry(ws, uri workspaceapi.URI) error {
+	slot, _, ok := statusWorkspaces{h}.Workspace(ws)
 	if !ok {
 		return errors.New("workspace is gone")
 	}
@@ -3473,10 +3475,10 @@ func (h *workspaceManagerHandler) focusStatusEntry(entry statusEntry) error {
 		return fmt.Errorf("switch to workspace %d", slot+1)
 	}
 	b := h.workspaces[slot].ex.comp.Browser()
-	tab, ok := b.Tab(entry.uri)
+	tab, ok := b.Tab(uri)
 	if !ok {
-		if _, ok := h.status.status(entry.ws, entry.uri); ok {
-			return focusStatusSource(h.workspaces[slot].ex, entry.uri)
+		if _, ok := h.status.Status(ws, uri); ok {
+			return focusStatusSource(h.workspaces[slot].ex, uri)
 		}
 		return errors.New("tab is gone")
 	}
@@ -3485,7 +3487,7 @@ func (h *workspaceManagerHandler) focusStatusEntry(entry statusEntry) error {
 		return nil
 	}
 	idx := slices.IndexFunc(b.Tabs(), func(t *browser.Tab) bool {
-		return t.URI().Equal(entry.uri)
+		return t.URI().Equal(uri)
 	})
 	if !b.SetContentToTab(b.Focus(), idx) {
 		return errors.New("show tab")
@@ -3503,7 +3505,7 @@ func (h *workspaceManagerHandler) decorateWorkspaceBar() {
 			continue
 		}
 		sum, _ := h.workspaceStatus(slot)
-		style := h.status.cfg.WorkspaceTab
+		style := h.status.Config().WorkspaceTab
 		nameAttr, iconAttr := style.BarAttrs(sum)
 		if nameAttr == (term.Attributes{}) {
 			nameAttr = w.bellAttr
@@ -3588,17 +3590,22 @@ func notificationLevelRank(level browserapi.NotificationLevel) int {
 	return 0
 }
 
-func (h *workspaceManagerHandler) statusWorkspace(ws workspaceapi.URI) (int, string, bool) {
-	for slot, w := range h.workspaces {
+// statusWorkspaces gives an idestatus.Store the workspaces of h.
+type statusWorkspaces struct{ h *workspaceManagerHandler }
+
+var _ idestatus.WorkspaceStatus = statusWorkspaces{}
+
+func (s statusWorkspaces) Workspace(ws workspaceapi.URI) (int, string, bool) {
+	for slot, w := range s.h.workspaces {
 		if w != nil && w.uri.Equal(ws) {
-			return slot, h.makeWorkspaceTabName(slot, w), true
+			return slot, s.h.makeWorkspaceTabName(slot, w), true
 		}
 	}
 	return 0, "", false
 }
 
-func (h *workspaceManagerHandler) statusTabName(ws, uri workspaceapi.URI) (string, bool) {
-	e := h.exForWorkspace(ws)
+func (s statusWorkspaces) TabName(ws, uri workspaceapi.URI) (string, bool) {
+	e := s.h.exForWorkspace(ws)
 	if e == nil {
 		return "", false
 	}
@@ -3606,17 +3613,15 @@ func (h *workspaceManagerHandler) statusTabName(ws, uri workspaceapi.URI) (strin
 	return name, ok
 }
 
-func (h *workspaceManagerHandler) statusPreview(
-	ws, uri workspaceapi.URI,
-) (statusPreview, bool) {
-	e := h.exForWorkspace(ws)
+func (s statusWorkspaces) Preview(ws, uri workspaceapi.URI) (idestatus.Preview, bool) {
+	e := s.h.exForWorkspace(ws)
 	if e == nil {
-		return statusPreview{}, false
+		return idestatus.Preview{}, false
 	}
 	b := e.comp.Browser()
 	if tab, ok := b.Tab(uri); ok {
 		w, h := tab.ContentSize()
-		return statusPreview{content: tab, width: w, height: h, fit: tab.Resize}, true
+		return idestatus.Preview{Content: tab, Width: w, Height: h, Fit: tab.Resize}, true
 	}
 	if t, ok := statusTaskOf(e, uri); ok {
 		if win, ok := t.Shown(); ok {
@@ -3624,15 +3629,15 @@ func (h *workspaceManagerHandler) statusPreview(
 		}
 		// Minimized, the task draws its bar alone: preview its program.
 		p := t.Program()
-		return statusPreview{content: p, fit: p.Resize, hidden: true}, true
+		return idestatus.Preview{Content: p, Fit: p.Resize, Hidden: true}, true
 	}
 	if win, ok := statusWindowOf(e, uri); ok {
 		return statusWindowPreview(b, win)
 	}
 	if v, ok := hiddenCompanionTerminal(e, uri); ok {
-		return statusPreview{content: v, fit: v.Resize, hidden: true}, true
+		return idestatus.Preview{Content: v, Fit: v.Resize, Hidden: true}, true
 	}
-	return statusPreview{}, false
+	return idestatus.Preview{}, false
 }
 
 // focusStatusSource brings in sight what reported a status at uri in
@@ -3678,16 +3683,16 @@ func hiddenCompanionTerminal(e *ex, uri workspaceapi.URI) (vtereservoir.VTE, boo
 }
 
 // statusWindowPreview previews the content of win.
-func statusWindowPreview(b *browser.Component, win browser.Window) (statusPreview, bool) {
+func statusWindowPreview(b *browser.Component, win browser.Window) (idestatus.Preview, bool) {
 	if win == nil || win.Closed() {
-		return statusPreview{}, false
+		return idestatus.Preview{}, false
 	}
 	content, err := win.Content()
 	if err != nil {
-		return statusPreview{}, false
+		return idestatus.Preview{}, false
 	}
 	w, h := b.ContentSize(win)
-	return statusPreview{content: content, width: w, height: h}, true
+	return idestatus.Preview{Content: content, Width: w, Height: h}, true
 }
 
 // statusWindowOf returns the window of e showing what reported a status
@@ -3733,8 +3738,8 @@ func statusURIOf(content browserapi.Handler) (workspaceapi.URI, bool) {
 	return workspaceapi.URI{}, false
 }
 
-func (h *workspaceManagerHandler) statusTabIcon(ws, uri workspaceapi.URI) (rune, bool) {
-	e := h.exForWorkspace(ws)
+func (s statusWorkspaces) TabIcon(ws, uri workspaceapi.URI) (rune, bool) {
+	e := s.h.exForWorkspace(ws)
 	if e == nil {
 		return 0, false
 	}
@@ -3742,9 +3747,9 @@ func (h *workspaceManagerHandler) statusTabIcon(ws, uri workspaceapi.URI) (rune,
 	return icon, ok
 }
 
-func (h *workspaceManagerHandler) statusInSight(ws, uri workspaceapi.URI) bool {
-	e := h.exForWorkspace(ws)
-	if e == nil || h.focusEx() != e {
+func (s statusWorkspaces) InSight(ws, uri workspaceapi.URI) bool {
+	e := s.h.exForWorkspace(ws)
+	if e == nil || s.h.focusEx() != e {
 		return false
 	}
 	if _, ok := e.comp.Browser().Tab(uri); !ok {
@@ -3754,35 +3759,45 @@ func (h *workspaceManagerHandler) statusInSight(ws, uri workspaceapi.URI) bool {
 	return ok && focused.URI().Equal(uri)
 }
 
-func (h *workspaceManagerHandler) statusSeen(ws, uri workspaceapi.URI) bool {
-	e := h.exForWorkspace(ws)
-	if h.unfocused || e == nil || h.focusEx() != e {
+func (s statusWorkspaces) Seen(ws, uri workspaceapi.URI) bool {
+	e := s.h.exForWorkspace(ws)
+	if s.h.unfocused || e == nil || s.h.focusEx() != e {
 		return false
 	}
 	seen, ok := statusURIOf(e.comp.Browser().FocusHandler())
 	return ok && seen.Equal(uri)
 }
 
-func (h *workspaceManagerHandler) notifyStatus(ws workspaceapi.URI, level browserapi.NotificationLevel, msg string) {
-	if e := h.exForWorkspace(ws); e != nil {
-		_, _ = e.notifications.Notify(level, "%s", msg)
+func (s statusWorkspaces) Notify(ws workspaceapi.URI, level browserapi.NotificationLevel, msg string) string {
+	e := s.h.exForWorkspace(ws)
+	if e == nil {
+		return ""
+	}
+	id, _ := e.notifications.Notify(level, "%s", msg)
+	return id
+}
+
+func (s statusWorkspaces) UpdateNotification(
+	ws workspaceapi.URI, id, msg string, progress, total int64,
+) bool {
+	e := s.h.exForWorkspace(ws)
+	return e != nil && e.notifications.UpdateNotificationProgress(id, msg, progress, total) == nil
+}
+
+func (s statusWorkspaces) Changed(workspaceapi.URI) {
+	s.h.refreshWorkspaceActivity()
+	s.h.decorateWorkspaceBar()
+}
+
+func (s statusWorkspaces) Show(ws, uri workspaceapi.URI) {
+	if err := s.h.focusStatusEntry(ws, uri); err != nil {
+		_, _ = s.h.focusEx().notifications.Notify(browserapi.LevelError, "%s: %v", cmdProgramStatus, err)
 	}
 }
 
-func (h *workspaceManagerHandler) statusChanged(workspaceapi.URI) {
-	h.refreshWorkspaceActivity()
-	h.decorateWorkspaceBar()
-}
-
-func (h *workspaceManagerHandler) showStatus(ws, uri workspaceapi.URI) {
-	if err := h.focusStatusEntry(statusEntry{ws: ws, uri: uri}); err != nil {
-		_, _ = h.focusEx().notifications.Notify(browserapi.LevelError, "%s: %v", cmdProgramStatus, err)
-	}
-}
-
-func (h *workspaceManagerHandler) closeStatus(ws, uri workspaceapi.URI) {
-	if err := h.closeStatusSource(ws, uri); err != nil {
-		_, _ = h.focusEx().notifications.Notify(browserapi.LevelError, "%s: close: %v", cmdProgramStatus, err)
+func (s statusWorkspaces) Close(ws, uri workspaceapi.URI) {
+	if err := s.h.closeStatusSource(ws, uri); err != nil {
+		_, _ = s.h.focusEx().notifications.Notify(browserapi.LevelError, "%s: close: %v", cmdProgramStatus, err)
 	}
 }
 
@@ -3803,7 +3818,7 @@ func (h *workspaceManagerHandler) closeStatusSource(ws, uri workspaceapi.URI) er
 			return nil
 		}
 		// Asked over the inbox, as the tab's workspace may be out of sight.
-		h.confirmStatus(fmt.Sprintf("File '%s' has changes pending to be written. "+
+		statusWorkspaces{h}.Confirm(fmt.Sprintf("File '%s' has changes pending to be written. "+
 			"Close and discard changes?", tab.URI().Name()), func() { b.RemoveTab(tab) })
 		return nil
 	}
@@ -3825,12 +3840,12 @@ func (h *workspaceManagerHandler) closeStatusSource(ws, uri workspaceapi.URI) er
 	return e.closeWindowContent(win)
 }
 
-func (h *workspaceManagerHandler) confirmStatus(message string, yes func()) {
-	h.focusEx().comp.Prompt(message, []string{yesOpt, noOpt}, yesNoKeyCombs,
+func (s statusWorkspaces) Confirm(message string, yes func()) {
+	s.h.focusEx().comp.Prompt(message, []string{yesOpt, noOpt}, yesNoKeyCombs,
 		handlerapi.FuncPromptHandler(func(i int, _ string) {
 			if i == 0 {
 				// The prompt is still dispatching the answer.
-				h.scheduleNextTick(yes)
+				s.h.scheduleNextTick(yes)
 			}
 		}, func() error { return nil }))
 }
@@ -4599,7 +4614,7 @@ func (f *workspaceTabManager) SetTabName(
 	}
 	f.parent.scheduleNextTick(func() {
 		_ = f.tm.SetTabName(uri, name, attr)
-		f.parent.status.refreshViews()
+		f.parent.status.Refresh()
 		if attr == (term.Attributes{}) {
 			log.Debugf("SetTabName called on workspace tab manager %p: "+
 				"empty attributes", f)
@@ -4640,7 +4655,7 @@ func (f *workspaceTabManager) SetTabStatus(
 	}
 	f.parent.scheduleNextTick(func() {
 		if ws, ok := f.statusWorkspace(); ok {
-			if err := f.parent.status.setTabStatus(ws, f.tm, uri, report); err != nil {
+			if err := f.parent.status.SetTabStatus(ws, f.tm, uri, report); err != nil {
 				log.Warnf("set tab status %s: %v", uri, err)
 			}
 		}
@@ -4656,7 +4671,7 @@ func (f *workspaceTabManager) EndTabStatus(uri workspaceapi.URI) error {
 	}
 	f.parent.scheduleNextTick(func() {
 		if ws, ok := f.statusWorkspace(); ok {
-			if err := f.parent.status.endTabStatus(ws, f.tm, uri); err != nil {
+			if err := f.parent.status.EndTabStatus(ws, f.tm, uri); err != nil {
 				log.Warnf("end tab status %s: %v", uri, err)
 			}
 		}

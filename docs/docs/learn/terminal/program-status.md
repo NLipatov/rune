@@ -153,6 +153,12 @@ the name of the tab it came from, followed by the reporting `app` when that
 adds anything. A terminal that is not a tab is named after its `app`, or
 `terminal` when it reported none.
 
+A tab keeps one notification per state: a new message or state notification
+replaces the one the tab last raised in the same state, so a program reporting
+step after step shows its latest step only. The `working` notification stays
+open, with the tab's progress, until the tab leaves `working`, is closed, or
+you dismiss it; a later message brings it back. The others close on their own.
+
 A notification in a workspace you are not looking at stays open until you
 switch to it and adds to the badge on its workspace tab. See [Knowing when a
 worktree needs you](../worktrees.md#knowing-when-a-worktree-needs-you).
@@ -476,6 +482,5 @@ record stays until you see it: focus the tab or the window showing the
 terminal, or choose it in the status inbox.
 
 **Too many notifications.** Remove states from `terminal.status.notify`, or
-raise `terminal.status.notify_interval`. Messages are notified once each, so a
-program that changes its `msg` on every report raises one notification per
-report.
+raise `terminal.status.notify_interval`. Messages of the same state replace
+one another rather than stack up.

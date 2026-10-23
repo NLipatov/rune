@@ -72,6 +72,7 @@ import (
 	"unstable.build/rune/internal/ide/ideauthorizer"
 	"unstable.build/rune/internal/ide/idehistory"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/idetask"
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/vctrl/testgit"
@@ -1048,17 +1049,18 @@ func TestWorkspaceBarNotificationBadge(t *testing.T) {
 }
 
 func TestTabStatusNotifications(t *testing.T) {
-	m, slot := newActivityTestManager(t, defaultConfigWithWrap(false))
+	cfg := defaultConfigWithWrap(false)
+	// idestatus covers the rate limiting.
+	cfg.cfg["terminal"] = map[string]any{"status": map[string]any{"notify_interval": "0s"}}
+	m, slot := newActivityTestManager(t, cfg)
 	chat, err := workspaceapi.ParseURI("rune-agent://model/rolling-fox")
 	require.NoError(t, err)
 	seen, err := workspaceapi.ParseURI("rune-agent://model/seen")
 	require.NoError(t, err)
 	notiCfg := notificationsConfig()
 	warn := term.Attributes{Fg: notiCfg.ColorWarning.Fg}
-	const interval = 200 * time.Millisecond
 
 	m.mu.Lock()
-	m.status.notify.interval = interval
 	w := m.workspaces[slot]
 	comp := &w.comp
 	notes := &recordingNotifications{inner: w.notifications}
@@ -1070,7 +1072,6 @@ func TestTabStatusNotifications(t *testing.T) {
 		_, err = comp.Tab(tab.uri, 'x', tab.name, browsertest.NewTestHandler())
 		require.NoError(t, err)
 	}
-	chatKey := statusKey{ws: w.uri.String(), uri: chat.String()}
 
 	send := func(tab workspaceapi.URI, reports ...programstatus.Report) {
 		t.Helper()
@@ -1094,11 +1095,12 @@ func TestTabStatusNotifications(t *testing.T) {
 	report := func(state programstatus.State, msg string) programstatus.Report {
 		return programstatus.Report{State: state, Progress: -1, Msg: msg}
 	}
-	waitInterval := func() {
-		m.mu.Unlock()
-		time.Sleep(interval + 50*time.Millisecond)
-		m.quiesce()
-		m.mu.Lock()
+	updated := 0
+	newUpdates := func() []capturedUpdate {
+		all := notes.updatesSnapshot()
+		ret := all[updated:]
+		updated = len(all)
+		return ret
 	}
 
 	send(chat, report(programstatus.Working, ""))
@@ -1107,18 +1109,25 @@ func TestTabStatusNotifications(t *testing.T) {
 	send(chat, report(programstatus.Working, "Compiling"))
 	assert.Equal(t, note(browserapi.LevelInfo, "rolling-fox: Compiling"), newNotes(),
 		"a message comes through whatever the state")
+	assert.Equal(t, []capturedUpdate{{progress: 0, total: 1, ok: true}}, newUpdates(),
+		"a working notification stays")
 
 	send(chat, programstatus.Report{State: programstatus.Working, Progress: 40, Msg: "Linking"})
-	assert.Equal(t, note(browserapi.LevelInfo, "rolling-fox: Linking"), newNotes(),
-		"a new message comes through without a state change")
+	assert.Empty(t, newNotes(), "the next working message updates it")
+	assert.Contains(t, newUpdates(),
+		capturedUpdate{msg: "rolling-fox: Linking", progress: 40, total: 100, ok: true})
 
 	send(chat, programstatus.Report{State: programstatus.Working, Progress: 60, Msg: "Linking"})
 	assert.Empty(t, newNotes(), "an unchanged message is not repeated")
+	assert.Equal(t, []capturedUpdate{{progress: 60, total: 100, ok: true}}, newUpdates(),
+		"the working notification follows the progress")
 
 	send(chat, programstatus.Report{
 		ID: "tests", State: programstatus.Working, Progress: -1, App: "go", Msg: "ok ./internal",
 	})
-	assert.Equal(t, note(browserapi.LevelInfo, "rolling-fox (go): ok ./internal"), newNotes(),
+	assert.Empty(t, newNotes())
+	assert.Contains(t, newUpdates(),
+		capturedUpdate{msg: "rolling-fox (go): ok ./internal", progress: 0, total: 1, ok: true},
 		"messages of child records come through")
 
 	send(chat, programstatus.Report{
@@ -1127,7 +1136,9 @@ func TestTabStatusNotifications(t *testing.T) {
 	})
 	assert.Equal(t, note(browserapi.LevelWarn, "rolling-fox (claude): run make test?"), newNotes(),
 		"the message stands for the transition it comes with")
-	assert.Equal(t, pendingNotifications{4, browserapi.LevelWarn, warn}, w.notifs,
+	assert.Equal(t, []capturedUpdate{{progress: 1, total: 1, ok: true}}, newUpdates(),
+		"leaving working closes the working notification")
+	assert.Equal(t, pendingNotifications{2, browserapi.LevelWarn, warn}, w.notifs,
 		"an unfocused workspace counts every notification")
 
 	send(chat, report(programstatus.Done, "ok"), report(programstatus.Error, "boom"))
@@ -1136,30 +1147,11 @@ func TestTabStatusNotifications(t *testing.T) {
 		{level: browserapi.LevelError, msg: "rolling-fox: boom"},
 	}, newNotes(), "messages are never rate limited")
 
-	// Transitions without a message are coalesced into one deferred
-	// notification carrying the latest state.
-	m.status.lastNotified[chatKey] = time.Now()
-	send(chat, report(programstatus.Done, ""), report(programstatus.Error, ""))
-	assert.Empty(t, newNotes(), "rate limited")
-	m.mu.Unlock()
-	require.Eventually(t, func() bool {
-		m.quiesce()
-		return len(notes.snapshot()) > taken
-	}, 5*time.Second, 5*time.Millisecond)
-	m.mu.Lock()
-	assert.Equal(t, note(browserapi.LevelError, "rolling-fox: error"), newNotes(),
-		"the latest state wins")
-
-	m.status.lastNotified[chatKey] = time.Now()
-	send(chat, report(programstatus.Done, ""), report(programstatus.Done, "shipped"))
-	waitInterval()
-	assert.Equal(t, note(browserapi.LevelSuccess, "rolling-fox: shipped"), newNotes(),
-		"a message for the pending state replaces its deferred notification")
-
-	m.status.lastNotified[chatKey] = time.Now()
-	send(chat, report(programstatus.Error, ""), programstatus.Report{State: programstatus.Clear})
-	waitInterval()
-	assert.Empty(t, newNotes(), "a state gone before its deferred notification is not reported")
+	send(chat, report(programstatus.Done, ""))
+	assert.Equal(t, note(browserapi.LevelSuccess, "rolling-fox: done"), newNotes(),
+		"a transition without a message names the state")
+	send(chat, programstatus.Report{State: programstatus.Clear})
+	assert.Empty(t, newNotes(), "clearing is not notified")
 
 	require.True(t, m.switchToWorkspace(slot))
 	win, err := comp.Focus()
@@ -1179,7 +1171,6 @@ func TestTabStatusNotifications(t *testing.T) {
 	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve?"), newNotes(),
 		"a message comes through in sight")
 
-	delete(m.status.lastNotified, chatKey)
 	send(chat, report(programstatus.Error, ""))
 	assert.Equal(t, note(browserapi.LevelError, "rolling-fox: error"), newNotes(),
 		"another tab of the focused workspace is out of sight")
@@ -1444,7 +1435,7 @@ func TestWorkspaceBarStatusFromTerminalWithoutTab(t *testing.T) {
 	assert.Equal(t, programstatus.Idle, sum.State)
 	assert.Equal(t, term.Attributes{}, m.bar.TabAttr(barIdx))
 	assert.Equal(t, m.barNonFocusIconAttr, m.bar.TabIconAttr(barIdx))
-	assert.Empty(t, m.status.items())
+	assert.Empty(t, m.status.Items())
 	m.mu.Unlock()
 
 	require.NoError(t, m.Close())
@@ -1456,7 +1447,7 @@ func TestStatusSources(t *testing.T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	assert.Empty(t, m.status.items())
+	assert.Empty(t, m.status.Items())
 
 	other := m.workspaces[slot].ex
 	focused := m.focusEx()
@@ -1472,10 +1463,10 @@ func TestStatusSources(t *testing.T) {
 		s.Apply(r)
 		return s.Summary()
 	}
-	assertSource := func(want, got statusItem) {
+	assertSource := func(want, got idestatus.Item) {
 		t.Helper()
-		assert.Truef(t, want.status.Equal(got.status), "want %+v, got %+v", want.status, got.status)
-		want.status, got.status = programstatus.Summary{}, programstatus.Summary{}
+		assert.Truef(t, want.Status.Equal(got.Status), "want %+v, got %+v", want.Status, got.Status)
+		want.Status, got.Status = programstatus.Summary{}, programstatus.Summary{}
 		assert.Equal(t, want, got)
 	}
 	workingReport := programstatus.Report{State: programstatus.Working, Progress: 40, Title: "cargo build"}
@@ -1488,35 +1479,33 @@ func TestStatusSources(t *testing.T) {
 	silent := open(other, "silent")
 	pty, err := workspaceapi.ParseURI("file:///dev/ttys042")
 	require.NoError(t, err)
-	m.status.setTabStatus(m.workspaces[slot].uri, &other.comp, pty, doneReport)
+	m.status.SetTabStatus(m.workspaces[slot].uri, &other.comp, pty, doneReport)
 
 	otherName := m.makeWorkspaceTabName(slot, m.workspaces[slot])
 	focusedName := m.makeWorkspaceTabName(m.focus, m.workspaces[m.focus])
-	sources := m.status.items()
-	byTab := map[string]statusItem{}
+	sources := m.status.Items()
+	byTab := map[string]idestatus.Item{}
 	for _, s := range sources {
-		byTab[s.uri.String()] = s
+		byTab[s.URI.String()] = s
 	}
 	require.Len(t, sources, 3, "every reporting source is listed: %+v", sources)
-	assertSource(statusItem{
-		slot: m.focus, ws: m.workspaces[m.focus].uri, wsName: focusedName, uri: working, name: "worker", icon: 'x', status: summaryOf(workingReport),
+	assertSource(idestatus.Item{
+		Slot: m.focus, WS: m.workspaces[m.focus].uri, WorkspaceName: focusedName, URI: working, Name: "worker", Icon: 'x', Status: summaryOf(workingReport),
 	}, byTab[working.String()])
-	assertSource(statusItem{
-		slot: slot, ws: m.workspaces[slot].uri, wsName: otherName, uri: failed, name: "build", icon: 'x', status: summaryOf(failedReport),
+	assertSource(idestatus.Item{
+		Slot: slot, WS: m.workspaces[slot].uri, WorkspaceName: otherName, URI: failed, Name: "build", Icon: 'x', Status: summaryOf(failedReport),
 	}, byTab[failed.String()])
 	assert.NotContains(t, byTab, silent.String(), "a tab that reported nothing is not tracked")
-	assertSource(statusItem{
-		slot: slot, ws: m.workspaces[slot].uri, wsName: otherName, uri: pty, name: detachedStatusLabel, status: summaryOf(doneReport),
+	assertSource(idestatus.Item{
+		Slot: slot, WS: m.workspaces[slot].uri, WorkspaceName: otherName, URI: pty, Name: "terminal", Status: summaryOf(doneReport),
 	}, byTab[pty.String()])
 
-	entries := statusInbox{cfg: m.status.cfg}.entries(sources)
-	require.Len(t, entries, 3)
-	require.NoError(t, m.focusStatusEntry(entries[1]))
+	require.NoError(t, m.focusStatusEntry(m.workspaces[slot].uri, pty))
 	assert.Equal(t, slot, m.focus, "a terminal that is no tab focuses its workspace")
 	silentTab, ok := other.comp.Browser().Tab(silent)
 	require.True(t, ok)
 	require.True(t, other.comp.Browser().RemoveTab(silentTab))
-	assert.Error(t, m.focusStatusEntry(statusEntry{ws: m.workspaces[slot].uri, uri: silent}))
+	assert.Error(t, m.focusStatusEntry(m.workspaces[slot].uri, silent))
 }
 
 func TestPermissionPromptStatus(t *testing.T) {
@@ -1532,7 +1521,6 @@ func TestPermissionPromptStatus(t *testing.T) {
 	w.notifications = notes
 	barIdx := slices.Index(m.barIdxToSlot, slot)
 	require.GreaterOrEqual(t, barIdx, 0)
-	m.status.notify.messages = true
 	reporter := w.ex.tm
 
 	// As ideauthorizer announces a pending prompt.
@@ -1549,9 +1537,9 @@ func TestPermissionPromptStatus(t *testing.T) {
 	assert.Equal(t, status.BlockedAttr, m.bar.TabAttr(barIdx))
 	assert.Equal(t, []capturedNote{{level: browserapi.LevelWarn, msg: "rune: ext wants to run make"}},
 		notes.snapshot())
-	entries := statusInbox{cfg: m.status.cfg}.entries(m.status.items())
-	require.Len(t, entries, 1)
-	assert.Equal(t, prompt.String(), entries[0].uri.String(), "the prompt is listed in the inbox")
+	items := m.status.Items()
+	require.Len(t, items, 1)
+	assert.Equal(t, prompt.String(), items[0].URI.String(), "the prompt is listed in the inbox")
 
 	// And withdraws it once answered.
 	require.NoError(t, reporter.SetTabStatus(prompt, programstatus.Report{State: programstatus.Clear}))
@@ -1561,7 +1549,7 @@ func TestPermissionPromptStatus(t *testing.T) {
 	sum, _ = m.workspaceStatus(slot)
 	assert.Equal(t, programstatus.Idle, sum.State)
 	assert.Equal(t, term.Attributes{}, m.bar.TabAttr(barIdx))
-	assert.Empty(t, m.status.items())
+	assert.Empty(t, m.status.Items())
 	m.mu.Unlock()
 }
 
@@ -1589,7 +1577,7 @@ func TestWorkspaceTabManagerDropsClosedWorkspaceStatus(t *testing.T) {
 			m.workspaces[slot] = &workspaceHandler{uri: w.uri}
 			queued()
 			m.workspaces[slot] = w
-			_, ok := m.status.status(w.uri, uri)
+			_, ok := m.status.Status(w.uri, uri)
 			assert.False(t, ok)
 		})
 	}
@@ -1618,9 +1606,10 @@ func TestCommandProgramStatusFocusesEntry(t *testing.T) {
 		require.NoError(t, err)
 		content, err := win.Content()
 		require.NoError(t, err)
-		picker, ok := content.(*statusView)
+		picker, ok := content.(*idestatus.View)
 		require.True(t, ok)
-		require.Len(t, picker.entries, 1)
+		require.Len(t, m.status.Items(), 1)
+		require.True(t, picker.Select(m.workspaces[slot].uri, blocked))
 
 		oldFocus := m.focus
 		require.NoError(t, m.moveWorkspace(strconv.Itoa(slot+1)))
@@ -1655,10 +1644,10 @@ func TestCommandProgramStatusDrawsEveryProgramOverItsWorkspace(t *testing.T) {
 	focused.Resize(120, 40)
 	there.ex.Resize(120, 40)
 	report := func(w *workspaceHandler, uri workspaceapi.URI, app string) {
-		m.status.setTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
+		m.status.SetTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
 			State: programstatus.Working, Progress: -1, App: app,
 		})
-		_, ok := m.status.status(w.uri, uri)
+		_, ok := m.status.Status(w.uri, uri)
 		require.True(t, ok, app)
 	}
 	tab := func(w *workspaceHandler, raw, app string) {
@@ -1701,19 +1690,23 @@ func TestCommandProgramStatusDrawsEveryProgramOverItsWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	content, err := win.Content()
 	require.NoError(t, err)
-	inbox, ok := content.(*statusView)
+	inbox, ok := content.(*idestatus.View)
 	require.True(t, ok)
-	require.Len(t, inbox.entries, 7)
-	for i, e := range inbox.entries {
-		inbox.selectAt(i)
+	items := m.status.Items()
+	require.Len(t, items, 7)
+	for _, it := range items {
+		require.True(t, inbox.Select(it.WS, it.URI))
+		name, ok := inbox.Selection()
+		require.True(t, ok)
+		require.Equal(t, it.App, name, "every program is listed by its app")
 		w := term.NewStringWriter(120, 40)
-		require.NotPanics(t, func() { focused.Draw(w) }, e.name)
+		require.NotPanics(t, func() { focused.Draw(w) }, name)
 		require.NoError(t, w.Flush())
-		assert.Contains(t, w.String(), e.name, "the inbox is drawn over its workspace")
-		if e.name == "command" || e.name == "prompt" || e.name == "companion" {
+		assert.Contains(t, w.String(), name, "the inbox is drawn over its workspace")
+		if name == "command" || name == "prompt" || name == "companion" {
 			// Shown in the very workspace the inbox floats over.
-			_, ok := inbox.preview()
-			assert.True(t, ok, "%s is previewed", e.name)
+			_, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(it.WS, it.URI)
+			assert.True(t, ok, "%s is previewed", name)
 		}
 	}
 }
@@ -1749,14 +1742,14 @@ func TestCommandProgramStatusPreviewsTab(t *testing.T) {
 	require.NoError(t, err)
 	content, err := win.Content()
 	require.NoError(t, err)
-	picker, ok := content.(*statusView)
+	picker, ok := content.(*idestatus.View)
 	require.True(t, ok)
+	ws := m.workspaces[slot].uri
+	size := func() (int, int) { return focused.comp.Browser().ContentSize(win) }
 
 	// With room for it, the window is sized to show the tab whole beside
 	// the sidebar.
 	focused.comp.Resize(120, 60)
-	sideW := picker.sidebarWidth() + statusDividerWidth
-	assert.Equal(t, []int{sideW + tabW, max(tabH, statusMinHeight)}, []int{picker.width, picker.height})
 	for _, ev := range []term.Event{
 		{Type: term.EventKey, Ch: 'j'},
 		{Type: term.EventKey, Ch: 'k'},
@@ -1764,7 +1757,13 @@ func TestCommandProgramStatusPreviewsTab(t *testing.T) {
 		_, handled := picker.Handle(ev)
 		assert.True(t, handled)
 	}
-	lines := strings.Split(handlertest.DrawHandler(picker, picker.width, picker.height), "\n")
+	width, height := size()
+	drawn := handlertest.DrawHandler(picker, width, height)
+	sideW := statusInboxSidebarWidth(t, drawn)
+	_, wantH := picker.Dimensions()
+	assert.Equal(t, []int{sideW + tabW, wantH}, []int{width, height})
+	assert.GreaterOrEqual(t, height, tabH)
+	lines := strings.Split(drawn, "\n")
 	for y := range tabH {
 		assert.Equal(t, strings.Repeat("A", tabW), string([]rune(lines[y])[sideW:]),
 			"the tab of another workspace is previewed")
@@ -1776,32 +1775,41 @@ func TestCommandProgramStatusPreviewsTab(t *testing.T) {
 	require.Zero(t, top, "the window opens at the top")
 	gone, err := workspaceapi.ParseURI("file:///dev/ttys043")
 	require.NoError(t, err)
-	m.status.updateDetached(m.workspaces[slot].uri, gone, func(r *programstatus.Store) {
-		r.Apply(programstatus.Report{State: programstatus.Done, Progress: -1})
-	})
-	at := func(uri workspaceapi.URI) int {
-		return slices.IndexFunc(picker.entries, func(e statusEntry) bool { return e.uri.Equal(uri) })
-	}
-	picker.selectAt(at(gone))
-	require.Equal(t, gone.String(), picker.sel.uri)
+	require.NoError(t, m.status.SetTabStatus(ws, &other.comp, gone, programstatus.Report{
+		State: programstatus.Done, Progress: -1,
+	}))
+	require.True(t, picker.Select(ws, gone))
 	focused.comp.Draw(term.NewStringWriter(120, 60))
-	assert.NotEqual(t, sideW+tabW, picker.width, "the window follows the preview")
+	width, _ = size()
+	assert.NotEqual(t, sideW+tabW, width, "the window follows the preview")
 	wmW, _ := focused.comp.Browser().WindowManagerSize()
-	assert.GreaterOrEqual(t, picker.width, wmW*statusMinWidthPercent/100,
+	assert.GreaterOrEqual(t, width, wmW*statusMinWidthPercent/100,
 		"the window takes at least its share of the width")
 	assert.Equal(t, top, win.Position().Y, "the window keeps its top")
-	picker.selectAt(at(uri))
+	require.True(t, picker.Select(ws, uri))
 	focused.comp.Draw(term.NewStringWriter(120, 60))
-	assert.Equal(t, sideW+tabW, picker.width)
+	width, _ = size()
+	assert.Equal(t, sideW+tabW, width)
 	assert.Equal(t, top, win.Position().Y, "the window keeps its top")
 
 	// Without, the window takes what there is and the preview less
 	// than the tab.
 	focused.comp.Resize(40, 20)
-	assert.Less(t, picker.width, sideW+tabW)
-	assert.Less(t, picker.height, tabH)
+	width, height = size()
+	assert.Less(t, width, sideW+tabW)
+	assert.Less(t, height, tabH)
 	w, h := tab.ContentSize()
 	assert.Equal(t, []int{tabW, tabH}, []int{w, h}, "the previewed tab keeps its size")
+}
+
+// statusInboxSidebarWidth returns the columns the sidebar of the
+// status inbox drawn takes, its divider included.
+func statusInboxSidebarWidth(t *testing.T, drawn string) int {
+	t.Helper()
+	first, _, _ := strings.Cut(drawn, "\n")
+	i := slices.Index([]rune(first), idestatus.DefaultInboxStyle().Frame.VerticalLeft)
+	require.GreaterOrEqual(t, i, 0, "the sidebar ends with a divider")
+	return i + 1
 }
 
 func TestCommandProgramStatusPreviewsWindowedTerminal(t *testing.T) {
@@ -1820,19 +1828,19 @@ func TestCommandProgramStatusPreviewsWindowedTerminal(t *testing.T) {
 	termWin := b.Focus()
 	require.NoError(t, termWin.SetContent(tv))
 	w.ex.Resize(60, 30)
-	m.status.setTabStatus(w.uri, &w.ex.comp, pty, programstatus.Report{
+	m.status.SetTabStatus(w.uri, &w.ex.comp, pty, programstatus.Report{
 		State: programstatus.Done, Progress: -1, App: "brew",
 	})
-	_, ok := m.status.status(w.uri, pty)
+	_, ok := m.status.Status(w.uri, pty)
 	require.True(t, ok)
 
-	preview, ok := m.statusPreview(w.uri, pty)
+	preview, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, pty)
 	require.True(t, ok, "a terminal outside of a tab is previewed in its window")
-	assert.Same(t, tv, preview.content)
-	assert.Nil(t, preview.fit, "a terminal shown in a window is never resized")
+	assert.Same(t, tv, preview.Content)
+	assert.Nil(t, preview.Fit, "a terminal shown in a window is never resized")
 	tvW, tvH := b.ContentSize(termWin)
 	require.NotZero(t, tvW)
-	assert.Equal(t, []int{tvW, tvH}, []int{preview.width, preview.height})
+	assert.Equal(t, []int{tvW, tvH}, []int{preview.Width, preview.Height})
 
 	focused := m.focusEx()
 	require.NoError(t, m.commandProgramStatus())
@@ -1840,17 +1848,18 @@ func TestCommandProgramStatusPreviewsWindowedTerminal(t *testing.T) {
 	require.NoError(t, err)
 	content, err := inbox.Content()
 	require.NoError(t, err)
-	picker := content.(*statusView)
+	picker := content.(*idestatus.View)
 	focused.comp.Resize(120, 60)
-	sideW := picker.sidebarWidth() + statusDividerWidth
-	lines := strings.Split(handlertest.DrawHandler(picker, picker.width, picker.height), "\n")
-	assert.Equal(t, "brew", strings.TrimSpace(string([]rune(lines[0])[sideW:])))
+	width, height := focused.comp.Browser().ContentSize(inbox)
+	drawn := handlertest.DrawHandler(picker, width, height)
+	lines := strings.Split(drawn, "\n")
+	assert.Equal(t, "brew", strings.TrimSpace(string([]rune(lines[0])[statusInboxSidebarWidth(t, drawn):])))
 
 	// Choosing it focuses its window.
 	split, ok := b.Split(browserapi.OrientationDefault, termWin, browsertest.NewTestHandler())
 	require.True(t, ok)
 	b.SetFocus(split)
-	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: pty}))
+	require.NoError(t, m.focusStatusEntry(w.uri, pty))
 	assert.Equal(t, termWin.WindowID(), b.Focus().WindowID())
 }
 
@@ -1868,28 +1877,28 @@ func TestCommandProgramStatusPreviewsPermissionPrompt(t *testing.T) {
 	prompt := w.ex.comp.Prompt("Allow make?", []string{"Yes", "No"}, nil,
 		handler.FuncPromptHandler(func(int, string) {}, func() error { return nil }))
 	w.ex.Resize(60, 30)
-	m.status.setTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
+	m.status.SetTabStatus(w.uri, &w.ex.comp, uri, programstatus.Report{
 		State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
 		App: programstatus.HostApp,
 	})
-	_, ok := m.statusPreview(w.uri, uri)
+	_, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, uri)
 	require.False(t, ok, "nothing tells which window shows the status yet")
 
 	w.ex.setStatusWindow(uri, prompt)
-	preview, ok := m.statusPreview(w.uri, uri)
+	preview, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, uri)
 	require.True(t, ok, "the permission prompt is previewed")
 	content, err := prompt.Content()
 	require.NoError(t, err)
-	assert.Same(t, content, preview.content)
-	assert.Positive(t, preview.width)
-	assert.Positive(t, preview.height)
+	assert.Same(t, content, preview.Content)
+	assert.Positive(t, preview.Width)
+	assert.Positive(t, preview.Height)
 
 	b.SetFocus(tiled)
-	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: uri}))
+	require.NoError(t, m.focusStatusEntry(w.uri, uri))
 	assert.Equal(t, prompt.WindowID(), b.Focus().WindowID(), "choosing it focuses the prompt")
 
 	require.NoError(t, prompt.Close())
-	_, ok = m.statusPreview(w.uri, uri)
+	_, ok = statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, uri)
 	assert.False(t, ok, "a closed prompt has no preview")
 }
 
@@ -1904,10 +1913,10 @@ func TestCommandProgramStatusPreviewsDetachedPrograms(t *testing.T) {
 	w.ex.Resize(60, 30)
 	tiled := b.Focus()
 	report := func(uri workspaceapi.URI) {
-		m.status.setTabStatus(w.uri, &e.comp, uri, programstatus.Report{
+		m.status.SetTabStatus(w.uri, &e.comp, uri, programstatus.Report{
 			State: programstatus.Working, Progress: -1,
 		})
-		_, ok := m.status.status(w.uri, uri)
+		_, ok := m.status.Status(w.uri, uri)
 		require.True(t, ok)
 	}
 
@@ -1921,12 +1930,12 @@ func TestCommandProgramStatusPreviewsDetachedPrograms(t *testing.T) {
 	require.NoError(t, err)
 	ph.win = win
 	report(cmd)
-	preview, ok := m.statusPreview(w.uri, cmd)
+	preview, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, cmd)
 	require.True(t, ok, "a floating command is previewed in its window")
-	assert.Same(t, ph, preview.content)
-	assert.False(t, preview.hidden)
+	assert.Same(t, ph, preview.Content)
+	assert.False(t, preview.Hidden)
 	b.SetFocus(tiled)
-	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: cmd}))
+	require.NoError(t, m.focusStatusEntry(w.uri, cmd))
 	assert.Equal(t, win.WindowID(), b.Focus().WindowID(), "choosing it focuses its window")
 	require.NoError(t, win.Close())
 
@@ -1936,18 +1945,18 @@ func TestCommandProgramStatusPreviewsDetachedPrograms(t *testing.T) {
 	tv.uri = shell
 	e.companionTerminal = tv
 	report(shell)
-	preview, ok = m.statusPreview(w.uri, shell)
+	preview, ok = statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, shell)
 	require.True(t, ok, "a hidden companion terminal is previewed")
-	assert.Same(t, tv, preview.content)
-	assert.True(t, preview.hidden, "the inbox sizes what is shown nowhere")
-	assert.NotNil(t, preview.fit)
+	assert.Same(t, tv, preview.Content)
+	assert.True(t, preview.Hidden, "the inbox sizes what is shown nowhere")
+	assert.NotNil(t, preview.Fit)
 	b.SetFocus(tiled)
-	require.NoError(t, m.focusStatusEntry(statusEntry{ws: w.uri, uri: shell}))
+	require.NoError(t, m.focusStatusEntry(w.uri, shell))
 	require.NotNil(t, e.companionTerminalWin, "choosing it shows it")
 	assert.Equal(t, e.companionTerminalWin.WindowID(), b.Focus().WindowID())
-	preview, ok = m.statusPreview(w.uri, shell)
+	preview, ok = statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, shell)
 	require.True(t, ok)
-	assert.False(t, preview.hidden, "shown, it is previewed in its window")
+	assert.False(t, preview.Hidden, "shown, it is previewed in its window")
 }
 
 type statusTestPluginHandler struct {
@@ -2197,7 +2206,7 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 			})
 			m.quiesce()
 
-			var inbox *statusView
+			var inbox *idestatus.View
 			var inboxWin browser.Window
 			m.locked(func() {
 				require.NoError(t, m.commandProgramStatus())
@@ -2207,11 +2216,9 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 				content, err := inboxWin.Content()
 				require.NoError(t, err)
 				var ok bool
-				inbox, ok = content.(*statusView)
+				inbox, ok = content.(*idestatus.View)
 				require.True(t, ok)
-				i := slices.IndexFunc(inbox.entries, func(e statusEntry) bool { return e.uri.Equal(pr.uri) })
-				require.GreaterOrEqual(t, i, 0, "the program is listed")
-				inbox.selectAt(i)
+				require.True(t, inbox.Select(ws, pr.uri), "the program is listed")
 				m.Handle(tc.key)
 			})
 			m.quiesce()
@@ -2228,9 +2235,8 @@ func TestCommandProgramStatusClosesPrograms(t *testing.T) {
 
 			m.locked(func() {
 				tc.closed(t, &pr)
-				_, listed := m.status.status(ws, pr.uri)
-				listed = listed || slices.ContainsFunc(inbox.entries,
-					func(e statusEntry) bool { return e.uri.Equal(pr.uri) })
+				_, listed := m.status.Status(ws, pr.uri)
+				listed = listed || inbox.Select(ws, pr.uri)
 				assert.Equal(t, tc.stays, listed, "the row goes with the program")
 				assert.False(t, inboxWin.Closed(), "the inbox stays open")
 				win, err := focused.comp.Focus()
@@ -2354,7 +2360,7 @@ func TestWorkspaceBarStatusSeenFromTerminalWithoutTab(t *testing.T) {
 				t.Helper()
 				m.locked(func() {
 					sum, _ := m.workspaceStatus(slot)
-					_, listed := m.status.status(ws, pr.uri)
+					_, listed := m.status.Status(ws, pr.uri)
 					barIdx := slices.Index(m.barIdxToSlot, slot)
 					require.GreaterOrEqual(t, barIdx, 0)
 					if seen {
@@ -5442,11 +5448,20 @@ type recordingNotifications struct {
 	mu       sync.Mutex
 	inner    browserapi.Notifications
 	captured []capturedNote
+	updates  []capturedUpdate
 }
 
 type capturedNote struct {
 	level browserapi.NotificationLevel
 	msg   string
+}
+
+// capturedUpdate is an UpdateNotificationProgress call and whether it
+// found the notification.
+type capturedUpdate struct {
+	msg             string
+	progress, total int64
+	ok              bool
 }
 
 // feedAutoSaveSequence feeds the legacy handlertest sequence syntax used by
@@ -5493,7 +5508,17 @@ func (r *recordingNotifications) NotifyOnce(level browserapi.NotificationLevel,
 func (r *recordingNotifications) UpdateNotificationProgress(
 	id, message string, progress, total int64,
 ) error {
-	return r.inner.UpdateNotificationProgress(id, message, progress, total)
+	err := r.inner.UpdateNotificationProgress(id, message, progress, total)
+	r.mu.Lock()
+	r.updates = append(r.updates, capturedUpdate{msg: message, progress: progress, total: total, ok: err == nil})
+	r.mu.Unlock()
+	return err
+}
+
+func (r *recordingNotifications) updatesSnapshot() []capturedUpdate {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.updates)
 }
 
 func (r *recordingNotifications) snapshot() []capturedNote {
@@ -10497,32 +10522,32 @@ func TestRestoreExtensionTabs(t *testing.T) {
 			chat, ok := b.Tab(uri)
 			require.True(t, ok)
 			chat.AckStatus()
-			require.Len(t, m.status.items(), 2, "seen, a tab is still listed")
+			require.Len(t, m.status.Items(), 2, "seen, a tab is still listed")
 		})
 
 		reload(t, m)
 		m.locked(func() {
-			items := m.status.items()
+			items := m.status.Items()
 			require.Len(t, items, 1, "only the program whose tab came back is listed")
-			assert.Equal(t, ws, items[0].ws)
-			assert.Equal(t, uri, items[0].uri)
-			assert.Equal(t, "chat", items[0].name)
-			assert.Equal(t, "agent", items[0].app)
-			assert.Empty(t, items[0].status.Records, "it reported nothing since")
+			assert.Equal(t, ws, items[0].WS)
+			assert.Equal(t, uri, items[0].URI)
+			assert.Equal(t, "chat", items[0].Name)
+			assert.Equal(t, "agent", items[0].App)
+			assert.Empty(t, items[0].Status.Records, "it reported nothing since")
 		})
 
 		reload(t, m)
 		m.locked(func() {
-			require.Len(t, m.status.items(), 1, "it is saved again with the workspace")
+			require.Len(t, m.status.Items(), 1, "it is saved again with the workspace")
 			b := m.exHandler(m.focusHandler()).comp.Browser()
 			chat, ok := b.Tab(uri)
 			require.True(t, ok)
 			b.RemoveTab(chat)
-			assert.Empty(t, m.status.items(), "closed, its tab takes it away")
+			assert.Empty(t, m.status.Items(), "closed, its tab takes it away")
 		})
 		reload(t, m)
 		m.locked(func() {
-			assert.Empty(t, m.status.items(), "a closed tab does not come back")
+			assert.Empty(t, m.status.Items(), "a closed tab does not come back")
 		})
 	})
 
@@ -10565,8 +10590,8 @@ func TestRestoreExtensionTabs(t *testing.T) {
 	listing := func(m *testWorkspaceManagerHandler) []listed {
 		var ret []listed
 		m.locked(func() {
-			for _, it := range m.status.items() {
-				ret = append(ret, listed{it.ws.String(), it.uri.String(), it.app})
+			for _, it := range m.status.Items() {
+				ret = append(ret, listed{it.WS.String(), it.URI.String(), it.App})
 			}
 		})
 		return ret

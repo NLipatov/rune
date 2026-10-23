@@ -53,6 +53,7 @@ import (
 	"unstable.build/rune/internal/handler/command"
 	"unstable.build/rune/internal/ide/idedebug"
 	"unstable.build/rune/internal/ide/idelsp"
+	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/syntax"
 	"unstable.build/rune/internal/term/programstatus"
@@ -496,7 +497,7 @@ func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
 	}, vteConfig)
 	assert.True(t, cfg.tabStatusEnabled())
 	assert.Equal(t, browser.DefaultTabStatusConfig(), cfg.tabStatusConfig())
-	assert.Equal(t, defaultTabStatusNotifyConfig(), cfg.tabStatusNotifyConfig())
+	assert.Equal(t, idestatus.DefaultNotifyConfig(), cfg.tabStatusNotifyConfig())
 	assert.Equal(t, command.DefaultConfig().ShowManual, cfg.commandOverlayShowManual())
 	assert.Equal(t, command.DefaultConfig().ManualAttr, cfg.commandOverlayManualAttr())
 	assert.Zero(t, cfg.defaultAttr())
@@ -574,7 +575,7 @@ func TestTabStatusConfigProgress(t *testing.T) {
 }
 
 func TestStatusInboxStyle(t *testing.T) {
-	def := defaultStatusInboxStyle()
+	def := idestatus.DefaultInboxStyle()
 	attrKeys := []string{
 		"marker_attr", "selected_attr", "hover_attr", "workspace_attr", "workspace_highlight_attr",
 		"progress_attr", "progress_done_attr", "progress_remaining_attr", "progress_remaining_selected_attr",
@@ -589,7 +590,7 @@ func TestStatusInboxStyle(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		cfg     map[string]any
-		want    statusInboxStyle
+		want    idestatus.InboxStyle
 		wantErr []string
 	}{
 		{name: "defaults", cfg: map[string]any{}, want: def},
@@ -598,9 +599,9 @@ func TestStatusInboxStyle(t *testing.T) {
 			cfg: map[string]any{"browser": map[string]any{
 				"focus_tab_highlight_attr": map[string]any{"fg": "red", "bg": "navy"},
 			}},
-			want: func() statusInboxStyle {
+			want: func() idestatus.InboxStyle {
 				s := def
-				s.markerAttr = term.Attributes{Fg: term.ColorRed}
+				s.MarkerAttr = term.Attributes{Fg: term.ColorRed}
 				return s
 			}(),
 		},
@@ -610,9 +611,9 @@ func TestStatusInboxStyle(t *testing.T) {
 				"browser":        map[string]any{"focus_tab_highlight_attr": map[string]any{"fg": "red"}},
 				"program_status": map[string]any{"marker_attr": map[string]any{"bg": "navy"}},
 			},
-			want: func() statusInboxStyle {
+			want: func() idestatus.InboxStyle {
 				s := def
-				s.markerAttr = term.Attributes{Fg: term.ColorRed, Bg: term.ColorNavy}
+				s.MarkerAttr = term.Attributes{Fg: term.ColorRed, Bg: term.ColorNavy}
 				return s
 			}(),
 		},
@@ -636,33 +637,33 @@ func TestStatusInboxStyle(t *testing.T) {
 				"divider_attr":                     map[string]any{"fg": "olive"},
 				"placeholder_attr":                 map[string]any{"fg": "fuchsia"},
 			}},
-			want: func() statusInboxStyle {
+			want: func() idestatus.InboxStyle {
 				s := def
-				s.marker = '┃'
-				s.markerAttr = term.Attributes{Fg: term.ColorPurple, Bg: term.ColorRed}
-				s.selectedAttr = term.Attributes{Bg: term.ColorNavy}
-				s.hoverAttr = term.Attributes{Bg: term.ColorTeal}
-				s.workspaceAttr = term.Attributes{Fg: term.ColorBlue}
-				s.workspaceHighlightAttr = term.Attributes{Fg: term.ColorBlack}
-				s.progressBar = component.ProgressBarCharSet{Left: '╢', Filled: '░', Empty: '_', Right: '╟'}
-				s.progressAttr = term.Attributes{Bg: term.ColorMaroon}
-				s.progressDoneAttr = term.Attributes{Fg: term.ColorLime}
-				s.progressRemainingAttr = term.Attributes{Fg: term.ColorSilver}
-				s.progressRemainingSelectedAttr = term.Attributes{Fg: term.ColorWhite}
-				s.progressLabelAttr = term.Attributes{Fg: term.ColorAqua}
-				s.moreBelow = '↓'
-				s.moreBelowAttr = term.Attributes{Fg: term.ColorYellow}
-				s.dividerAttr = term.Attributes{Fg: term.ColorOlive}
-				s.placeholderAttr = term.Attributes{Fg: term.ColorFuchsia}
+				s.Marker = '┃'
+				s.MarkerAttr = term.Attributes{Fg: term.ColorPurple, Bg: term.ColorRed}
+				s.SelectedAttr = term.Attributes{Bg: term.ColorNavy}
+				s.HoverAttr = term.Attributes{Bg: term.ColorTeal}
+				s.WorkspaceAttr = term.Attributes{Fg: term.ColorBlue}
+				s.WorkspaceHighlightAttr = term.Attributes{Fg: term.ColorBlack}
+				s.ProgressBar = component.ProgressBarCharSet{Left: '╢', Filled: '░', Empty: '_', Right: '╟'}
+				s.ProgressAttr = term.Attributes{Bg: term.ColorMaroon}
+				s.ProgressDoneAttr = term.Attributes{Fg: term.ColorLime}
+				s.ProgressRemainingAttr = term.Attributes{Fg: term.ColorSilver}
+				s.ProgressRemainingSelectedAttr = term.Attributes{Fg: term.ColorWhite}
+				s.ProgressLabelAttr = term.Attributes{Fg: term.ColorAqua}
+				s.MoreBelow = '↓'
+				s.MoreBelowAttr = term.Attributes{Fg: term.ColorYellow}
+				s.DividerAttr = term.Attributes{Fg: term.ColorOlive}
+				s.PlaceholderAttr = term.Attributes{Fg: term.ColorFuchsia}
 				return s
 			}(),
 		},
 		{
 			name: "the same character all along the bar",
 			cfg:  map[string]any{"program_status": map[string]any{"progress_bar": "━━━━"}},
-			want: func() statusInboxStyle {
+			want: func() idestatus.InboxStyle {
 				s := def
-				s.progressBar = component.ProgressBarCharSet{Left: '━', Filled: '━', Empty: '━', Right: '━'}
+				s.ProgressBar = component.ProgressBarCharSet{Left: '━', Filled: '━', Empty: '━', Right: '━'}
 				return s
 			}(),
 		},
@@ -1855,13 +1856,13 @@ func TestConfigSetting(t *testing.T) {
 			return style
 		}(),
 	}, cfg.tabStatusConfig())
-	assert.Equal(t, tabStatusNotifyConfig{
-		states: map[programstatus.State]bool{
+	assert.Equal(t, idestatus.NotifyConfig{
+		States: map[programstatus.State]bool{
 			programstatus.Blocked: true,
 			programstatus.Error:   true,
 		},
-		interval: 5 * time.Second,
-		messages: true,
+		Interval: 5 * time.Second,
+		Messages: true,
 	}, cfg.tabStatusNotifyConfig())
 
 	expectedPrompt := browser.PromptConfig{
