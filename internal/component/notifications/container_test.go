@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/component/comptest"
 	"github.com/unstablebuild/rune-go-sdk/term"
@@ -535,4 +536,61 @@ func TestNotificationID(t *testing.T) {
 		c := New(&component.TestComponent{}, Config{Width: 10, AutoClose: 10 * time.Second})
 		assert.NotEqual(t, c.ID(LevelError, "test: 1"), c.ID(LevelError, "test: 2"))
 	})
+}
+
+func TestUpdateProgressFindsShownNotificationsOnly(t *testing.T) {
+	const width, height = 40, 15
+	click := func(x, y int) term.Event {
+		return term.Event{Type: term.EventMouse, Key: term.MouseLeft, MouseX: x, MouseY: y}
+	}
+	pin := func(c *Container, id string) { require.True(t, c.UpdateProgress(id, "", 1, 10)) }
+	for _, tc := range []struct {
+		name      string
+		autoClose time.Duration
+		do        func(c *Container, id string)
+		shown     bool
+	}{{
+		name:      "closed by a click",
+		autoClose: time.Hour,
+		do: func(c *Container, _ string) {
+			pos := c.vlist.Position()
+			_, handled := c.Handle(click(pos.X+1, pos.Y+1))
+			require.True(t, handled)
+		},
+	}, {
+		name:      "expired",
+		autoClose: 20 * time.Millisecond,
+		do:        func(*Container, string) { time.Sleep(200 * time.Millisecond) },
+	}, {
+		name:      "pinned, then all resumed",
+		autoClose: 20 * time.Millisecond,
+		do: func(c *Container, id string) {
+			pin(c, id)
+			c.ResumeAll()
+			time.Sleep(200 * time.Millisecond)
+		},
+		shown: true,
+	}, {
+		name:      "pinned, then a click outside resumes all",
+		autoClose: 20 * time.Millisecond,
+		do: func(c *Container, id string) {
+			pin(c, id)
+			c.Handle(click(0, height-1))
+			time.Sleep(200 * time.Millisecond)
+		},
+		shown: true,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := New(&component.TestComponent{Ch: 'X'}, Config{AutoClose: tc.autoClose, Width: 10})
+			t.Cleanup(func() { _ = c.Close() })
+			c.Resize(width, height)
+			id := c.Notify(LevelInfo, "hello")
+			tc.do(c, id)
+			c.mu.RLock()
+			shown := c.vlist.C.Len()
+			c.mu.RUnlock()
+			assert.Equal(t, tc.shown, shown == 1)
+			assert.Equal(t, tc.shown, c.UpdateProgress(id, "still there", 2, 10))
+		})
+	}
 }

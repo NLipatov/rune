@@ -406,6 +406,14 @@ func (n *Container) Close() error {
 func (n *Container) closeNotification(el component.ListNode) {
 	el.Value().(*component.Span).Content().(*notificationComp).cancel()
 	n.vlist.C.Remove(&el)
+	// Closed by a click, it must not be found by id anymore, or
+	// UpdateProgress would update what nobody sees.
+	for id, t := range n.notifications {
+		if t.el.Value() == el.Value() {
+			delete(n.notifications, id)
+			break
+		}
+	}
 }
 
 func (n *Container) pauseNotification(el component.ListNode) {
@@ -422,6 +430,9 @@ func (n *Container) pauseNotification(el component.ListNode) {
 
 func (n *Container) resumeNotification(t *notificationTicket, id string) {
 	comp := t.el.Value().(*component.Span).Content().(*notificationComp)
+	if comp.manualProgressTotal != 0 {
+		return // pinned by UpdateProgress until progress == total
+	}
 	if comp.pausedAt.Equal(time.Time{}) {
 		return // resume is idempotent
 	}
