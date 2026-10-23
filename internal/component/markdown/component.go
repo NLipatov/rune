@@ -251,8 +251,12 @@ func (c *Component) BlockHeights() []int {
 
 // LinkAt returns link information at the given screen
 // coordinates relative to the component's viewport.
-// Returns nil if no link is found at that position.
+// Returns nil if no link is found at that position, which is always the
+// case before the component is first resized to a width.
 func (c *Component) LinkAt(x, y int) *LinkInfo {
+	if !c.laidOut() {
+		return nil
+	}
 	docY := y + c.offset
 	blockY := 0
 	for i, blk := range c.blocks {
@@ -275,8 +279,12 @@ func (c *Component) linkInBlock(blk block, x, relY int) *LinkInfo {
 }
 
 // SpanAt returns the text and URL at the given screen
-// coordinates relative to the component's viewport.
+// coordinates relative to the component's viewport. It finds nothing
+// before the component is first resized to a width.
 func (c *Component) SpanAt(x, y int) (text, url string, ok bool) {
+	if !c.laidOut() {
+		return
+	}
 	docY := y + c.offset
 	blockY := 0
 	for i, blk := range c.blocks {
@@ -352,8 +360,7 @@ func (c *Component) MarkCodeBlockCopied(pos term.Coordinates) (found bool) {
 }
 
 func (c *Component) eachCopyTarget(fn func(*codeBlock, CodeBlockCopyTarget)) {
-	// Heights are only computed once the component has a width.
-	if len(c.blockHeights) != len(c.blocks) {
+	if !c.laidOut() {
 		return
 	}
 	y := -c.offset
@@ -369,6 +376,13 @@ func (c *Component) eachCopyTarget(fn func(*codeBlock, CodeBlockCopyTarget)) {
 		}
 		y += c.blockHeights[i]
 	}
+}
+
+// laidOut reports whether block heights are known. They are only
+// computed once the component has a width, and content can be queried
+// by position before its owner gets around to resizing it.
+func (c *Component) laidOut() bool {
+	return len(c.blockHeights) == len(c.blocks)
 }
 
 // SeekToAnchor scrolls to the header with the given

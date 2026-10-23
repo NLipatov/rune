@@ -947,6 +947,28 @@ func TestLinkAtOnSpacingRow(t *testing.T) {
 	assert.Nil(t, md.LinkAt(0, 3), "no link on the blank row below the link")
 }
 
+func TestPositionQueriesBeforeResize(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		resize func(*Component)
+	}{
+		{name: "never resized", resize: func(*Component) {}},
+		{name: "resized to no width", resize: func(md *Component) { md.Resize(0, 10) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md, err := New("[click me](http://example.com)\n\nmore")
+			require.NoError(t, err)
+			tc.resize(md)
+
+			require.NotPanics(t, func() {
+				assert.Nil(t, md.LinkAt(0, 0))
+				_, _, ok := md.SpanAt(0, 0)
+				assert.False(t, ok)
+			})
+		})
+	}
+}
+
 func TestSearchFindsMatches(t *testing.T) {
 	md, err := New("hello world hello")
 	require.NoError(t, err)

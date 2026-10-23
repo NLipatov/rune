@@ -2607,3 +2607,34 @@ func printOverlayGolden(t *testing.T, h tui.Handler, w *term.StringWriter, step 
 	require.NoError(t, w.Flush())
 	fmt.Printf("@@@STEP %s %d\n%s\n@@@END\n", t.Name(), step, w.String())
 }
+
+func TestHandlerPointerOverReplyStreamedSinceLastDraw(t *testing.T) {
+	const width, height = 40, 12
+	interrupt := make(chan struct{}, 1)
+	comp := NewComponent(ComponentConfig{OnLinkClick: func(*url.URL) bool { return true }})
+	h, tx, _ := Handler(context.Background(), new(sync.Mutex), comp,
+		term.FuncInterrupter(func(context.Context) error {
+			select {
+			case interrupt <- struct{}{}:
+			default:
+			}
+			return nil
+		}))
+	defer close(tx)
+	h.Resize(width, height)
+	h.Draw(term.NewStringWriter(width, height))
+
+	tx <- MessageEvent{Type: MessageEventText, Text: "I"}
+	<-interrupt
+
+	require.NotPanics(t, func() {
+		for y := range height {
+			h.Handle(mouseEv(0, y, 0))
+		}
+	})
+	w := term.NewStringWriter(width, height)
+	h.Draw(w)
+	at := findText(t, w, width, "I")
+	_, handled := h.Handle(mouseEv(at.X, at.Y, 0))
+	assert.False(t, handled)
+}
