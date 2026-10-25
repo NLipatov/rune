@@ -202,7 +202,7 @@ func newBootstrapForTest(
 		dataDir, configPath, "" /* workspace */, "", /* shellRCDir */
 		hostenv.New(dataDir, ""), nil, /* filenames */
 		nil /* launchCmd */, ide.FuncExtensionsRunner(testE2EExtensionsRunner),
-		mu, publishEvent, nil /* cellPixelSize */, nil, /* setAltModifier */
+		mu, publishEvent, nil, /* cellPixelSize */
 		func(*url.URL) error { return nil }, clipboard.NewInMemory(),
 		installBackupDir, rootCfg, pkgtrust.NewStore(dataDir, nil),
 	)

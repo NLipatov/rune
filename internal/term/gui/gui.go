@@ -790,9 +790,21 @@ func (g *GUI) resize(width, height int, deviceScale float64) {
 	g.needsDraw = true
 }
 
-// SetAltModifier sets the reserved Alt key. Safe from any goroutine.
+// SetAltModifier selects which Alt key produces layout characters. It must
+// be called before Run or on the event loop, such as from Handle or a
+// UserFunc.
 func (g *GUI) SetAltModifier(modifier AltModifier) {
 	g.input.setAltModifier(modifier)
+}
+
+// SetKeyMapping replaces the key remapping table applied to GUI input before
+// events reach the handler. The map is keyed by the term.KeyComb a physical
+// key would naturally produce, including keys such as CapsLock that produce
+// no event unless remapped, and maps it to the combination to deliver
+// instead. A nil map removes every remap. Like SetAltModifier, it must be
+// called before Run or on the event loop.
+func (g *GUI) SetKeyMapping(m map[term.KeyComb]term.KeyComb) {
+	g.input.setKeyMapping(m)
 }
 
 // CellPixelSize reports the cell pitch in device pixels, which is what

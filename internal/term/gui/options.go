@@ -98,25 +98,6 @@ func WithBackgroundBlur(radius int) Option {
 	}
 }
 
-// WithKeyMapping installs a key remapping table applied to GUI input before
-// events reach the event loop. The map is keyed by the term.KeyComb a physical
-// key would naturally produce (including synthetic physical keys such as
-// CapsLock) and maps it to the target combination to deliver instead.
-func WithKeyMapping(m map[term.KeyComb]term.KeyComb) Option {
-	return func(g *GUI) error {
-		g.input.setKeyMapping(m)
-		return nil
-	}
-}
-
-// WithAltModifier selects which Alt key produces layout characters.
-func WithAltModifier(modifier AltModifier) Option {
-	return func(g *GUI) error {
-		g.input.setAltModifier(modifier)
-		return nil
-	}
-}
-
 // WithSize sets the initial width and height of the window in pixels.
 func WithSize(width, height int) Option {
 	return func(g *GUI) error {

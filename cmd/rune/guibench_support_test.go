@@ -266,7 +266,7 @@ func newGUIBenchSession(tb testing.TB, cfg guiBenchConfig) *guiBenchSession {
 		s.dataDir, configPath, s.workDir, "", /* shellRCDir */
 		hostenv.New(s.dataDir, ""), files,
 		nil /* launchCmd */, ide.FuncExtensionsRunner(testE2EExtensionsRunner),
-		s.mu, publishEvent, cellPixelSize, nil, /* setAltModifier */
+		s.mu, publishEvent, cellPixelSize,
 		func(*url.URL) error { return nil }, clipboard.NewInMemory(),
 		s.dataDir /* installBackupDir */, rootCfg,
 		pkgtrust.NewStore(s.dataDir, nil),

@@ -180,6 +180,8 @@ model on Linux.
 
 ## Notes
 
+- When you pick the vim or helix preset, first-run setup offers to map
+  `<capslock>` to `<esc>` and writes the entry for you.
 - The mapping is read once at startup. Edit your config and restart Rune to
   pick up changes.
 - Invalid entries (an unparseable source or target, or a non-string target) are

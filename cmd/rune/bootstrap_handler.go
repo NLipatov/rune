@@ -75,7 +75,6 @@ type bootstrapHandler struct {
 	mu                *sync.Mutex
 	publishEvent      func(term.Event) bool
 	cellPixelSize     func() (int, int)
-	setAltModifier    func(gui.AltModifier)
 	openBrowser       func(*url.URL) error
 	clip              clipboard.Register
 	installBackupDir  string
@@ -96,6 +95,7 @@ type bootstrapHandler struct {
 	chosenEditor      string
 	chosenMeta        keymeta.Meta
 	chosenAltModifier gui.AltModifier
+	chosenCapsLockEsc bool
 	telemetryEnabled  bool
 	prompter          bootstrapPrompter
 	// goos overrides runtime.GOOS for the OS-specific prompts; tests set it.
@@ -119,7 +119,6 @@ func newBootstrapHandler(
 	mu *sync.Mutex,
 	publishEvent func(term.Event) bool,
 	cellPixelSize func() (int, int),
-	setAltModifier func(gui.AltModifier),
 	openBrowser func(*url.URL) error,
 	clip clipboard.Register,
 	installBackupDir string,
@@ -140,7 +139,6 @@ func newBootstrapHandler(
 		mu:               mu,
 		publishEvent:     publishEvent,
 		cellPixelSize:    cellPixelSize,
-		setAltModifier:   setAltModifier,
 		openBrowser:      openBrowser,
 		clip:             clip,
 		installBackupDir: installBackupDir,
@@ -503,6 +501,18 @@ func (b *bootstrapHandler) setupConfiguredIDE(
 	scheduleCrashReportCheck(i, client, b.dataDir, b.scheduleNextTick)
 
 	var errs []error
+	// Startup and the end of first-run setup both land here, so the GUI's
+	// input settings always come from the config this IDE was built from.
+	guiCfg, ok, err := getGUIConfig(i.Config())
+	if err != nil {
+		errs = append(errs, err)
+	}
+	if !ok {
+		guiCfg = config.NopConfig()
+	}
+	b.g.SetKeyMapping(getGUIKeyMapping(i.Browser(), guiCfg))
+	b.g.SetAltModifier(getGUIAltModifier(i.Browser(), guiCfg))
+
 	if err := subscribeCommands(b.g, client, i,
 		b.transparentWindow, b.configPath, b.launchCmd); err != nil {
 		errs = append(errs, fmt.Errorf("subscribe to GUI commands: %w", err))
@@ -847,7 +857,8 @@ func (b *bootstrapHandler) recordRecentOpen(command string, args ...string) {
 }
 
 func (b *bootstrapHandler) writePresetConfig() error {
-	body, err := renderPreset(b.chosenEditor, b.chosenMeta, b.telemetryEnabled, b.chosenAltModifier)
+	body, err := renderPreset(b.chosenEditor, b.chosenMeta, b.telemetryEnabled,
+		b.chosenAltModifier, b.chosenCapsLockEsc)
 	if err != nil {
 		return fmt.Errorf("render preset: %w", err)
 	}
@@ -946,9 +957,17 @@ var (
 	bootstrapTelemetryKeys = []term.KeyComb{
 		{Ch: 'y'}, {Ch: 'n'},
 	}
+	bootstrapCapsLockKeys = []term.KeyComb{
+		{Ch: 'y'}, {Ch: 'n'},
+	}
 	bootstrapAltModifierKeys = []term.KeyComb{
 		{Ch: 'r'}, {Ch: 'l'}, {Ch: 'n'},
 	}
+)
+
+const (
+	optCapsLockYes = " yes "
+	optCapsLockNo  = " no "
 )
 
 const (
@@ -1022,17 +1041,62 @@ func (b *bootstrapHandler) openVimPrompt() {
 			guard.onSelect(func(_ int, option string) {
 				b.chosenEditor = optionToChoice(option)
 				b.chosenMeta = keymeta.Super
-				if len(b.metaOptions()) > 1 {
-					b.openMetaPrompt()
-					return
+				switch b.chosenEditor {
+				case editorVim, editorHelix:
+					b.openCapsLockPrompt()
+				default:
+					b.openPromptAfterEditorSetup()
 				}
-				if b.hostOS() == "darwin" {
-					b.openAltModifierPrompt()
-					return
-				}
-				b.openTelemetryPrompt()
 			}),
 			guard.onClose(b.openVimPrompt),
+		),
+	)
+}
+
+// openPromptAfterEditorSetup opens the prompt that follows the editor's own
+// questions: the meta key prompt when the host offers more than one meaning
+// of <meta>, else the Option key prompt on macOS, else the telemetry prompt.
+func (b *bootstrapHandler) openPromptAfterEditorSetup() {
+	if len(b.metaOptions()) > 1 {
+		b.openMetaPrompt()
+		return
+	}
+	if b.hostOS() == "darwin" {
+		b.openAltModifierPrompt()
+		return
+	}
+	b.openTelemetryPrompt()
+}
+
+func (b *bootstrapHandler) openCapsLockPrompt() {
+	name := "Vim"
+	if b.chosenEditor == editorHelix {
+		name = "Helix"
+	}
+	msg := "## Use Caps Lock as Escape?\n\n" +
+		name + " sends you back to normal mode with the `<esc>` key, so you will press it " +
+		"constantly. Caps Lock sits on the home row, and many " + name + " users " +
+		"turn it into a second Escape key.\n\n" +
+		"This applies inside Rune only and leaves your system settings alone. " +
+		"You can change it any time with `gui.key_mapping` in your config.\n\n" +
+		"**Already mapped Caps Lock to Escape in your system settings?** Press Caps Lock " +
+		"now to check: if this prompt closes, Rune sees it as `<esc>` and you're " +
+		"good to go. If nothing happens and you don't already use Caps Lock as " +
+		"another key, such as Ctrl, pick **yes**.\n\n" +
+		"**Should Caps Lock act as the Escape key?**"
+	guard := b.promptGuard()
+	b.prompt(
+		msg,
+		[]string{optCapsLockYes, optCapsLockNo},
+		bootstrapCapsLockKeys,
+		sdkhandler.FuncPromptHandler(
+			guard.onSelect(func(_ int, option string) {
+				b.chosenCapsLockEsc = option == optCapsLockYes
+				b.openPromptAfterEditorSetup()
+			}),
+			// Esc closes the prompt, which is how a working system mapping
+			// answers it, so dismissing moves on and leaves Caps Lock alone.
+			guard.onClose(b.openPromptAfterEditorSetup),
 		),
 	)
 }
@@ -1126,10 +1190,6 @@ func (b *bootstrapHandler) openAltModifierPrompt() {
 				default:
 					b.chosenAltModifier = gui.AltModifierNone
 				}
-				// The GUI predates this config, so tell it directly.
-				if b.setAltModifier != nil {
-					b.setAltModifier(b.chosenAltModifier)
-				}
 				b.openTelemetryPrompt()
 			}),
 			guard.onClose(b.openAltModifierPrompt),
@@ -1165,10 +1225,11 @@ func (b *bootstrapHandler) openTelemetryPrompt() {
 	)
 }
 
-// guardedPromptChain re-opens a bootstrap prompt that was closed
-// without a user selection (Esc, mouse dismissal, …). The SDK
-// invokes OnSelect synchronously before OnClose, so "advanced"
-// reliably distinguishes the two paths.
+// guardedPromptChain runs a bootstrap prompt's dismissal callback,
+// usually one that re-opens it, when the prompt was closed without a
+// user selection (Esc, mouse dismissal, …). The SDK invokes OnSelect
+// synchronously before OnClose, so "advanced" reliably distinguishes
+// the two paths.
 type guardedPromptChain struct {
 	advanced bool
 	closing  func() bool
@@ -1181,10 +1242,10 @@ func (g *guardedPromptChain) onSelect(next func(int, string)) func(int, string) 
 	}
 }
 
-func (g *guardedPromptChain) onClose(reopen func()) func() error {
+func (g *guardedPromptChain) onClose(dismissed func()) func() error {
 	return func() error {
 		if !g.advanced && !g.closing() {
-			reopen()
+			dismissed()
 		}
 		return nil
 	}

@@ -751,12 +751,6 @@ func runGUI(
 		return g.CellPixelSize()
 	}
 
-	setAltModifier := func(modifier gui.AltModifier) {
-		if g := guiRef.Load(); g != nil {
-			g.SetAltModifier(modifier)
-		}
-	}
-
 	// We load config twice, but it's better than the race conditions caused
 	// by env var resolution order.
 	rootCfg, envErr := ide.Config(*flagConfigPath, runeDefaultConfig())
@@ -785,7 +779,7 @@ func runGUI(
 	root, err := newBootstrapHandler(
 		*flagDataPath, *flagConfigPath,
 		*flagWorkspace, shellRCDir, host, filenames,
-		launchCmd, runner, mu, publishEvent, cellPixelSize, setAltModifier,
+		launchCmd, runner, mu, publishEvent, cellPixelSize,
 		func(u *url.URL) error { return extbrowser.Browse(u) },
 		text.NewAsyncSystemClipboard(), os.TempDir(), rootCfg, trust,
 	)
@@ -894,8 +888,6 @@ func buildGUIOptions(
 		gui.WithBackgroundBlur(getGUIBackgroundBlur(b, guiCfg)),
 		gui.WithLocker(mu),
 		gui.WithPrintFPS(printFPS),
-		gui.WithKeyMapping(getGUIKeyMapping(b, guiCfg)),
-		gui.WithAltModifier(getGUIAltModifier(b, guiCfg)),
 		gui.WithCloseRequestEvent(quitEvent(appMenuKeyBindings(cfg))),
 	}
 }

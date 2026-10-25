@@ -16,11 +16,13 @@ gui:
 #   font_size: 13
 #   window_opacity: {fg: 1, bg: 1}
 #   window_blur_radius: 100
-#   # Remap physical keys before they reach the editor (see the key-mapping
-#   # docs). Both sides use the command key-binding syntax. <capslock>,
-#   # <numlock>, <scrolllock> and <menu> only act when remapped here.
-#   key_mapping:
-#     "<capslock>": "<esc>"
+  # Remap physical keys before they reach the editor (see the key-mapping
+  # docs). Both sides use the command key-binding syntax. <capslock>,
+  # <numlock>, <scrolllock> and <menu> only act when remapped here.[[if .CapsLockEscape]]
+  key_mapping:
+    "<capslock>": "<esc>"  # CapsLock acts as Escape[[else]]
+  # key_mapping:
+  #   "<capslock>": "<esc>"[[end]]
 
 # ---------------------------------------------------------------------------
 # Editor
