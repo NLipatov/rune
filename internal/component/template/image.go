@@ -38,9 +38,10 @@ const ImageField = "Image"
 // The values of the image directives an ImageField element leaves out.
 const (
 	// DefaultImageAlt is a cross from the Nerd Fonts Font Awesome set.
-	DefaultImageAlt   = "\uf00d"
-	DefaultImageWidth = 2
-	DefaultImageTTL   = 24 * time.Hour
+	DefaultImageAlt    = "\uf00d"
+	DefaultImageWidth  = 2
+	DefaultImageTTL    = 24 * time.Hour
+	DefaultImageMaxCut = 1
 )
 
 // ZIndexBackground is the lowest ZIndex of an image drawn over the
@@ -72,6 +73,11 @@ const (
 // around them, up to the edges of the screen. Reserve defaults to the
 // width when the width is a number of cells, and to 0 when it is a
 // percentage.
+//
+// A layout too narrow for its elements cuts off its end, which pushes
+// the elements there past it, and the image with them. The image is
+// hidden once its element would end more than MaxCut cells past the end
+// of the layout, as there is no room to show it where it belongs.
 //
 // ZIndex stacks the image with the layout's text and the other images,
 // as in the kitty graphics protocol: an image with a ZIndex of 0 or more
@@ -105,6 +111,9 @@ type Image struct {
 	ZIndex int32
 	// Overflow lets the image extend past the layout's surroundings.
 	Overflow bool
+	// MaxCut is how many cells the layout may cut off the element before
+	// the image is hidden.
+	MaxCut int
 	// Alt is drawn centered over the image's cells when the image cannot
 	// be shown. An empty Alt draws nothing.
 	Alt string
@@ -128,12 +137,12 @@ func (img Image) Layer() term.ImageLayer {
 // Validate reports the first field of img out of its range, naming the
 // directive that sets it. URI must be accepted by imageuri.ValidateURI.
 // Width is from 1 to MaxImageCells cells, or from 1% to 100%. Height is
-// from 1 to MaxImageCells, and Reserve from 0 to MaxImageCells. XOffset
-// and YOffset are at most MaxImageCells cells either way, or 100% for
-// XOffset, and the pixel offsets at most MaxImagePixelOffset either way.
-// Fit is term.ImageFitContain or term.ImageFitFill. Alt is valid UTF-8,
-// and its only control characters are newlines, which break it into
-// lines. TTL is not negative.
+// from 1 to MaxImageCells, and Reserve and MaxCut from 0 to
+// MaxImageCells. XOffset and YOffset are at most MaxImageCells cells
+// either way, or 100% for XOffset, and the pixel offsets at most
+// MaxImagePixelOffset either way. Fit is term.ImageFitContain or
+// term.ImageFitFill. Alt is valid UTF-8, and its only control characters
+// are newlines, which break it into lines. TTL is not negative.
 func (img Image) Validate() error {
 	if err := imageuri.ValidateURI(img.URI); err != nil {
 		return fmt.Errorf("src: %w", err)
@@ -162,6 +171,9 @@ func (img Image) Validate() error {
 	}
 	if img.Fit != term.ImageFitContain && img.Fit != term.ImageFitFill {
 		return fmt.Errorf("fit must be contain or fill, got %d", img.Fit)
+	}
+	if err := checkRange("max_cut", img.MaxCut, 0, cells); err != nil {
+		return err
 	}
 	if !utf8.ValidString(img.Alt) || strings.ContainsFunc(img.Alt, func(r rune) bool {
 		return r != '\n' && unicode.IsControl(r)
@@ -213,7 +225,7 @@ func (l Length) Cells(total int) int {
 var imageDirectives = map[string]struct{}{
 	"src": {}, "width": {}, "height": {}, "reserve": {},
 	"x_offset": {}, "y_offset": {}, "x_pixel_offset": {}, "y_pixel_offset": {},
-	"fit": {}, "z_index": {}, "overflow": {}, "alt": {}, "ttl": {},
+	"fit": {}, "z_index": {}, "overflow": {}, "max_cut": {}, "alt": {}, "ttl": {},
 }
 
 type imageBuilder struct {
@@ -225,6 +237,7 @@ func newImageBuilder() *imageBuilder {
 	return &imageBuilder{img: Image{
 		Width:  Length{N: DefaultImageWidth},
 		Height: 1,
+		MaxCut: DefaultImageMaxCut,
 		Fit:    term.ImageFitContain,
 		Alt:    DefaultImageAlt,
 		TTL:    DefaultImageTTL,
@@ -270,6 +283,8 @@ func (b *imageBuilder) apply(name string, args []parse.Node) (err error) {
 			return fmt.Errorf("%s takes no arguments", name)
 		}
 		b.img.Overflow = true
+	case "max_cut":
+		b.img.MaxCut, err = intArg(name, args)
 	case "alt":
 		b.img.Alt, err = stringArg(name, args)
 	case "ttl":

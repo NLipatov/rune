@@ -174,6 +174,7 @@ func TestImageElementLiterals(t *testing.T) {
 			el := newImageElementWith(t, tt.tmpl, imageSpec(t, func(img *template.Image) {
 				img.URI += ".missing"
 				img.Width, img.Reserve, img.Alt = template.Length{N: 1}, tt.reserve, "@"
+				img.MaxCut = template.MaxImageCells
 			}), irq)
 			w, h := el.Dimensions()
 			assert.Equal(t, tt.wantSize, [2]int{w, h}, "dimensions")
@@ -305,16 +306,19 @@ func TestPlaceImages(t *testing.T) {
 		{
 			name:   "follows elements cut to the width left",
 			before: "abcdef", width: 4, total: 20, rows: 3,
+			spec:     func(img *template.Image) { img.MaxCut = cells },
 			expected: at(3, 2, 4, 1),
 		},
 		{
 			name:   "follows elements cut to no width",
 			before: "abc", width: 0, total: 20, rows: 3,
+			spec:     func(img *template.Image) { img.MaxCut = cells },
 			expected: at(-1, 2, 4, 1),
 		},
 		{
 			name:   "takes a negative width for no width",
 			before: "abc", width: -5, total: 20, rows: 3,
+			spec:     func(img *template.Image) { img.MaxCut = cells },
 			expected: at(-1, 2, 4, 1),
 		},
 		{
@@ -561,6 +565,53 @@ func TestPlaceImagesHidesImages(t *testing.T) {
 	}
 }
 
+func TestPlaceImagesHidesImagesTheBarCutsOff(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	tests := []struct {
+		name string
+		// before and after are laid out around the image element "<%s>",
+		// which takes up 4 cells.
+		before, after string
+		width, maxCut int
+		shown         bool
+	}{
+		{name: "is shown when the bar fits it", before: "abc", width: 7, shown: true},
+		{name: "is shown when the bar cuts max_cut of its cells", before: "abc", width: 6, maxCut: 1, shown: true},
+		{name: "is hidden when the bar cuts more than max_cut of its cells", before: "abc", width: 5, maxCut: 1},
+		{name: "is hidden when the bar cuts any of its cells at no max_cut", before: "abc", width: 6},
+		{name: "is hidden when the bar cuts all of its cells", before: "abc", width: 3, maxCut: 3},
+		{name: "is hidden past the elements the bar cuts", before: "abcdefgh", width: 6, maxCut: 4},
+		{name: "is hidden in a bar with a negative width", before: "abc", width: -5, maxCut: 6},
+		{name: "is shown when the bar cuts only what follows it", before: "abc", after: "defgh", width: 7, shown: true},
+		{name: "is shown in no width at the most max_cut", before: "abc", maxCut: template.MaxImageCells, shown: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			irq := make(interrupts, 1)
+			el := newImageElementWith(t, "<%s>", imageSpec(t, func(img *template.Image) {
+				img.MaxCut = tt.maxCut
+			}), irq)
+			items := []component.Floating{
+				component.NewString(tt.before), el, component.NewString(tt.after),
+			}
+			template.PlaceImages(items, 0, 20, 20, 3)
+			drawLoaded(t, el, false, irq)
+
+			template.PlaceImages(items, 0, tt.width, 20, 3)
+			if tt.shown {
+				rec := drawLoaded(t, el, false, irq)
+				assert.Len(t, rec.images, 1)
+				return
+			}
+			rec := &recorder{}
+			el.DrawImage(rec, false)
+			assert.Empty(t, rec.images)
+			assert.Zero(t, rec.cells)
+		})
+	}
+}
+
 func TestPlaceImagesWalksTheBar(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
@@ -630,7 +681,7 @@ func TestPlaceImagesWalksTheBar(t *testing.T) {
 				}
 				irq := make(interrupts, 1)
 				el := newImageElementWith(t, it.tmpl, imageSpec(t, func(img *template.Image) {
-					img.Width, img.Reserve = template.Length{N: 1}, it.reserve
+					img.Width, img.Reserve, img.MaxCut = template.Length{N: 1}, it.reserve, template.MaxImageCells
 				}), irq)
 				items, imgs, irqs = append(items, el), append(imgs, el), append(irqs, irq)
 			}
@@ -1021,6 +1072,7 @@ func imageSpec(t *testing.T, fn func(*template.Image)) template.Image {
 		Width:   template.Length{N: 4},
 		Height:  1,
 		Reserve: 2,
+		MaxCut:  template.DefaultImageMaxCut,
 		Fit:     term.ImageFitFill,
 		Alt:     template.DefaultImageAlt,
 		TTL:     time.Hour,

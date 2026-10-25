@@ -68,6 +68,7 @@ func TestParseStatusBarLayout(t *testing.T) {
 		Width:   template.Length{N: 2},
 		Height:  1,
 		Reserve: 2,
+		MaxCut:  template.DefaultImageMaxCut,
 		Fit:     term.ImageFitContain,
 		Alt:     template.DefaultImageAlt,
 		TTL:     24 * time.Hour,
@@ -166,7 +167,7 @@ func TestParseStatusBarLayout(t *testing.T) {
 					Type: StatusBarImage, Template: "%s",
 					Image: template.Image{
 						URI: hud.URI, Width: template.Length{N: 4}, Height: 1, Reserve: 4,
-						Fit: hud.Fit, ZIndex: -1, Alt: hud.Alt, TTL: hud.TTL,
+						MaxCut: hud.MaxCut, Fit: hud.Fit, ZIndex: -1, Alt: hud.Alt, TTL: hud.TTL,
 					},
 				},
 			},

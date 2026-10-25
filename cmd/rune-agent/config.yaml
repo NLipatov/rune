@@ -128,12 +128,14 @@ extensions:
         #                   the layout on ties
         #   overflow        extends it over the windows, frames and bars
         #                   around the chat; floating windows still cover it
+        #   max_cut         cells a bar too narrow for it may push it out
+        #                   of the bar before it is hidden (1)
         #   alt             drawn over the text when the image can't be
         #                   shown ("" for nothing); pixel offsets don't
         #                   move it
         #   ttl             how long a download is reused ("24h")
-        # Sizes and cell offsets are at most 4096 and pixel offsets at most
-        # 65536, offsets in either direction; alt takes no control
+        # Sizes, cell offsets and max_cut are at most 4096 and pixel offsets
+        # at most 65536, offsets in either direction; alt takes no control
         # characters but newlines.
         # A badge after the model, nudged 3 pixels up:
         #   {{ .Model | fg "white" }}  {{ .Image | src "file:///path/to/logo.png" | y_pixel_offset -3 }}

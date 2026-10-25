@@ -242,6 +242,26 @@ second line
 third line              
                         `,
 		},
+		{
+			name:   "is drawn when the bar cuts max_cut of its cells",
+			layout: `{{ .Status }} 0123456789abc{{ .ShiftRight }}{{ .Image | src "%s" | width 4 }}]`,
+			images: true,
+			expected: `
+first line              
+second line             
+third line              
+NORMAL 0123456789ab@@   `,
+		},
+		{
+			name:   "is hidden when the bar cuts more than max_cut of its cells",
+			layout: `{{ .Status }} 0123456789abcdef{{ .ShiftRight }}{{ .Image | src "%s" | width 4 }}]`,
+			images: true,
+			expected: `
+first line              
+second line             
+third line              
+NORMAL 0123456789abcdef `,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

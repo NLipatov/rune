@@ -461,9 +461,12 @@ The element takes up `reserve` cells in the row, and the picture is centered
 on the first of them, or on the next element's first cell when it reserves
 none. The bar is the chat's last row, so a picture taller than one row
 extends over the conversation above it, and whatever falls outside the chat
-is cut off unless the picture overflows. Images never drop out of a narrow
-row. With `rune --tui`, which cannot draw pictures, the `alt` text is drawn
-instead.
+is cut off unless the picture overflows. Images do not drop out of a narrow
+row with the other elements. When even that is not enough and the end of the
+row is cut off, the elements there are pushed out of it, and a picture is
+hidden once its element is pushed out by more than `max_cut` cells, as there is
+no room left to show it where it belongs. With `rune --tui`, which cannot draw
+pictures, the `alt` text is drawn instead.
 
 | Directive | Default | What it does |
 | --- | --- | --- |
@@ -477,11 +480,12 @@ instead.
 | `fit` | `contain` | `contain` keeps the picture's proportions, `fill` stretches it over its cells. |
 | `z_index` | `0` | Stacking, as in the kitty graphics protocol: `0` or more draws over the text, negative under it, and under `-1073741824` under the backgrounds too. Where pictures overlap, the higher one is on top, and the later one in the layout on ties. |
 | `overflow` | off | Lets the picture extend past the chat, over the windows, frames and bars around it. Floating windows still cover it. |
+| `max_cut` | `1` | Cells the element may be pushed out of a row too narrow for it before the picture is hidden. `0` hides it as soon as the row cuts the element. |
 | `alt` | a cross | Drawn over the picture's cells when it cannot be shown. `""` draws nothing. Pixel offsets do not move it. |
 | `ttl` | `24h` | How long a downloaded picture is reused before it is fetched again. |
 
-Sizes and cell offsets are at most 4096 cells, and pixel offsets at most 65536
-pixels, offsets in either direction. The `alt` text takes no control
+Sizes, cell offsets and `max_cut` are at most 4096 cells, and pixel offsets at
+most 65536 pixels, offsets in either direction. The `alt` text takes no control
 characters except newlines, which break it into lines. Control characters in
 the literals around the picture, such as tabs, are drawn as spaces.
 

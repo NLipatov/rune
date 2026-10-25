@@ -36,6 +36,7 @@ func TestParseAction(t *testing.T) {
 		Width:   template.Length{N: 2},
 		Height:  1,
 		Reserve: 2,
+		MaxCut:  template.DefaultImageMaxCut,
 		Fit:     term.ImageFitContain,
 		Alt:     template.DefaultImageAlt,
 		TTL:     24 * time.Hour,
@@ -67,7 +68,7 @@ func TestParseAction(t *testing.T) {
 			name: "an image with every directive",
 			action: `.Image | src "https://example.com/a.png" | width 6 | height 3 | ` +
 				`reserve 4 | x_offset -2 | y_offset 1 | x_pixel_offset 5 | y_pixel_offset -3 | fit "fill" | ` +
-				`z_index -3 | overflow | alt "logo" | ttl "1h30m" | bg "navy"`,
+				`z_index -3 | overflow | max_cut 3 | alt "logo" | ttl "1h30m" | bg "navy"`,
 			want: template.Action{
 				Field:      "Image",
 				Attributes: term.Attributes{Bg: term.ColorNavy},
@@ -83,6 +84,7 @@ func TestParseAction(t *testing.T) {
 					Fit:           term.ImageFitFill,
 					ZIndex:        -3,
 					Overflow:      true,
+					MaxCut:        3,
 					Alt:           "logo",
 					TTL:           90 * time.Minute,
 				},
@@ -197,6 +199,20 @@ func TestParseAction(t *testing.T) {
 			action: `.Image | overflow | ` + src + ` | overflow`,
 			want: template.Action{Field: "Image", Image: with(func(img *template.Image) {
 				img.Overflow = true
+			})},
+		},
+		{
+			name:   "a max_cut of zero",
+			action: `.Image | ` + src + ` | max_cut 0`,
+			want: template.Action{Field: "Image", Image: with(func(img *template.Image) {
+				img.MaxCut = 0
+			})},
+		},
+		{
+			name:   "the largest max_cut",
+			action: `.Image | ` + src + ` | max_cut 4096`,
+			want: template.Action{Field: "Image", Image: with(func(img *template.Image) {
+				img.MaxCut = 4096
 			})},
 		},
 		{
@@ -428,6 +444,11 @@ func TestParseAction(t *testing.T) {
 		{name: "overflow with an argument", action: `.Image | ` + src + ` | overflow true`, wantErr: "overflow takes no arguments"},
 		{name: "overflow with a string argument", action: `.Image | ` + src + ` | overflow "no"`, wantErr: "overflow takes no arguments"},
 		{name: "overflow on another field", action: `.Status | overflow`, wantErr: "overflow only applies to .Image, not .Status"},
+		{name: "a negative max_cut", action: `.Image | ` + src + ` | max_cut -1`, wantErr: "max_cut must be from 0 to 4096, got -1"},
+		{name: "a max_cut past the most cells", action: `.Image | ` + src + ` | max_cut 4097`, wantErr: "max_cut must be from 0 to 4096, got 4097"},
+		{name: "a max_cut as a percentage", action: `.Image | ` + src + ` | max_cut "50%"`, wantErr: "max_cut argument must be an integer"},
+		{name: "a max_cut without its argument", action: `.Image | ` + src + ` | max_cut`, wantErr: "max_cut takes one argument"},
+		{name: "a max_cut on another field", action: `.Status | max_cut 1`, wantErr: "max_cut only applies to .Image, not .Status"},
 		{name: "an alt with a tab", action: `.Image | ` + src + ` | alt "a\tb"`, wantErr: `alt must be UTF-8 text without control characters other than newlines, got "a\tb"`},
 		{name: "an alt with a NUL", action: `.Image | ` + src + ` | alt "\x00"`, wantErr: `got "\x00"`},
 		{name: "an alt with an escape sequence", action: `.Image | ` + src + ` | alt "\x1b[2J"`, wantErr: `got "\x1b[2J"`},

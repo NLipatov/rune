@@ -117,11 +117,11 @@ func (i *ImageElement) Draw(w term.Writer) {
 }
 
 // place lays the image out over a layout of width x rows cells, whose
-// bar is the last row, for an element laid out from cell x. No rows hide
-// the image.
-func (i *ImageElement) place(x, width, rows int) {
+// bar is the last row, for an element laid out from cell x that would
+// end cut cells past the end of the bar. No rows hide the image.
+func (i *ImageElement) place(x, width, rows, cut int) {
 	w, h := i.spec.Width.Cells(width), i.spec.Height
-	if rows <= 0 || w <= 0 {
+	if rows <= 0 || w <= 0 || cut > i.spec.MaxCut {
 		w, h = 0, 0
 	}
 	anchor := term.Coordinates{X: x + i.lead, Y: rows - 1}
@@ -152,17 +152,21 @@ func (i *ImageElement) Close() error {
 // bar laid out from cell x in width cells as component.Inline lays them
 // out: left to right, each cut to the width left. The bar is the last
 // row of a layout total cells wide and rows tall, which the images are
-// placed in. No rows hide the images, and a negative width is no width.
+// placed in. No rows hide the images, and so does a bar that would need
+// more than Image.MaxCut more cells to fit an image's element and the
+// elements before it. A negative width is no width.
 func PlaceImages(items []component.Floating, x, width, total, rows int) {
 	width = max(width, 0)
+	need, left := 0, width
 	for _, item := range items {
-		if img, ok := item.(*ImageElement); ok {
-			img.place(x, total, rows)
-		}
 		w, _ := item.Dimensions()
-		w = min(w, width)
+		need += w
+		if img, ok := item.(*ImageElement); ok {
+			img.place(x, total, rows, need-width)
+		}
+		w = min(w, left)
 		x += w
-		width -= w
+		left -= w
 	}
 }
 
