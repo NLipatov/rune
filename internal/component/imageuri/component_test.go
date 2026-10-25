@@ -19,6 +19,7 @@ package imageuri_test
 import (
 	"context"
 	"fmt"
+	"image"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -394,6 +395,102 @@ ab✗de`},
 	}
 }
 
+// blank40x10 and cross40x10 are a 40x10 writer before anything is
+// drawn and with a "✗" problem art drawn centered.
+const (
+	blank40x10 = `
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        `
+	cross40x10 = `
+                                        
+                                        
+                                        
+                                        
+                   ✗                    
+                                        
+                                        
+                                        
+                                        
+                                        `
+)
+
+func TestComponentStart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	type testCase struct {
+		name         string
+		source, path string
+		// closeFirst closes the component before Start.
+		closeFirst  bool
+		wantSize    image.Point
+		wantSettled bool
+		// wantScreen is the first frame drawn once Start has settled.
+		wantScreen  string
+		wantFetches int32
+	}
+	var tests []testCase
+	for _, source := range []string{"http", "fs"} {
+		tests = append(tests,
+			testCase{
+				name:   "loads once without drawing from " + source,
+				source: source, path: "sample.png",
+				wantSize: image.Pt(194, 179), wantSettled: true,
+				wantScreen:  samplePNG40x10,
+				wantFetches: 1,
+			},
+			testCase{
+				name:   "settles with no size when not an image from " + source,
+				source: source, path: "page.html",
+				wantSettled: true,
+				wantScreen:  cross40x10,
+				wantFetches: 1,
+			},
+			testCase{
+				name:   "loads nothing after Close from " + source,
+				source: source, path: "sample.png",
+				closeFirst: true,
+				wantScreen: blank40x10,
+			},
+		)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, tt.source, tt.path, 40, 10, true,
+				imageuri.Style{Fit: term.ImageFitContain, ProblemArt: "✗"})
+			size, settled := f.c.Size()
+			assert.Equal(t, image.Point{}, size)
+			assert.False(t, settled)
+
+			if tt.closeFirst {
+				require.NoError(t, f.c.Close())
+			}
+			f.c.Start()
+			f.c.Start()
+			if !tt.closeFirst {
+				awaitSettled(f)
+			}
+			size, settled = f.c.Size()
+			assert.Equal(t, tt.wantSize, size)
+			assert.Equal(t, tt.wantSettled, settled)
+
+			comptest.TestComponent(t, f.c, f.w, []comptest.TestCase{
+				{Action: func() { f.c.Resize(40, 10) }, Expected: tt.wantScreen},
+			})
+			assert.Equal(t, tt.wantFetches, f.fetches.Load())
+			assert.Equal(t, f.opened.Load(), f.closes.Load(),
+				"every opened file is closed")
+		})
+	}
+}
+
 func TestComponentsShareTheCache(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
@@ -621,6 +718,22 @@ func seq(actions ...func(*fixture)) func(*fixture) {
 
 func awaitRequest(f *fixture) {
 	receive(f.t, f.arrived, "the request")
+}
+
+// awaitSettled waits on interrupts until the component's load settles.
+func awaitSettled(f *fixture) {
+	timeout := time.After(testTimeout)
+	for {
+		if _, settled := f.c.Size(); settled {
+			return
+		}
+		select {
+		case <-f.irq:
+		case <-timeout:
+			f.t.Error("timed out waiting for the image to settle")
+			return
+		}
+	}
 }
 
 // settle redraws on every interrupt, as the host event loop does, until

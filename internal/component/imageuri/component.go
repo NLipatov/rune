@@ -49,11 +49,15 @@ type Component struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Owned by the event loop. anim is created when the fetch starts.
+	// Owned by the event loop.
 	width, height int
-	anim          *component.Animation
 
 	mu      sync.Mutex
+	started bool
+	// loading is set while a fetch is in flight. anim is created by the
+	// first Draw while loading, and closed by the fetch when it settles.
+	loading bool
+	anim    *component.Animation
 	img     image.Image
 	err     error
 	version uint64
@@ -81,12 +85,12 @@ type Style struct {
 // of the loading animation. style selects how the image is placed.
 //
 // It fails when ValidateURI rejects uri, when ttl < 0, or when storage or
-// interrupter is nil. The image is fetched on the first Draw with a
-// non-empty size, and the progress animation is drawn centered until the
-// fetch settles. If the image cannot be loaded, or the writer cannot draw
-// images, style.ProblemArt is drawn centered instead. The fetch is not
-// retried, and an expired image stays on screen until the component is
-// recreated.
+// interrupter is nil. The image is fetched on Start or the first Draw
+// with a non-empty size, whichever comes first, and the progress
+// animation is drawn centered until the fetch settles. If the image
+// cannot be loaded, or the writer cannot draw images, style.ProblemArt
+// is drawn centered instead. The fetch is not retried, and an expired
+// image stays on screen until the component is recreated.
 func New(
 	uri string, ttl time.Duration, storage storageapi.Service,
 	interrupter term.Interrupter, style Style,
@@ -128,9 +132,9 @@ type FileSystem interface {
 // NewFromFileSystem returns a component that displays the image at path
 // in fs, for files that have no URI New can fetch, such as those in a
 // remote workspace. Nothing is cached: path is opened read-only once, on
-// the first Draw with a non-empty size, and closed once it is read.
-// Close does not interrupt a read that is already in progress, but its
-// result is discarded. Drawing follows the same rules as New.
+// Start or the first Draw with a non-empty size, and closed once it is
+// read. Close does not interrupt a read that is already in progress, but
+// its result is discarded. Drawing follows the same rules as New.
 func NewFromFileSystem(
 	fs FileSystem, path string, interrupter term.Interrupter, style Style,
 ) *Component {
@@ -188,6 +192,8 @@ func parseURI(raw string) (*url.URL, error) {
 // Resize satisfies tui.Component.
 func (c *Component) Resize(width, height int) {
 	c.width, c.height = width, height
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.anim != nil {
 		c.anim.Resize(width, height)
 	}
@@ -198,32 +204,61 @@ func (c *Component) Draw(w term.Writer) {
 	if c.width <= 0 || c.height <= 0 {
 		return
 	}
+	c.Start()
 
 	c.mu.Lock()
 	img, version, err := c.img, c.version, c.err
+	if img == nil && err == nil {
+		if c.loading {
+			if c.anim == nil {
+				c.anim = c.newAnimation()
+			}
+			c.anim.Draw(w)
+		}
+		c.mu.Unlock()
+		return
+	}
 	c.mu.Unlock()
 
-	switch {
-	case img != nil:
-		if !w.DrawImage(term.Image{
-			Src:     img,
-			ID:      c.id,
-			Version: version,
-			Width:   c.width,
-			Height:  c.height,
-			Fit:     c.style.Fit,
-			Layer:   c.style.Layer,
-		}) {
-			c.drawProblem(w)
-		}
-	case err != nil:
+	if err != nil || !w.DrawImage(term.Image{
+		Src:     img,
+		ID:      c.id,
+		Version: version,
+		Width:   c.width,
+		Height:  c.height,
+		Fit:     c.style.Fit,
+		Layer:   c.style.Layer,
+	}) {
 		c.drawProblem(w)
-	default:
-		if c.anim == nil {
-			c.startLoad()
-		}
-		c.anim.Draw(w)
 	}
+}
+
+// Start begins loading the image without drawing it. It does nothing
+// once loading has started or after Close.
+func (c *Component) Start() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.started || c.ctx.Err() != nil {
+		return
+	}
+	c.started, c.loading = true, true
+	go debug.CapturePanicReport(c.load)
+}
+
+// Size returns the natural size of the image in pixels. settled reports
+// whether loading has finished; it stays false until then, and forever
+// once Close cancels the load. size is zero until the image has loaded,
+// so a settled zero size means loading failed.
+func (c *Component) Size() (size image.Point, settled bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.img != nil:
+		return c.img.Bounds().Size(), true
+	case c.err != nil:
+		return image.Point{}, true
+	}
+	return image.Point{}, false
 }
 
 // Close cancels an in-flight fetch and stops the loading animation
@@ -240,7 +275,7 @@ func (c *Component) drawProblem(w term.Writer) {
 	art.Draw(w)
 }
 
-func (c *Component) startLoad() {
+func (c *Component) newAnimation() *component.Animation {
 	frames, sequence := component.ProgressAnimationFrames()
 	comps := make([]component.WithAttributes, len(frames))
 	for i, frame := range frames {
@@ -249,10 +284,7 @@ func (c *Component) startLoad() {
 	anim := new(component.Animation)
 	anim.InitWithComponents(context.Background(), c.interrupter, comps, sequence, 0)
 	anim.Resize(c.width, c.height)
-	c.anim = anim
-	go debug.CapturePanicReport(func() {
-		c.load(anim)
-	})
+	return anim
 }
 
 // centered leaves the cells around str untouched, unlike a centered
@@ -264,22 +296,31 @@ func centered(str string) *component.Span {
 	})
 }
 
-func (c *Component) load(anim *component.Animation) {
+func (c *Component) load() {
 	img, err := c.fetch(c.ctx)
-	_ = anim.Close()
-	if c.ctx.Err() != nil {
-		return
-	}
 
 	c.mu.Lock()
-	if err != nil {
-		c.err = err
-	} else {
-		c.img = img
-		c.version++
+	anim := c.anim
+	c.anim, c.loading = nil, false
+	cancelled := c.ctx.Err() != nil
+	if !cancelled {
+		if err != nil {
+			c.err = err
+		} else {
+			c.img = img
+			c.version++
+		}
 	}
 	c.mu.Unlock()
 
+	// Closed outside the lock: Close waits for the animation's pending
+	// Interrupt, which may wait for a Draw that needs the lock.
+	if anim != nil {
+		_ = anim.Close()
+	}
+	if cancelled {
+		return
+	}
 	if err != nil {
 		slog.Warn("imageuri: load image", "name", c.name, "error", err)
 	}
