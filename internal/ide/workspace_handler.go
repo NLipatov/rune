@@ -2395,7 +2395,6 @@ func (h *workspaceManagerHandler) buildExtensions(
 			AutoAuthorizeExtensions:        cfg.authorizerAutoAuthorizeExtensions(),
 			AutoAuthorizeCommands:          cfg.authorizerAutoAuthorizeCommands(),
 			AutoAuthorizeVerifiedPublisher: cfg.authorizerAutoAuthorizeVerified(),
-			OnboardingActive:               h.onboardingActive,
 			OnPromptWindow:                 ex.setStatusWindow,
 			WorkspaceConfigs:               h.workspaceTrust,
 			Notifications:                  notifications,
