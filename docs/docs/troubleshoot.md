@@ -101,6 +101,14 @@ Keys such as CapsLock, NumLock, ScrollLock, and Menu do nothing on their own in
 Rune; `gui.key_mapping` is the only way to give them an effect. See
 [Key remapping](./learn/key-mapping.md) for the full reference.
 
+## A binding does not fire from my programmable keyboard
+
+With home-row mods or other tap-hold keys on a QMK, ZMK or Oryx keyboard, the
+firmware decides whether a press is a tap or a modifier before Rune sees it.
+You do not need to remap anything in Rune. Check what Rune receives with
+`keydump`, then follow
+[Programmable keyboards and home-row mods](./learn/key-mapping.md#programmable-keyboards-and-home-row-mods).
+
 ## Rune will not start on a machine without a display
 
 Rune links its GPU renderer at build time, but it loads the X11 and OpenGL

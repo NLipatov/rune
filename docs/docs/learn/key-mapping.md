@@ -178,6 +178,34 @@ gui:
 See [Key combination syntax](./key-syntax.md#modifiers) for the full modifier
 model on Linux.
 
+## Programmable keyboards and home-row mods
+
+Keyboards running QMK, ZMK or ZSA's Oryx resolve tap-hold keys, such as
+home-row mods, in their firmware. When you hold a home-row key, the keyboard
+sends a real modifier key, the same one your laptop keyboard sends, so Rune
+needs no configuration to read it.
+
+Do not rebuild a home-row mod with `gui.key_mapping`. A mapping has no notion
+of tap versus hold, and Rune cannot tell which keyboard a key came from, so
+remapping `s` changes the `s` key on every keyboard you use.
+
+If a binding does not fire from your programmable keyboard, run the `keydump`
+command, hold the home-row key and press the other key of the chord. For
+example, with Command on a held S, pressing S+N prints one of:
+
+- **`<meta-n>`**: Rune receives the chord, so the problem is the binding. See
+  [A key binding is not firing](../troubleshoot.md#a-key-binding-is-not-firing).
+- **`s` and `n` as two separate keys**: the firmware decided you tapped S
+  rather than held it, and every application sees the same thing. Hold the key
+  a little longer before pressing the next one, or tune your firmware's
+  tap-hold settings, such as the tapping term or the "hold on other key press"
+  option.
+- **`<alt-n>` or `<ctrl-n>`**: the hold sends a different modifier from the one
+  `<meta>` stands for. `<meta>` is Command on macOS and Super on Linux, which
+  firmware tools label GUI, Cmd or Win. Change the hold in your firmware to
+  send that key. On Linux with the vim, helix or standard editor, you can
+  instead set [`gui.meta_key`](./key-syntax.md#what-meta-means) to `"<alt>"`.
+
 ## Notes
 
 - When you pick the vim or helix preset, first-run setup offers to map
