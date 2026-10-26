@@ -980,16 +980,6 @@ func (b *bootstrapHandler) openBootstrapFlow() {
 	b.openWelcomePrompt()
 }
 
-// metaKeySymbol names the physical key that produces <meta> chords on
-// the user's platform, matching ide.metaKeyName. On macOS <meta> is the
-// Command key (⌘); elsewhere it is the Windows or Super key.
-func metaKeySymbol() string {
-	if runtime.GOOS == "darwin" {
-		return "\u2318"
-	}
-	return "the Windows or Super key"
-}
-
 func (b *bootstrapHandler) prompt(
 	message string,
 	options []string,
@@ -1004,9 +994,19 @@ func (b *bootstrapHandler) openWelcomePrompt() {
 		"Glad you're here. Let's get everything set up.\n\n" +
 		"Learning a new editor is hard, and it can feel daunting at first. We've all been there. " +
 		"These first steps are designed to make that process easier, and we promise that once Rune starts to click, " +
-		"the payoff will be huge.\n\n" +
-		"If this text is too small, press " + metaKeySymbol() + " and `=` to make the font bigger; " +
-		"if it's too big, press " + metaKeySymbol() + " and `-` to make it smaller."
+		"the payoff will be huge.\n\n"
+	// macOS always puts <meta> on Command, so the font-size keys can teach
+	// it from the first screen. Linux users pick their <meta> key later.
+	if b.hostOS() == "darwin" {
+		msg += "When you see `<meta>` in a Rune shortcut, press the Command (\u2318) key. " +
+			"For example, `<meta-=>` means hold \u2318 and press `=`. Some other apps " +
+			"use Option (\u2325) as Meta, but in Rune `<meta>` is always \u2318.\n\n" +
+			"If this text is too small, press `<meta-=>` to make the font bigger; " +
+			"if it's too big, press `<meta-->` to make it smaller."
+	} else {
+		msg += "If this text is too small, press the Windows or Super key and `=` to make the font bigger; " +
+			"if it's too big, press the Windows or Super key and `-` to make it smaller."
+	}
 	guard := b.promptGuard()
 	b.prompt(
 		msg,
