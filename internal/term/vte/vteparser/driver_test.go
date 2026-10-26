@@ -103,7 +103,7 @@ func TestOSCDispatchPointerShape(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := new(pointerShapeHandler)
-			NewParser(h, new(StdTimeout)).AdvanceBytes([]byte(tc.stream))
+			NewParser(h).AdvanceBytes([]byte(tc.stream))
 			assert.Equal(t, tc.want, h.calls)
 		})
 	}
@@ -1075,7 +1075,7 @@ func TestOSCDispatchProgramStatus(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					t.Parallel()
 					h := new(programStatusHandler)
-					p := NewParser(h, new(StdTimeout))
+					p := NewParser(h)
 					feed.feed(p, tc.stream)
 					assert.Equal(t, tc.wantReports, h.reports)
 					assert.Equal(t, tc.wantQueries, h.queries)

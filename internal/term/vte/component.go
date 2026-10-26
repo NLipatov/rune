@@ -44,76 +44,47 @@ import (
 
 // Component implements a vte terminal emulator tui.Component.
 type Component struct {
-	mu        sync.Mutex
-	terminal  schemeapi.Terminal
-	executor  schemeapi.Executor
-	clipboard clipboard.Register
-	cfg       Config
-	pty       workspaceapi.Pty
-	watcher   workspaceapi.ProcessWatcher
-	tm        browser.TabManager
-	scroll    component.Scroll
-	ctx       context.Context
-	cancelCtx func()
-	uri       workspaceapi.URI
-	remote    remote
-	// closed is set by Close so the async expandAndStart goroutine
-	// can bail before handing the pty FDs to os/exec. It is atomic
-	// because Close runs on the host event loop while the
-	// expandAndStart goroutine reads it before acquiring mu and
-	// invoking executor.StartCommand.
-	closed atomic.Bool
-	// spawnWG tracks the async expandAndStart goroutine that
-	// Init spawns when CommandExpander is set. Tests can call
-	// WaitSpawn to block until the spawn (and any
-	// reportSpawnError watcher hand-off) has completed.
-	spawnWG sync.WaitGroup
-	// spawnErrored reports whether the async expandAndStart goroutine
-	// reported a spawn failure via reportSpawnError. Tests use this
-	// to know whether to also wait for the watcher receiver to
-	// process the resulting error; long-running successful spawns
-	// would otherwise block waiting for a process exit that may be
-	// minutes or hours away.
-	spawnErrored atomic.Bool
-	pid          atomic.Int64
-	// exitCh receives the exit status of the process, alongside any
-	// Config.Watcher. It holds the one value so the executor never
-	// blocks on a terminal that stopped waiting for it.
-	exitCh chan error
-	// exitErr is the status Run collected from exitCh. Guarded by mu.
-	exitErr error
-	// slaveClosed makes the parent-side slave close idempotent:
-	// startCommand closes it after a successful spawn and Close
-	// closes it on teardown paths where no spawn succeeded.
-	slaveClosed atomic.Bool
-
-	width, height int
-	// ptySize is the last size driven into the pty, so a font change
-	// that keeps the cell count re-issues the ioctl for the new pixel
-	// size without resizing the buffers.
+	mu                sync.Mutex
+	terminal          schemeapi.Terminal
+	executor          schemeapi.Executor
+	clipboard         clipboard.Register
+	cfg               Config
+	pty               workspaceapi.Pty
+	watcher           workspaceapi.ProcessWatcher
+	tm                browser.TabManager
+	scroll            component.Scroll
+	ctx               context.Context
+	cancelCtx         func()
+	uri               workspaceapi.URI
+	remote            remote
+	closed            atomic.Bool
+	spawnWG           sync.WaitGroup
+	spawnErrored      atomic.Bool
+	pid               atomic.Int64
+	exitCh            chan error
+	exitErr           error
+	slaveClosed       atomic.Bool
+	width, height     int
 	ptySize           workspaceapi.PtySize
 	parserHandler     *parserHandler
 	waitParserHandler *waitParserHandler
 	parser            vteparser.Parser
-	// keyboard is the parser handler's, held here for the input path
-	// because ResetState rewrites the parser handler's fields.
-	keyboard      *keyboardState
-	complete      bool
-	selectionAttr term.Attributes
-	defAttr       term.Attributes
-
-	// version increments after each batch of pty output the parser
-	// applies, so it changes whenever the rendered grid may have. It
-	// lets consumers cheaply detect a changed grid without diffing
-	// cells; it is not a lock — Snapshot/Draw still take mu. It starts
-	// at 1 so the zero value reads as "never observed".
-	version atomic.Uint64
-
-	// publisher is the redraw channel Run was given; animations use it
-	// to request the frame after the next gap.
-	publisher browser.EventPublisher
-	animTimer *time.Timer
+	keyboard          *keyboardState
+	complete          bool
+	selectionAttr     term.Attributes
+	defAttr           term.Attributes
+	version           atomic.Uint64
+	publisher         browser.EventPublisher
+	animTimer         *time.Timer
+	syncFrame         syncFrame
+	syncTimer         *time.Timer
+	syncGen           uint64
+	syncTimeout       time.Duration
 }
+
+// syncOutputTimeout is how long a synchronized update may hold the
+// screen, as in Ghostty.
+const syncOutputTimeout = time.Second
 
 // NOTE: this is an integrator implementation, it shouldn't really do much other
 // than creating a pty and initializing the vte parser and the parser handler.
@@ -141,6 +112,7 @@ func (t *Component) Init(
 	t.terminal = term
 	t.executor = e
 	t.cfg = cfg
+	t.syncTimeout = syncOutputTimeout
 	// Start at 1 so the zero value (0) means "never observed" for
 	// consumers comparing Version across calls.
 	t.version.Store(1)
@@ -157,10 +129,9 @@ func (t *Component) Init(
 	}
 
 	t.parserHandler = newParserHandler(
-		&t.mu, t.pty, tm, t.clipboard, cfg.scheduleBell, t.uri,
+		&t.mu, t.pty, t, tm, t.clipboard, cfg.scheduleBell, t.uri,
 		cfg.NeedsAttentionAttributes, cfg.DynamicTabName, cfg.MaxLines, cfg.MinWidth,
 		cfg.CellPixelSize, cfg.FileSystem, cfg.TempDir)
-	t.parserHandler.clipboardAccess = cfg.ClipboardAccess
 	t.keyboard = t.parserHandler.keyboard
 
 	// start with pty slave file name as title
@@ -177,7 +148,7 @@ func (t *Component) Init(
 	h = t.waitParserHandler
 	t.waitParserHandler.useTrigger(t.triggerBell)
 
-	t.parser.Init(h, new(vteparser.StdTimeout))
+	t.parser.Init(h)
 	t.SetDefaultAttributes(t.defAttr)
 	// StartCommand holds mu during the descriptor hand-off, so launch only
 	// after synchronous initialization no longer needs that lock.
@@ -310,6 +281,7 @@ func (t *Component) Resize(width, height int) error {
 	}
 	t.width = width
 	t.height = height
+	t.endSyncLocked()
 	t.parserHandler.resizeLocked(width, height)
 	t.scroll.Resize(width, height)
 	// Widening unwraps history into fewer rows, which can leave a
@@ -378,6 +350,13 @@ func (t *Component) CursorVisible() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if t.parserHandler.modeSyncUpdate {
+		return t.syncFrame.cursorVisible
+	}
+	return t.cursorVisibleLocked()
+}
+
+func (t *Component) cursorVisibleLocked() bool {
 	return !t.parserHandler.cursorHidden &&
 		t.scroll.Offset().Y == 0 &&
 		t.parserHandler.modeShowCursor &&
@@ -390,6 +369,13 @@ func (t *Component) CursorAtScreen() term.Coordinates {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if t.parserHandler.modeSyncUpdate {
+		return t.syncFrame.cursorPos
+	}
+	return t.cursorAtScreenLocked()
+}
+
+func (t *Component) cursorAtScreenLocked() term.Coordinates {
 	if t.scroll.Offset().Y != 0 {
 		return term.Coordinates{}
 	}
@@ -411,6 +397,13 @@ func (t *Component) CursorStyle() term.CursorStyle {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if t.parserHandler.modeSyncUpdate {
+		return t.syncFrame.cursorStyle
+	}
+	return t.cursorStyleLocked()
+}
+
+func (t *Component) cursorStyleLocked() term.CursorStyle {
 	if !t.parserHandler.modeBlinkingCursor {
 		return t.parserHandler.cursorStyle
 	}
@@ -471,6 +464,9 @@ func (t *Component) ScrollDown(count int) (ok bool) {
 	for i := 0; i < target-offset && t.scroll.SeekDown(); i++ {
 		ok = true
 	}
+	if ok {
+		t.endSyncLocked()
+	}
 	return
 }
 
@@ -483,6 +479,9 @@ func (t *Component) ScrollUp(count int) (ok bool) {
 	}
 	for i := 0; i < count && t.scroll.SeekUp(); i++ {
 		ok = true
+	}
+	if ok {
+		t.endSyncLocked()
 	}
 	return
 }
@@ -579,11 +578,67 @@ func (t *Component) IsNewLineMode() bool {
 	return t.parserHandler.modeLineFeedNewLine
 }
 
-// Draw satisfies tui.Component.
+// Draw satisfies tui.Component. While the program holds a synchronized
+// update it draws the frame from before the update began.
 func (t *Component) Draw(w term.Writer) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.parserHandler.modeSyncUpdate {
+		t.syncFrame.replay(w)
+		return
+	}
 	t.drawLocked(w)
+}
+
+var _ parserHost = (*Component)(nil)
+
+func (t *Component) clipboardAccess() ClipboardAccess {
+	return t.cfg.ClipboardAccess
+}
+
+// syncUpdateLocked captures the frame a synchronized update holds
+// when it begins, and drops it when it ends. The caller must hold t.mu.
+func (t *Component) syncUpdateLocked(begin bool) {
+	t.syncGen++
+	if t.syncTimer != nil {
+		t.syncTimer.Stop()
+	}
+	t.syncFrame.reset()
+	if !begin {
+		return
+	}
+	t.drawLocked(&t.syncFrame)
+	t.syncFrame.cursorVisible = t.cursorVisibleLocked()
+	t.syncFrame.cursorPos = t.cursorAtScreenLocked()
+	t.syncFrame.cursorStyle = t.cursorStyleLocked()
+	gen := t.syncGen
+	t.syncTimer = time.AfterFunc(t.syncTimeout, func() {
+		debug.CapturePanicReport(func() { t.expireSync(gen) })
+	})
+}
+
+// endSyncLocked ends the program's synchronized update, if any, for
+// changes the frame it holds cannot show. The caller must hold t.mu.
+func (t *Component) endSyncLocked() {
+	if !t.parserHandler.modeSyncUpdate {
+		return
+	}
+	t.parserHandler.modeSyncUpdate = false
+	t.syncUpdateLocked(false)
+}
+
+func (t *Component) expireSync(gen uint64) {
+	t.mu.Lock()
+	if gen != t.syncGen || !t.parserHandler.modeSyncUpdate {
+		t.mu.Unlock()
+		return
+	}
+	t.endSyncLocked()
+	publisher := t.publisher
+	t.mu.Unlock()
+	if publisher != nil && !t.closed.Load() {
+		_ = publisher.PublishEvent(term.Event{Type: term.EventInterrupt})
+	}
 }
 
 // drawLocked paints the active buffer, selection and graphics to w. The
@@ -677,6 +732,7 @@ func (t *Component) Select(pos term.Coordinates) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.endSyncLocked()
 	if t.parserHandler.useAlt {
 		t.parserHandler.sync.altBuf.Select(pos)
 	} else if t.scroll.Offset().Y == 0 {
@@ -707,6 +763,7 @@ func (t *Component) SelectWordAt(pos term.Coordinates) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.endSyncLocked()
 	if t.parserHandler.useAlt {
 		t.parserHandler.sync.altBuf.SelectWordAt(pos)
 	} else if t.scroll.Offset().Y == 0 {
@@ -723,6 +780,7 @@ func (t *Component) SelectLine(pos term.Coordinates) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.endSyncLocked()
 	if t.parserHandler.useAlt {
 		t.parserHandler.sync.altBuf.SelectLine(pos)
 	} else if t.scroll.Offset().Y == 0 {
@@ -967,6 +1025,9 @@ func (t *Component) Close() (ret error) {
 	defer t.mu.Unlock()
 	if t.animTimer != nil {
 		t.animTimer.Stop()
+	}
+	if t.syncTimer != nil {
+		t.syncTimer.Stop()
 	}
 	if t.parserHandler != nil {
 		t.parserHandler.withdrawStatus()
@@ -1299,9 +1360,7 @@ func (t *Component) run(publisher browser.EventPublisher) error {
 		if err != nil {
 			return err
 		}
-		t.parser.AdvanceBytes(buf[:n])
-		t.version.Add(1)
-		_ = publisher.PublishEvent(term.Event{Type: term.EventInterrupt})
+		t.applyOutput(buf[:n], publisher)
 	}
 }
 
@@ -1310,10 +1369,23 @@ func (t *Component) run(publisher browser.EventPublisher) error {
 // the kernel pty queue.
 func (t *Component) runGather(g *ptyGather, publisher browser.EventPublisher) error {
 	for batch := range g.ready {
-		t.parser.AdvanceBytes(batch)
+		t.applyOutput(batch, publisher)
 		g.release(batch)
-		t.version.Add(1)
-		_ = publisher.PublishEvent(term.Event{Type: term.EventInterrupt})
 	}
 	return g.err
+}
+
+// applyOutput parses a batch of the program's output and requests a
+// redraw, unless the batch left a synchronized update holding the
+// frame.
+func (t *Component) applyOutput(output []byte, publisher browser.EventPublisher) {
+	t.parser.AdvanceBytes(output)
+	t.version.Add(1)
+	t.mu.Lock()
+	held := t.parserHandler.modeSyncUpdate
+	t.mu.Unlock()
+	if held {
+		return
+	}
+	_ = publisher.PublishEvent(term.Event{Type: term.EventInterrupt})
 }

@@ -18,6 +18,7 @@ package vte
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
+	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/handler/handlertest"
@@ -1096,6 +1098,192 @@ func TestComponentReverseScreen(t *testing.T) {
 	}
 }
 
+// newSyncOutputComponent returns a 6x2 component showing "old" with the
+// cursor after it.
+func newSyncOutputComponent(t *testing.T) (*Component, *workspacetest.File) {
+	t.Helper()
+	comp, err := NewComponent(&testExecutor{}, &testExecutor{},
+		&mockTabManager{}, DefaultConfig())
+	require.NoError(t, err)
+	comp.parserHandler.sync.primBuf.SetDefaultChar(' ')
+	comp.parserHandler.sync.altBuf.SetDefaultChar(' ')
+	require.NoError(t, comp.Resize(6, 2))
+	comp.parser.AdvanceBytes([]byte("old"))
+	pty := comp.pty.Master.(*workspacetest.File)
+	pty.Writes = nil
+	return comp, pty
+}
+
+func ptyOutput(pty *workspacetest.File) string {
+	var sb strings.Builder
+	for _, w := range pty.Writes {
+		sb.Write(w)
+	}
+	return sb.String()
+}
+
+// liveDraw is what Draw paints when no synchronized update holds it.
+func liveDraw(comp *Component) string {
+	w := term.NewStringWriter(comp.width, comp.height)
+	comp.mu.Lock()
+	comp.drawLocked(w)
+	comp.mu.Unlock()
+	w.Flush()
+	return w.String()
+}
+
+func TestComponentSyncOutputAnswersQueries(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		desc  string
+		input string
+		want  string
+	}{
+		{desc: "cursor position", input: "\x1b[6n", want: "\x1b[1;4R"},
+		{desc: "cursor position after drawing", input: "\x1b[2;2Hx\x1b[6n", want: "\x1b[2;3R"},
+		{desc: "device status", input: "\x1b[5n", want: "\x1b[0n"},
+		{desc: "primary device attributes", input: "\x1b[c", want: "\x1b[?6c"},
+		{desc: "mode 2026 is set", input: "\x1b[?2026$p", want: "\x1b[?2026;1$y"},
+		{desc: "mode 2026 is reset after ESU", input: "\x1b[?2026l\x1b[?2026$p",
+			want: "\x1b[?2026;2$y"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			t.Parallel()
+			comp, pty := newSyncOutputComponent(t)
+
+			comp.parser.AdvanceBytes([]byte("\x1b[?2026h" + tc.input))
+
+			assert.Equal(t, tc.want, ptyOutput(pty))
+		})
+	}
+}
+
+func TestComponentSyncOutputFreezesFrame(t *testing.T) {
+	t.Parallel()
+	comp, _ := newSyncOutputComponent(t)
+	frozen := liveDraw(comp)
+
+	comp.parser.AdvanceBytes([]byte("\x1b[?2026h\x1b[H\x1b[2Knew\x1b[2;1Hxy\x1b[?25l\x1b[4 q"))
+	assertDraw(t, comp, frozen)
+	assert.True(t, comp.CursorVisible())
+	assert.Equal(t, term.Coordinates{X: 3}, comp.CursorAtScreen())
+	assert.Equal(t, term.CursorStyleDefault, comp.CursorStyle())
+
+	comp.parser.AdvanceBytes([]byte("\x1b[?25h\x1b[?2026l"))
+	assertDraw(t, comp, "new   \nxy    ")
+	assert.Equal(t, term.Coordinates{X: 2, Y: 1}, comp.CursorAtScreen())
+	assert.Equal(t, term.CursorStyleSteadyUnderline, comp.CursorStyle())
+}
+
+func TestComponentSyncOutputIgnoresNestedBSU(t *testing.T) {
+	t.Parallel()
+	comp, _ := newSyncOutputComponent(t)
+	frozen := liveDraw(comp)
+
+	comp.parser.AdvanceBytes([]byte("\x1b[?2026h1\x1b[?2026h2"))
+
+	assertDraw(t, comp, frozen)
+}
+
+func TestComponentSyncOutputExpires(t *testing.T) {
+	t.Parallel()
+	comp, pty := newSyncOutputComponent(t)
+	publisher := new(countingPublisher)
+	comp.mu.Lock()
+	comp.publisher = publisher
+	comp.syncTimeout = 10 * time.Millisecond
+	comp.mu.Unlock()
+
+	comp.parser.AdvanceBytes([]byte("\x1b[?2026hnew"))
+
+	require.Eventually(t, func() bool { return publisher.count() > 0 },
+		time.Second, time.Millisecond, "expiry must request a redraw")
+	assertDraw(t, comp, "oldnew\n      ")
+	comp.parser.AdvanceBytes([]byte("\x1b[?2026$p"))
+	assert.Equal(t, "\x1b[?2026;2$y", ptyOutput(pty))
+}
+
+func TestComponentSyncOutputEnds(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		desc string
+		end  func(t *testing.T, comp *Component)
+	}{
+		{desc: "ESU", end: func(t *testing.T, comp *Component) {
+			comp.parser.AdvanceBytes([]byte("\x1b[?2026l"))
+		}},
+		{desc: "RIS", end: func(t *testing.T, comp *Component) {
+			comp.parser.AdvanceBytes([]byte("\x1bc"))
+		}},
+		{desc: "resize", end: func(t *testing.T, comp *Component) {
+			require.NoError(t, comp.Resize(7, 2))
+		}},
+		{desc: "scrolling into history", end: func(t *testing.T, comp *Component) {
+			require.True(t, comp.ScrollUp(1))
+		}},
+		{desc: "selection", end: func(t *testing.T, comp *Component) {
+			comp.Select(term.Coordinates{})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			t.Parallel()
+			comp, pty := newSyncOutputComponent(t)
+			comp.parser.AdvanceBytes([]byte("\r\n\r\n\x1b[?2026hnew"))
+
+			tc.end(t, comp)
+
+			assertDraw(t, comp, liveDraw(comp))
+			pty.Writes = nil
+			comp.parser.AdvanceBytes([]byte("\x1b[?2026$p"))
+			assert.Equal(t, "\x1b[?2026;2$y", ptyOutput(pty))
+		})
+	}
+}
+
+func TestComponentSyncOutputDefersRedraws(t *testing.T) {
+	t.Parallel()
+	comp, _ := newSyncOutputComponent(t)
+	publisher := new(countingPublisher)
+
+	for _, step := range []struct {
+		output string
+		want   int
+	}{
+		{output: "a", want: 1},
+		{output: "\x1b[?2026hb", want: 1},
+		{output: "c", want: 1},
+		{output: "\x1b[?2026l", want: 2},
+		{output: "\x1b[?2026hd\x1b[?2026l", want: 3},
+	} {
+		comp.applyOutput([]byte(step.output), publisher)
+		assert.Equal(t, step.want, publisher.count(), "after %q", step.output)
+	}
+}
+
+type countingPublisher struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (p *countingPublisher) PublishEvent(ev term.Event) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ev.Type == term.EventInterrupt {
+		p.n++
+	}
+	return nil
+}
+
+func (p *countingPublisher) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.n
+}
+
 // newPopulatedComponentForBench builds a component with a fully written
 // grid so Snapshot/SnapshotInto copy a realistic amount of cells.
 func newPopulatedComponentForBench(b *testing.B, width, height int) *Component {
@@ -1955,13 +2143,21 @@ func (discardNotifications) UpdateNotificationProgress(
 	return nil
 }
 
-func TestComponentPassesClipboardAccessToTheParser(t *testing.T) {
+func TestComponentClipboardAccess(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.Equal(t, ClipboardAccess{Write: true}, cfg.ClipboardAccess,
 		"programs may set the clipboard but not read it unless configured")
 	cfg.ClipboardAccess = ClipboardAccess{Write: true, Read: true}
+	require.NoError(t, cfg.Clipboard.Copy(clipboard.DefaultRegisterID,
+		clipboard.Data{Text: "secret"}))
 	comp, err := NewComponent(&testExecutor{}, &testExecutor{}, &mockTabManager{}, cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = comp.Close() })
-	assert.Equal(t, cfg.ClipboardAccess, comp.parserHandler.clipboardAccess)
+	pty := comp.pty.Master.(*workspacetest.File)
+
+	const load = "\x1b]52;c;?\x07"
+	comp.parser.AdvanceBytes([]byte(load + "\x1bc" + load))
+
+	reply := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte("secret")) + "\x07"
+	assert.Equal(t, reply+reply, ptyOutput(pty), "a reset must keep the access")
 }

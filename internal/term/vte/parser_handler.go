@@ -53,12 +53,12 @@ const (
 )
 
 type parserHandler struct {
-	pty             workspaceapi.Pty
-	clipboard       clipboard.Register
-	clipboardAccess ClipboardAccess
-	tm              browser.TabManager
-	bell            func()
-	sync            struct {
+	pty       workspaceapi.Pty
+	host      parserHost
+	clipboard clipboard.Register
+	tm        browser.TabManager
+	bell      func()
+	sync      struct {
 		mu      sync.Locker
 		buf     screenBuffer
 		primBuf *vtescreen.PrimaryBuffer
@@ -97,7 +97,10 @@ type parserHandler struct {
 	modeAlternateScroll       bool
 	modeUrgencyHints          bool
 	modeBracketedPaste        bool
-	modeSyncUpdate            bool
+	// modeSyncUpdate is guarded by sync.mu even on the parsing
+	// goroutine: the host ends a synchronized update on its own, as
+	// when it times out or the user scrolls, selects or resizes.
+	modeSyncUpdate bool
 
 	shouldWrap     bool
 	useAlt         bool
@@ -137,6 +140,19 @@ type parserHandler struct {
 // pointerShapeStackSize is kitty's, the smallest its OSC 22 protocol
 // allows.
 const pointerShapeStackSize = 16
+
+// parserHost is the terminal a parserHandler parses the program's
+// output for.
+type parserHost interface {
+	// clipboardAccess is what the program may do with the clipboard
+	// through OSC 52.
+	clipboardAccess() ClipboardAccess
+	// syncUpdateLocked is called with sync.mu held when the program
+	// begins or ends a synchronized update (DEC mode 2026), including
+	// by a reset. It is called with begin set before the update changes
+	// anything, and is not called when the host ends the update itself.
+	syncUpdateLocked(begin bool)
+}
 
 // use a common api for alternate and primary buffers
 // used to simplify critical path calls and avoid extra branches
@@ -179,6 +195,7 @@ type screenBuffer interface {
 
 func newParserHandler(
 	mu sync.Locker, pty workspaceapi.Pty,
+	host parserHost,
 	tm browser.TabManager,
 	clipboard clipboard.Register,
 	bell func(),
@@ -192,7 +209,7 @@ func newParserHandler(
 	tempDir string,
 ) *parserHandler {
 	ret := new(parserHandler)
-	ret.init(mu, pty, tm, clipboard, bell, uri,
+	ret.init(mu, pty, host, tm, clipboard, bell, uri,
 		needsAttentionAttr, useTitleAsTabname, maxScrollLength, minWidth,
 		cellPixelSize, fs, tempDir)
 	ret.keyboard = new(keyboardState)
@@ -201,6 +218,7 @@ func newParserHandler(
 
 func (t *parserHandler) init(
 	mu sync.Locker, pty workspaceapi.Pty,
+	host parserHost,
 	tm browser.TabManager,
 	clipboard clipboard.Register,
 	bell func(),
@@ -220,6 +238,7 @@ func (t *parserHandler) init(
 	t.sync.buf = t.sync.primBuf
 	t.sync.mu = mu
 	t.pty = pty
+	t.host = host
 	t.clipboard = clipboard
 	t.tm = tm
 	t.uri = uri
@@ -1028,6 +1047,7 @@ func (t *parserHandler) ResetState() {
 	defer t.sync.mu.Unlock()
 
 	pty := t.pty
+	host := t.host
 	clipboard := t.clipboard
 	tm := t.tm
 	uri := t.uri
@@ -1046,8 +1066,11 @@ func (t *parserHandler) ResetState() {
 	statusReported := t.statusReported
 	historyScrolled := t.historyScrolled
 	pointer := t.pointer
+	if t.modeSyncUpdate {
+		host.syncUpdateLocked(false)
+	}
 	*t = parserHandler{}
-	t.init(mu, pty, tm, clipboard, bell, uri,
+	t.init(mu, pty, host, tm, clipboard, bell, uri,
 		needsAttentionAttr, useTitleAsTabname, maxScrollLength, minWidth,
 		cellPixelSize, fs, tempDir)
 	t.keyboard = keyboard
@@ -1191,7 +1214,10 @@ func (t *parserHandler) ReportPrivateMode(mode vteparser.PrivateMode) {
 	case vteparser.PrivateModeBracketedPaste:
 		modeVar = &t.modeBracketedPaste
 	case vteparser.PrivateModeSyncUpdate:
-		modeVar = &t.modeSyncUpdate
+		t.sync.mu.Lock()
+		syncUpdate := t.modeSyncUpdate
+		t.sync.mu.Unlock()
+		modeVar = &syncUpdate
 	default:
 		t.log(log.WarnLevel, "Set unkown private mode: %v", mode)
 	}
@@ -1242,6 +1268,9 @@ func (t *parserHandler) SetPrivateMode(mode vteparser.PrivateMode) {
 	case vteparser.PrivateModeBracketedPaste:
 		t.modeBracketedPaste = true
 	case vteparser.PrivateModeSyncUpdate:
+		if !t.modeSyncUpdate {
+			t.host.syncUpdateLocked(true)
+		}
 		t.modeSyncUpdate = true
 	default:
 		t.log(log.WarnLevel, "Set unkown private mode: %v", mode)
@@ -1293,6 +1322,9 @@ func (t *parserHandler) UnsetPrivateMode(mode vteparser.PrivateMode) {
 	case vteparser.PrivateModeBracketedPaste:
 		t.modeBracketedPaste = false
 	case vteparser.PrivateModeSyncUpdate:
+		if t.modeSyncUpdate {
+			t.host.syncUpdateLocked(false)
+		}
 		t.modeSyncUpdate = false
 	default:
 		t.log(log.WarnLevel, "Unset unkown private mode: %v", mode)
@@ -1399,7 +1431,7 @@ func (t *parserHandler) ConfigureCharset(
 
 // Store data into the clipboard.
 func (t *parserHandler) ClipboardStore(register int, data []byte) {
-	if !t.clipboardAccess.Write {
+	if !t.host.clipboardAccess().Write {
 		t.log(log.DebugLevel, "ClipboardStore refused: the program may not write the clipboard")
 		return
 	}
@@ -1427,7 +1459,7 @@ func (t *parserHandler) ClipboardStore(register int, data []byte) {
 
 // Load data from the clipboard.
 func (t *parserHandler) ClipboardLoad(register int, terminator string) {
-	if !t.clipboardAccess.Read {
+	if !t.host.clipboardAccess().Read {
 		t.log(log.DebugLevel, "ClipboardLoad refused: the program may not read the clipboard")
 		return
 	}
@@ -1497,7 +1529,7 @@ func (t *parserHandler) RequestTermcap(names []string) {
 // terminal supports it. Ms is reported only while programs may write
 // the clipboard, since it advertises exactly that.
 func (t *parserHandler) termcap(name string) (string, bool) {
-	if name == "Ms" && t.clipboardAccess.Write {
+	if name == "Ms" && t.host.clipboardAccess().Write {
 		return termcapMs, true
 	}
 	return "", false

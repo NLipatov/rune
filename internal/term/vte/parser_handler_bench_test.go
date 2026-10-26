@@ -181,7 +181,7 @@ func BenchmarkParserStreamBytes(b *testing.B) {
 			for range b.N {
 				b.StopTimer()
 				ph := newBenchParserHandler(width, height)
-				parser := vteparser.NewParser(ph, new(vteparser.StdTimeout))
+				parser := vteparser.NewParser(ph)
 				parser.AdvanceBytes(prefill)
 				b.StartTimer()
 
@@ -217,7 +217,7 @@ func BenchmarkParserStreamUnicode(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			payload := []byte(buildUnicodePayload(tc.text, lineLen, 64*1024))
 			ph := newBenchParserHandler(width, height)
-			parser := vteparser.NewParser(ph, new(vteparser.StdTimeout))
+			parser := vteparser.NewParser(ph)
 			// Warm the scrollback to its steady state so the measured
 			// loop is not dominated by first-touch row growth.
 			parser.AdvanceBytes(payload)
@@ -260,7 +260,7 @@ func newBenchParserHandler(width, height int) *parserHandler {
 	pty := workspaceapi.Pty{Master: mockPty, Slave: mockPty}
 	cfg := DefaultConfig()
 	ph := newParserHandler(
-		new(sync.Mutex), pty, tm,
+		new(sync.Mutex), pty, testParserHost{}, tm,
 		clipboard.NewInMemory(), tm.bell, uri,
 		cfg.NeedsAttentionAttributes, false, cfg.MaxLines, cfg.MinWidth, nil, nil, "")
 	ph.sync.primBuf.SetDefaultChar(' ')

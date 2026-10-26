@@ -1015,3 +1015,28 @@ func TestHandlerCtrlCInterruptsForegroundProgram(t *testing.T) {
 		"ctrl-c must interrupt the foreground sleep and return the "+
 			"shell prompt; screen was:\n%s", w.String())
 }
+
+func TestHandlerAnswersQueriesInSynchronizedUpdate(t *testing.T) {
+	// crossterm's cursor::position does this inside ratatui's first
+	// frame, and gives up after 2s without a reply.
+	const script = `stty raw -echo
+printf '\033[?2026h\033[6n'
+reply=$(dd bs=1 count=6 2>/dev/null)
+printf '\033[?2026l'
+stty sane
+printf 'reply:%s\n' "$(printf '%s' "$reply" | tr '\033' E)"
+sleep 60`
+	path := t.TempDir() + "/sync_query.sh"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o600))
+	handler, ch := testSequenceCommand(t, DefaultConfig(), defaultWaitForIdleVte,
+		[]string{"sh", path}, nil)
+	drain(ch)
+
+	w := term.NewStringWriter(20, 10)
+	require.Eventually(t, func() bool {
+		require.NoError(t, w.Clear(term.Attributes{}))
+		handler.Draw(w)
+		require.NoError(t, w.Flush())
+		return strings.Contains(w.String(), "reply:E[1;1R")
+	}, 5*time.Second, 20*time.Millisecond, "screen was:\n%s", w.String())
+}

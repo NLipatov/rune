@@ -453,9 +453,6 @@ func (p *driver) CSIDispatch(
 				if len(param) == 0 {
 					p.logUnexpectedParamsLength(params, intermediates, action)
 				} else {
-					if PrivateMode(param[0]) == PrivateModeSyncUpdate {
-						p.state.syncState.timeout.SetTimeout(syncUpdateTimeout)
-					}
 					p.handler.SetPrivateMode(NewPrivateMode(param[0]))
 				}
 			}

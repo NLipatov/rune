@@ -772,7 +772,7 @@ func TestIntegrationParserHandler(t *testing.T) {
 			tm := mockTabManager{}
 			attrs := DefaultConfig().NeedsAttentionAttributes
 			pty := workspaceapi.Pty{Master: &mockPtyFile, Slave: &mockPtyFile}
-			ph := newParserHandler(new(sync.Mutex), pty, &tm,
+			ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
 				clipboard.NewInMemory(), tm.bell, testURI, attrs, false, 10000, 0, nil, nil, "")
 			ph.sync.primBuf.SetDefaultChar(' ')
 			ph.sync.altBuf.SetDefaultChar(' ')
@@ -883,6 +883,16 @@ func (tm *mockTabManager) bell() {
 	tm.belled = true
 }
 
+// testParserHost grants the clipboard access it is given and keeps no
+// frames.
+type testParserHost struct {
+	access ClipboardAccess
+}
+
+func (h testParserHost) clipboardAccess() ClipboardAccess { return h.access }
+
+func (testParserHost) syncUpdateLocked(bool) {}
+
 func newInputParserHandler(t *testing.T, alt bool) *parserHandler {
 	t.Helper()
 	ph, _ := newInputParserHandlerPty(t, alt)
@@ -899,7 +909,7 @@ func newInputParserHandlerPty(t *testing.T, alt bool) (*parserHandler, *workspac
 	tm := mockTabManager{}
 	attrs := DefaultConfig().NeedsAttentionAttributes
 	pty := workspaceapi.Pty{Master: mockPtyFile, Slave: mockPtyFile}
-	ph := newParserHandler(new(sync.Mutex), pty, &tm,
+	ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
 		clipboard.NewInMemory(), tm.bell, testURI, attrs, false, 10000, 0, nil, nil, "")
 	ph.sync.primBuf.SetDefaultChar(' ')
 	ph.sync.altBuf.SetDefaultChar(' ')
@@ -1062,7 +1072,7 @@ func TestBellReleasesLockBeforeInvokingCallback(t *testing.T) {
 	tm := mockTabManager{}
 	attrs := DefaultConfig().NeedsAttentionAttributes
 	pty := workspaceapi.Pty{Master: &mockPtyFile, Slave: &mockPtyFile}
-	ph := newParserHandler(new(sync.Mutex), pty, &tm,
+	ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
 		clipboard.NewInMemory(), bellFn, testURI, attrs, false, 10000, 0, nil, nil, "")
 
 	go ph.Bell()
@@ -1484,7 +1494,7 @@ func TestInputClustersZWJFamilyThroughFullParser(t *testing.T) {
 	data = append(data, 0xe2, 0x80, 0x8d)       // ZWJ U+200D
 	data = append(data, 0xf0, 0x9f, 0x91, 0xa7) // 👧 U+1F467
 
-	parser := vteparser.NewParser(p, new(vteparser.StdTimeout))
+	parser := vteparser.NewParser(p)
 	for _, b := range data {
 		parser.Advance(b)
 	}
@@ -2272,11 +2282,11 @@ func TestClipboardOSC52(t *testing.T) {
 			pty := &workspacetest.File{}
 			lock := new(lockCounter)
 			ph := newParserHandler(lock, workspaceapi.Pty{Master: pty, Slave: pty},
+				testParserHost{access: ClipboardAccess{Write: true, Read: true}},
 				&mockTabManager{}, &registerClipboard{registers: registers, err: tc.err},
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
-			ph.clipboardAccess = ClipboardAccess{Write: true, Read: true}
 
-			vteparser.NewParser(ph, new(vteparser.StdTimeout)).AdvanceBytes([]byte(tc.output))
+			vteparser.NewParser(ph).AdvanceBytes([]byte(tc.output))
 
 			assert.Equal(t, want, registers)
 			assert.Equal(t, tc.reply, string(bytes.Join(pty.Writes, nil)))
@@ -2340,6 +2350,12 @@ func TestClipboardOSC52Access(t *testing.T) {
 			output: store + load,
 			want:   map[string]string{clip: "secret"},
 		},
+		{
+			name:   "a reset keeps the access",
+			access: ClipboardAccess{Write: true},
+			output: "\x1bc" + store,
+			want:   map[string]string{clip: "evil"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2349,11 +2365,11 @@ func TestClipboardOSC52Access(t *testing.T) {
 			registers := map[string]string{clip: "secret"}
 			pty := &workspacetest.File{}
 			ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
-				&mockTabManager{}, &registerClipboard{registers: registers},
+				testParserHost{access: tc.access}, &mockTabManager{},
+				&registerClipboard{registers: registers},
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
-			ph.clipboardAccess = tc.access
 
-			vteparser.NewParser(ph, new(vteparser.StdTimeout)).AdvanceBytes([]byte(tc.output))
+			vteparser.NewParser(ph).AdvanceBytes([]byte(tc.output))
 
 			assert.Equal(t, tc.want, registers)
 			assert.Equal(t, tc.reply, string(bytes.Join(pty.Writes, nil)))
@@ -2406,11 +2422,10 @@ func TestRequestTermcapAdvertisesOSC52(t *testing.T) {
 			require.NoError(t, err)
 			pty := &workspacetest.File{}
 			ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
-				&mockTabManager{}, clipboard.NewInMemory(),
+				testParserHost{access: tc.access}, &mockTabManager{}, clipboard.NewInMemory(),
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
-			ph.clipboardAccess = tc.access
 
-			vteparser.NewParser(ph, new(vteparser.StdTimeout)).AdvanceBytes([]byte(tc.output))
+			vteparser.NewParser(ph).AdvanceBytes([]byte(tc.output))
 
 			assert.Equal(t, tc.reply, string(bytes.Join(pty.Writes, nil)))
 		})
@@ -2423,9 +2438,9 @@ func TestRequestTermcapMsReadsAsOSC52ToNeovim(t *testing.T) {
 	require.NoError(t, err)
 	pty := &workspacetest.File{}
 	ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
-		&mockTabManager{}, clipboard.NewInMemory(),
+		testParserHost{access: ClipboardAccess{Write: true}}, &mockTabManager{},
+		clipboard.NewInMemory(),
 		func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
-	ph.clipboardAccess = ClipboardAccess{Write: true}
 
 	ph.RequestTermcap([]string{"Ms"})
 
