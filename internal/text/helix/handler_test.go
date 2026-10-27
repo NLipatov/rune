@@ -2640,6 +2640,52 @@ func TestComments(t *testing.T) {
 		send(t, hx, modKey(term.ModCtrl, 'c'))
 		assert.Equal(t, "// a\n// b\nc", buf.String())
 	})
+
+	for _, tc := range []struct {
+		name    string
+		content string
+		sel     *selection
+		evs     []term.Event
+		want    string
+	}{
+		{name: "linewise rows align at the shallowest tab", content: "\t\ta\n\tb\nc",
+			evs: keys("xx"), want: "\t// \ta\n\t// b\nc"},
+		{name: "linewise rows align at the shallowest spaces", content: "  a\n    b",
+			evs: keys("xx"), want: "  // a\n  //   b"},
+		{name: "linewise rows uncomment in place", content: "  // a\n  //   b",
+			evs: keys("xx"), want: "  a\n    b"},
+		{name: "select all through a trailing newline", content: "a\n  b\n",
+			evs: keys("%"), want: "// a\n//   b\n"},
+		{name: "rows of wide runes and emoji", content: "界\n👨‍👧‍👦\n🇯🇵",
+			evs: keys("xx"), want: "// 界\n// 👨‍👧‍👦\n🇯🇵"},
+		{name: "blank rows are skipped", content: "a\n \t\nb",
+			evs: keys("xxx"), want: "// a\n \t\n// b"},
+		{name: "separate ranges align independently", content: "  a\nb\n    c\n      d",
+			sel:  selOf(1, fwd(2, 0, 3, 0), fwd(4, 2, 7, 3)),
+			want: "  // a\nb\n    // c\n    //   d"},
+		{name: "adjacent ranges align together", content: "    a\n  b",
+			sel:  selOf(1, fwd(4, 0, 5, 0), fwd(2, 1, 3, 1)),
+			want: "  //   a\n  // b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hx, buf, _ := newHelix(t, tc.content, term.Coordinates{})
+			hx.cursor.SetCommentSpec(text.CommentSpec{Line: []string{"//"}})
+			buf.WithView(testCommentView{View: buf.View(), line: []string{"//"}})
+			if tc.sel != nil {
+				impl(hx).setSelection(*tc.sel)
+			}
+			send(t, hx, tc.evs...)
+			send(t, hx, modKey(term.ModCtrl, 'c'))
+			require.Equal(t, tc.want, buf.String())
+
+			for round := range 2 {
+				send(t, hx, key('u'))
+				assert.Equal(t, tc.content, buf.String(), "round %d: one u reverts the toggle", round)
+				send(t, hx, key('U'))
+				assert.Equal(t, tc.want, buf.String(), "round %d: one U reapplies it", round)
+			}
+		})
+	}
 }
 
 func TestInsertEntry(t *testing.T) {

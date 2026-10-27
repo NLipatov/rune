@@ -811,6 +811,88 @@ func TestNormalCtrlDotDoesNotRepeat(t *testing.T) {
 func TestUndo100(t *testing.T) {
 	testUndoSize(t, 100, 99)
 }
+
+func TestViCommentUndo(t *testing.T) {
+	newCommentVi := func(t *testing.T, content string) (*Vi, *cell.Buffer) {
+		t.Helper()
+		buf := cell.NewBuffer()
+		_, err := buf.ReadFrom(strings.NewReader(content))
+		require.NoError(t, err)
+		v := New(buf, uri, WithTabspaces(4))
+		v.Resize(40, 10)
+		buf.WithView(testCommentService{view: buf.View(), line: []string{"//"}})
+		v.cursor.SetCommentSpec(text.CommentSpec{Line: []string{"//"}})
+		return v, buf
+	}
+	undo := term.Event{Type: term.EventKey, Ch: 'u'}
+	redo := term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'r'}
+
+	tests := []struct {
+		name    string
+		content string
+		keys    string
+		want    string
+		// undone is the content after one u, the content itself when empty.
+		undone string
+	}{
+		{name: "gcc", content: "a\nb", keys: "gcc", want: "// a\nb"},
+		{name: "visual line gc aligns at the shallowest indentation", content: "\t\ta\n\tb\nc",
+			keys: "Vjgc", want: "\t// \ta\n\t// b\nc"},
+		{name: "gc with a motion aligns", content: "  a\n    b\nc", keys: "gcj", want: "  // a\n  //   b\nc"},
+		{name: "gcap leaves the next paragraph alone", content: "a\nb\n\nc", keys: "gcap", want: "// a\n// b\n\nc"},
+		{name: "visual line gc uncomments", content: "// a\n\t// b", keys: "Vjgc", want: "a\n\tb"},
+		{name: "gcc on wide runes", content: "界界", keys: "lgcc", want: "// 界界"},
+		{name: "gcc on a zwj emoji", content: "👨‍👧‍👦x", keys: "gcc", want: "// 👨‍👧‍👦x"},
+		{name: "gcc on a combining mark", content: "e\u0301x", keys: "gcc", want: "// e\u0301x"},
+		{name: "blank lines are skipped", content: "a\n\n \t\nb", keys: "Vjjjgc", want: "// a\n\n \t\n// b"},
+		{name: "a counted gcc", content: "a\nb\nc", keys: "2gcc", want: "// a\n// b\nc"},
+		{name: "consecutive gc commands are separate steps", content: "a\nb\nc\nd", keys: "gcjjgcj",
+			want: "// a\n// b\n// c\n// d", undone: "// a\n// b\nc\nd"},
+		{name: "typing before gc stays its own step", content: "a\nb", keys: "Ax\x1bgcc",
+			want: "// ax\nb", undone: "ax\nb"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v, buf := newCommentVi(t, tc.content)
+			for _, ch := range tc.keys {
+				ev := term.Event{Type: term.EventKey, Ch: ch}
+				if ch == '\x1b' {
+					ev = term.Event{Type: term.EventKey, Key: term.KeyEsc}
+				}
+				v.Handle(ev)
+			}
+			require.Equal(t, tc.want, buf.String())
+			undone := tc.undone
+			if undone == "" {
+				undone = tc.content
+			}
+
+			for round := range 2 {
+				_, handled := v.Handle(undo)
+				require.True(t, handled)
+				assert.Equal(t, undone, buf.String(), "round %d: one u reverts the comment", round)
+				_, handled = v.Handle(redo)
+				require.True(t, handled)
+				assert.Equal(t, tc.want, buf.String(), "round %d: one C-r reapplies it", round)
+			}
+		})
+	}
+
+	t.Run("an out-of-band toggle undoes in one step", func(t *testing.T) {
+		v, buf := newCommentVi(t, "a\nb\nc")
+		require.True(t, v.cursor.SelectRange(term.Coordinates{}, term.Coordinates{Y: 2, X: 1}))
+		require.True(t, v.cursor.ToggleLineComment())
+		v.cursor.Unselect()
+		require.Equal(t, "// a\n// b\n// c", buf.String())
+
+		_, handled := v.Handle(undo)
+		require.True(t, handled)
+		assert.Equal(t, "a\nb\nc", buf.String())
+		_, handled = v.Handle(redo)
+		require.True(t, handled)
+		assert.Equal(t, "// a\n// b\n// c", buf.String())
+	})
+}
 func TestUndo10(t *testing.T) {
 	testUndoSize(t, 10, 9)
 }

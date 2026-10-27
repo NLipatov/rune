@@ -2365,6 +2365,133 @@ func newRobustnessHandler(
 	return h, buf, clip
 }
 
+func TestStandardMultiLineEditsUndoInOneStep(t *testing.T) {
+	const plain = "a\n\tb\n\tc\nd"
+	at := func(y, x int) *term.Coordinates { return &term.Coordinates{Y: y, X: x} }
+	tests := []struct {
+		name    string
+		content string
+		keymap  Keymap
+		keys    string
+		want    string
+		wantAt  *term.Coordinates
+	}{
+		{"line comment skips the line a selection only reaches", plain, KeymapLinux,
+			"<s-down><s-down><c-/>", "// a\n// \tb\n\tc\nd", at(2, 0)},
+		{"line comment with cmd", plain, KeymapMacOS,
+			"<s-down><s-down><m-/>", "// a\n// \tb\n\tc\nd", at(2, 0)},
+		{"line uncomment", "// a\n// \tb\n\tc\nd", KeymapLinux,
+			"<s-down><s-down><c-/>", plain, at(2, 0)},
+		{"line comment on the caret's line", plain, KeymapLinux,
+			"<down><c-/>", "a\n\t// b\n\tc\nd", at(1, 0)},
+		{"line comment of a selection within one line", plain, KeymapLinux,
+			"<down><s-right><c-/>", "a\n\t// b\n\tc\nd", at(1, 4)},
+		{"line comment of a backward selection", plain, KeymapLinux,
+			"<down><down><s-up><s-up><c-/>", "// a\n// \tb\n\tc\nd", at(0, 3)},
+		{"line comment of select all through a trailing newline", "a\n\tb\n", KeymapLinux,
+			"<c-a><c-/>", "// a\n// \tb\n", nil},
+		{"line comment of an expanded line selection", plain, KeymapLinux,
+			"<c-l><c-l><c-/>", "// a\n// \tb\n\tc\nd", nil},
+		{"line comment of an expanded line selection with cmd", plain, KeymapMacOS,
+			"<m-l><m-l><m-/>", "// a\n// \tb\n\tc\nd", nil},
+		{"line comment over wide runes and emoji", "界\n  👨‍👧‍👦\nx", KeymapLinux,
+			"<s-down><s-down><c-/>", "// 界\n//   👨‍👧‍👦\nx", at(2, 0)},
+		{"line comment of a selection ending after an emoji", "a\n👍🏽b", KeymapLinux,
+			"<s-down><s-right><c-/>", "// a\n// 👍🏽b", at(1, 4)},
+		{"block comment", plain, KeymapLinux,
+			"<s-down><c-s-/>", "/*a\n*/\tb\n\tc\nd", nil},
+		{"block comment with cmd", plain, KeymapMacOS,
+			"<s-down><a-m-/>", "/*a\n*/\tb\n\tc\nd", nil},
+		{"block comment across wide runes", "界界\nx", KeymapLinux,
+			"<s-right><s-right><c-s-/>", "/*界界*/\nx", nil},
+		{"block uncomment with cmd", "x /*ab*/", KeymapMacOS,
+			"<right><right><right><right><a-m-/>", "x ab", at(0, 2)},
+		{"indent selection", plain, KeymapLinux,
+			"<s-down><s-down><c-]>", "\ta\n\t\tb\n\t\tc\nd", nil},
+		{"indent selection with cmd", plain, KeymapMacOS,
+			"<s-down><s-down><m-]>", "\ta\n\t\tb\n\t\tc\nd", nil},
+		{"indent selection with tab", plain, KeymapLinux,
+			"<s-down><s-down><tab>", "\ta\n\t\tb\n\t\tc\nd", nil},
+		{"indent a selection of wide runes and emoji", "界\n👨‍👧‍👦", KeymapLinux,
+			"<s-down><s-right><c-]>", "\t界\n\t👨‍👧‍👦", nil},
+		{"outdent selection", plain, KeymapLinux,
+			"<down><s-down><s-down><c-[>", "a\nb\nc\nd", nil},
+		{"outdent selection with shift-tab", plain, KeymapLinux,
+			"<down><s-down><s-down><s-tab>", "a\nb\nc\nd", nil},
+		{"outdent spaces one at a time", "    a\n    b", KeymapLinux,
+			"<s-down><s-right><s-tab>", "   a\n   b", nil},
+		{"outdent with nothing to outdent", "a\nb", KeymapLinux,
+			"<s-down><s-right><c-[>", "a\nb", nil},
+		{"line comment of only blank lines", "\n \t\nx", KeymapLinux,
+			"<s-down><s-down><c-/>", "\n \t\nx", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			uri, err := workspaceapi.ParseURI("memory:///undo.go")
+			require.NoError(t, err)
+			buf := cell.NewBuffer()
+			_, err = buf.ReadFrom(strings.NewReader(tc.content))
+			require.NoError(t, err)
+			buf.WithView(testCommentService{
+				view:  buf.View(),
+				line:  []string{"//"},
+				block: []string{"/*", "*/"},
+			})
+			h := NewHandler(buf, uri, text.IndentRuneTab, 0,
+				WithKeymap(tc.keymap),
+				WithComments(text.CommentConfig{
+					"go": {
+						Line:  []string{"//"},
+						Block: []text.CommentBlock{{Start: "/*", End: "*/"}},
+					},
+				}))
+			h.Resize(40, 10)
+
+			undo, redo := "<ctrl-z>", "<ctrl-shift-z>"
+			if tc.keymap == KeymapMacOS {
+				undo, redo = "<meta-z>", "<shift-meta-z>"
+			}
+			feedKeys(t, h, tc.keys)
+			require.Equal(t, tc.want, buf.String())
+			if tc.wantAt != nil {
+				assert.Equal(t, *tc.wantAt, h.CursorAtScroll())
+			}
+			if tc.want == tc.content {
+				assert.Zero(t, buf.Version(), "a no-op leaves nothing to undo")
+				return
+			}
+			for round := range 2 {
+				feedKeys(t, h, undo)
+				assert.Equal(t, tc.content, buf.String(), "round %d: one undo reverts the whole edit", round)
+				feedKeys(t, h, redo)
+				assert.Equal(t, tc.want, buf.String(), "round %d: one redo reapplies it", round)
+			}
+			feedKeys(t, h, undo)
+			assert.Equal(t, tc.content, buf.String())
+		})
+	}
+
+	t.Run("consecutive toggles undo one toggle at a time", func(t *testing.T) {
+		uri, err := workspaceapi.ParseURI("memory:///undo.go")
+		require.NoError(t, err)
+		buf := cell.NewBuffer()
+		_, err = buf.ReadFrom(strings.NewReader(plain))
+		require.NoError(t, err)
+		buf.WithView(testCommentService{view: buf.View(), line: []string{"//"}})
+		h := NewHandler(buf, uri, text.IndentRuneTab, 0, WithKeymap(KeymapLinux),
+			WithComments(text.CommentConfig{"go": {Line: []string{"//"}}}))
+		h.Resize(40, 10)
+
+		feedKeys(t, h, "<down><c-/><c-/><c-/>")
+		require.Equal(t, "a\n\t// b\n\tc\nd", buf.String())
+		for _, want := range []string{plain, "a\n\t// b\n\tc\nd", plain} {
+			feedKeys(t, h, "<ctrl-z>")
+			assert.Equal(t, want, buf.String())
+		}
+		assert.Equal(t, 0, buf.Version(), "every toggle was one step")
+	})
+}
+
 func TestStandardRobustnessDegenerateBuffers(t *testing.T) {
 	contents := []struct {
 		name    string

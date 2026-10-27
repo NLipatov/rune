@@ -88,6 +88,12 @@ type emacsHandler struct {
 	// literal character to insert.
 	pendingQuotedInsert bool
 	quotedInsertCount   int
+	// markActive is GNU transient-mark-mode's active region: setting the mark
+	// activates it, and C-g, M-w or any command that edits the buffer
+	// deactivates it. Commands that act on an active region only (M-;) fall
+	// back to point's line otherwise, while C-w and M-w use the mark either
+	// way, as in GNU.
+	markActive bool
 }
 
 // NewHandler returns a emacs, simple-to-use text.Handler. indentTabspaces
@@ -188,6 +194,7 @@ func (h *emacsHandler) setMarkLocation() bool {
 	locs = append(locs, h.newMarkLocation(pos))
 	h.cursor.SetLocationList(textapi.LocationPriorityInfo, emacsMarkLocationListID,
 		text.LocationSlice(locs))
+	h.markActive = true
 	return true
 }
 
@@ -221,6 +228,7 @@ func (h *emacsHandler) markLocation() (textapi.Location, bool) {
 
 func (h *emacsHandler) clearMarkLocation() bool {
 	h.cursor.SetLocationList(textapi.LocationPriorityInfo, emacsMarkLocationListID, nil)
+	h.markActive = false
 	return true
 }
 
@@ -229,6 +237,7 @@ func (h *emacsHandler) popMarkLocation() bool {
 	if len(locs) == 0 {
 		return false
 	}
+	h.markActive = false
 	locs = locs[:len(locs)-1]
 	if len(locs) == 0 {
 		return h.clearMarkLocation()
@@ -295,6 +304,7 @@ func (h *emacsHandler) endOrCallMacro() bool {
 // for an explicit mark, matching GNU shift-select-mode where shifted motion
 // activates the region.
 func (h *emacsHandler) copyRegion() bool {
+	h.markActive = false
 	point := h.cursor.CursorAtScroll()
 	if _, _, ok := h.cursor.SelectionBounds(); ok {
 		if _, err := h.cursor.CopySelection(
@@ -319,6 +329,32 @@ func (h *emacsHandler) copyRegion() bool {
 	}
 	h.cursor.MoveToScroll(point)
 	return true
+}
+
+// commentDWIM toggles line comments on the lines of a shift-selection or of
+// the active mark-to-point region, like GNU comment-or-uncomment-region, and
+// on point's line otherwise. A region ending at the start of a line leaves
+// that line alone, as comment-region does.
+func (h *emacsHandler) commentDWIM() bool {
+	if _, selected := h.cursor.SelectionMode(); selected || !h.markActive {
+		return h.cursor.ToggleLineComment()
+	}
+	loc, ok := h.markLocation()
+	if !ok {
+		return h.cursor.ToggleLineComment()
+	}
+	// The mark does not follow edits made outside the keymap, so it can sit
+	// past the end of a buffer that has since shrunk.
+	mark, point := h.clampPoint(loc.From), h.clampPoint(h.cursor.CursorAtScroll())
+	if mark == point {
+		return h.cursor.ToggleLineComment()
+	}
+	if !h.cursor.SelectSpan(mark, point) {
+		return false
+	}
+	handled := h.cursor.ToggleLineComment()
+	h.cursor.Unselect()
+	return handled
 }
 
 var sexpOpeners = map[rune]struct{}{'(': {}, '[': {}, '{': {}}
@@ -661,6 +697,13 @@ func (h *emacsHandler) Handle(ev term.Event) (exit, handled bool) {
 		return h.mouse.Handle(ev)
 	}
 
+	version := h.buf.Version()
+	defer func() {
+		if h.buf.Version() != version {
+			h.markActive = false
+		}
+	}()
+
 	// Track whether the current event is a paste-related action.
 	// Reset lastPaste at the end unless the handler explicitly sets it.
 	pastedThisTurn := false
@@ -992,8 +1035,8 @@ func (h *emacsHandler) dispatchKey(
 				handled = h.capitalizeWord()
 				return
 			case ';':
-				// M-;: comment-dwim (toggle line comment).
-				handled = h.cursor.ToggleLineComment()
+				// M-;: comment-dwim (toggle line comments).
+				handled = h.commentDWIM()
 			case 'y':
 				// M-y: yank-pop (replace the last yank with an older kill).
 				if handled = h.pasteFromHistory(); handled {

@@ -4412,6 +4412,7 @@ func TestEmacsCommentToggle(t *testing.T) {
 			line: []string{"//"},
 		})
 		h := NewHandler(buf, emacsTestURI(t), text.IndentRuneTab, 0,
+			WithClipboard(clipboard.NewInMemory()),
 			WithComments(text.CommentConfig{
 				"go": {Line: []string{"//"}, Block: []text.CommentBlock{{Start: "/*", End: "*/"}}},
 			}))
@@ -4447,6 +4448,90 @@ func TestEmacsCommentToggle(t *testing.T) {
 		require.Equal(t, "// x := 1", buf.String())
 		require.True(t, runEvent(h, alt(';')))
 		assert.Equal(t, "x := 1", buf.String())
+	})
+
+	regionCases := []struct {
+		name      string
+		content   string
+		keys      string
+		want      string
+		afterUndo string
+	}{
+		{"an active region toggles the lines it covers", "a\nb\nc",
+			"<c-space><c-n><c-n><a-;>", "// a\n// b\nc", "a\nb\nc"},
+		{"an active region uncomments the lines it covers", "// a\n// b\nc",
+			"<c-space><c-n><c-n><a-;>", "a\nb\nc", "// a\n// b\nc"},
+		{"a backward region toggles the same lines", "a\nb\nc",
+			"<c-n><c-n><c-space><c-p><c-p><a-;>", "// a\n// b\nc", "a\nb\nc"},
+		{"a region ending inside a line covers it", "a\nb\nc",
+			"<c-space><c-n><c-f><a-;>", "// a\n// b\nc", "a\nb\nc"},
+		{"an empty region toggles point's line", "a\nb\nc",
+			"<c-n><c-space><a-;>", "a\n// b\nc", "a\nb\nc"},
+		{"an edit deactivates the mark", "a\nb\nc",
+			"<c-space><c-n>x<a-;>", "a\n// xb\nc", "a\nxb\nc"},
+		{"C-g deactivates the mark", "a\nb\nc",
+			"<c-space><c-n><c-g><a-;>", "a\n// b\nc", "a\nb\nc"},
+		{"M-w deactivates the mark", "a\nb\nc",
+			"<c-space><c-n><a-w><a-;>", "a\n// b\nc", "a\nb\nc"},
+		{"toggling the region deactivates the mark", "a\nb\nc",
+			"<c-space><c-n><c-n><a-;><a-;>", "// a\n// b\n// c", "// a\n// b\nc"},
+		{"a region within one line toggles that line", "ab\ncd",
+			"<c-n><c-space><c-f><a-;>", "ab\n// cd", "ab\ncd"},
+		{"a region ending at a line start leaves that line alone", "a\nb\nc",
+			"<c-space><c-n><a-;>", "// a\nb\nc", "a\nb\nc"},
+		{"a region through a trailing newline", "a\nb\n",
+			"<c-space><c-n><c-n><a-;>", "// a\n// b\n", "a\nb\n"},
+		{"a region over tab-indented lines aligns at the shallowest", "\t\ta\n\tb\nc",
+			"<c-space><c-n><c-e><a-;>", "\t// \ta\n\t// b\nc", "\t\ta\n\tb\nc"},
+		{"a region over wide runes and emoji", "界a\n👨‍👧‍👦\nc",
+			"<c-space><c-n><c-e><a-;>", "// 界a\n// 👨‍👧‍👦\nc", "界a\n👨‍👧‍👦\nc"},
+		{"blank lines inside a region are skipped", "a\n \t\nb\nc",
+			"<c-space><c-n><c-n><c-e><a-;>", "// a\n \t\n// b\nc", "a\n \t\nb\nc"},
+		{"motions keep the mark active", "a\nb\nc",
+			"<c-space><c-n><c-e><c-b><c-f><a-;>", "// a\n// b\nc", "a\nb\nc"},
+		{"a shift-selection wins over the mark", "a\nb\nc\nd",
+			"<c-space><c-n><c-n><s-down><a-;>", "a\nb\n// c\nd", "a\nb\nc\nd"},
+		{"C-w deactivates the mark", "a\nb\nc",
+			"<c-space><c-n><c-w><a-;>", "// b\nc", "b\nc"},
+		{"C-k deactivates the mark", "a\nbb\nc",
+			"<c-space><c-n><c-f><c-k><a-;>", "a\n// b\nc", "a\nb\nc"},
+		{"an undo deactivates the mark", "a\nb\nc",
+			"y<c-space><c-n><c-/><a-;>", "// a\nb\nc", "a\nb\nc"},
+	}
+	for _, tc := range regionCases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, buf := newCommentHandler(t, tc.content)
+			feedKeys(t, h, tc.keys)
+			require.Equal(t, tc.want, buf.String())
+			require.True(t, runEvent(h, ctrl('/')))
+			assert.Equal(t, tc.afterUndo, buf.String(), "one undo reverts the toggle")
+		})
+	}
+
+	t.Run("a typing run before M-; still undoes in one step", func(t *testing.T) {
+		h, buf := newCommentHandler(t, "a\nb")
+		feedKeys(t, h, "xyz<a-;>")
+		require.Equal(t, "// xyza\nb", buf.String())
+		for _, want := range []string{"xyza\nb", "a\nb"} {
+			require.True(t, runEvent(h, ctrl('/')))
+			assert.Equal(t, want, buf.String())
+		}
+	})
+
+	t.Run("mark-defun activates the region", func(t *testing.T) {
+		h, buf := newCommentHandler(t, "f {\n\tx\n}\ny")
+		require.True(t, h.SetCursorAtScroll(term.Coordinates{Y: 1, X: 1}))
+		feedKeys(t, h, "<c-a-h><a-;>")
+		assert.Equal(t, "// f {\n// \tx\n// }\ny", buf.String())
+	})
+
+	t.Run("an active mark beyond a shrunk buffer is panic-free", func(t *testing.T) {
+		h, buf := newCommentHandler(t, "a\nb\nc")
+		feedKeys(t, h, "<c-n><c-n><c-space><c-p><c-p>")
+		buf.Edit(context.Background(), term.Coordinates{Y: 0, X: 1}, term.Coordinates{Y: 2, X: 1}, "")
+		require.Equal(t, "a", buf.String())
+		require.NotPanics(t, func() { h.Handle(alt(';')) })
+		assert.Equal(t, "// a", buf.String())
 	})
 
 	t.Run("without comment configuration M-; is a no-op", func(t *testing.T) {

@@ -7672,7 +7672,7 @@ func TestViGc(t *testing.T) {
 			name:        "gcap comments around paragraph selection",
 			fileText:    "alpha\nbeta\ngamma\n\ndelta\n",
 			events:      "gcap",
-			wantContent: "// alpha\n// beta\n// gamma\n\n// delta\n",
+			wantContent: "// alpha\n// beta\n// gamma\n\ndelta\n",
 			wantCoord:   term.Coordinates{X: 3, Y: 0},
 			wantMode:    normalMode,
 		},
@@ -8596,7 +8596,7 @@ type callbackAdapter struct {
 			events:      "gqap",
 			ruler:       20,
 			width:       60,
-			wantContent: "// alpha beta gamma\n// delta epsilon\n// zeta eta theta\n\n// keep second\n// paragraph intact\n",
+			wantContent: "// alpha beta gamma\n// delta epsilon\n// zeta eta theta\n\n// keep second paragraph intact\n",
 			wantMode:    normalMode,
 		},
 		{

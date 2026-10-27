@@ -3620,7 +3620,11 @@ func (c *Cursor) ToggleCase() (ok bool) {
 }
 
 // ToggleLineComment toggles the configured line-comment prefix on the current
-// line or selected lines.
+// line or selected lines. A right-exclusive selection that ends at the start
+// of a line leaves that line alone. Commenting aligns every prefix at the
+// shallowest visible indentation among the non-blank lines and skips blank
+// ones; uncommenting removes each line's prefix where it is. The edits undo in
+// a single step.
 func (c *Cursor) ToggleLineComment() bool {
 	if !c.commentSpec.HasLine() {
 		return false
@@ -3629,39 +3633,152 @@ func (c *Cursor) ToggleLineComment() bool {
 	fromY, toY := c.commentLineBounds()
 	nonBlank := 0
 	for y := fromY; y <= toY; y++ {
-		if strings.TrimLeft(c.lineString(y), " \t") != "" {
+		if line := c.lineString(y); len(leadingIndent(line)) < len(line) {
 			nonBlank++
 		}
 	}
 	if nonBlank == 0 {
 		return false
 	}
+	cur := c.cursorAtScroll()
+	onCursorLine := cur.Y >= fromY && cur.Y <= toY
 	commented := c.lineCommentedRanges(prefix, fromY, toY)
 	if len(commented) == toY-fromY+1 {
-		for i := len(commented) - 1; i >= 0; i-- {
-			if commented[i].Start == commented[i].End {
-				continue
+		c.buffer().GroupEdits(func() {
+			for i := len(commented) - 1; i >= 0; i-- {
+				if commented[i].Start == commented[i].End {
+					continue
+				}
+				c.buffer().Delete(commented[i].Start, commented[i].End)
 			}
-			c.buffer().Delete(commented[i].Start, commented[i].End)
+		})
+		if onCursorLine {
+			removed := commented[cur.Y-fromY]
+			switch {
+			case cur.X >= removed.End.X:
+				cur.X -= removed.End.X - removed.Start.X
+			case cur.X > removed.Start.X:
+				cur.X = removed.Start.X
+			}
 		}
-		c.setCursorAfterLineCommentToggle(prefix, false)
+		c.setCursorAfterUpdate(cur)
 		return true
 	}
-	for y := toY; y >= fromY; y-- {
+	tabspaces := c.resolveTabspaces(0)
+	col := -1
+	for y := fromY; y <= toY; y++ {
 		line := c.lineString(y)
-		trimmed := strings.TrimLeft(line, " \t")
-		if trimmed == "" {
+		indent := leadingIndent(line)
+		if len(indent) == len(line) {
 			continue
 		}
-		indent := len(line) - len(trimmed)
-		c.buffer().InsertString(term.Coordinates{Y: y, X: indent}, prefix+" ")
+		if w := indentWidth(indent, tabspaces); col < 0 || w < col {
+			col = w
+		}
 	}
-	c.setCursorAfterLineCommentToggle(prefix, true)
+	comment := prefix + " "
+	insertedAt := -1
+	c.buffer().GroupEdits(func() {
+		for y := toY; y >= fromY; y-- {
+			line := c.lineString(y)
+			indent := leadingIndent(line)
+			if len(indent) == len(line) {
+				continue
+			}
+			at := term.Coordinates{Y: y, X: indentOffsetAtWidth(indent, col, tabspaces)}
+			if y == cur.Y {
+				insertedAt = at.X
+			}
+			c.buffer().InsertString(at, comment)
+		}
+	})
+	if insertedAt >= 0 && cur.X >= insertedAt {
+		cur.X += cellCount(comment)
+	}
+	c.setCursorAfterUpdate(cur)
 	return true
 }
 
+// indentWidth is the number of columns line's leading whitespace spans.
+func indentWidth(line string, tabspaces int) int {
+	width := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			width++
+		case '\t':
+			width = (width/tabspaces + 1) * tabspaces
+		default:
+			return width
+		}
+	}
+	return width
+}
+
+// indentOffsetAtWidth is the byte offset into line's leading whitespace where
+// it first spans width columns, or where it stops short of a tab that would
+// carry it past them.
+func indentOffsetAtWidth(line string, width, tabspaces int) int {
+	covered := 0
+	for i, r := range line {
+		next := covered + 1
+		switch r {
+		case ' ':
+		case '\t':
+			next = (covered/tabspaces + 1) * tabspaces
+		default:
+			return i
+		}
+		if covered >= width || next > width {
+			return i
+		}
+		covered = next
+	}
+	return len(line)
+}
+
+// leadingIndent is the run of space and tab cells line starts with. A space
+// that carries a combining mark is one cell of content, not indentation.
+func leadingIndent(line string) string {
+	rest, state := line, -1
+	for rest != "" {
+		cluster, next, _, nextState := graphemecluster.StepString(rest, state)
+		if cluster != " " && cluster != "\t" {
+			break
+		}
+		rest, state = next, nextState
+	}
+	return line[:len(line)-len(rest)]
+}
+
+// hasCellPrefix reports whether s starts with prefix and prefix ends on a
+// cell boundary of s, so deleting prefix's cells deletes nothing else.
+func hasCellPrefix(s, prefix string) bool {
+	if !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	n, state := 0, -1
+	for n < len(prefix) {
+		var cluster string
+		cluster, _, _, state = graphemecluster.StepString(s[n:], state)
+		n += len(cluster)
+	}
+	return n == len(prefix)
+}
+
+// cellCount is how many buffer cells s takes once inserted: one per grapheme
+// cluster, however many bytes or columns each spans.
+func cellCount(s string) int {
+	n, state := 0, -1
+	for s != "" {
+		_, s, _, state = graphemecluster.StepString(s, state)
+		n++
+	}
+	return n
+}
+
 // ToggleBlockComment toggles the configured block comment delimiters around the
-// current selection.
+// current selection. The edits undo in a single step.
 func (c *Cursor) ToggleBlockComment() bool {
 	if !c.commentSpec.HasBlock() {
 		return false
@@ -3681,8 +3798,10 @@ func (c *Cursor) ToggleBlockComment() bool {
 	if rngs, covered := c.commentCoverage(term.Range{Start: from, End: to}); covered && len(rngs) == 1 {
 		comment := c.rangeString(rngs[0].Start, rngs[0].End)
 		if strings.HasPrefix(comment, open) && strings.HasSuffix(comment, close) {
-			c.buffer().Delete(term.Coordinates{Y: rngs[0].End.Y, X: rngs[0].End.X - len(close)}, rngs[0].End)
-			c.buffer().Delete(rngs[0].Start, term.Coordinates{Y: rngs[0].Start.Y, X: rngs[0].Start.X + len(open)})
+			c.buffer().GroupEdits(func() {
+				c.buffer().Delete(term.Coordinates{Y: rngs[0].End.Y, X: rngs[0].End.X - cellCount(close)}, rngs[0].End)
+				c.buffer().Delete(rngs[0].Start, term.Coordinates{Y: rngs[0].Start.Y, X: rngs[0].Start.X + cellCount(open)})
+			})
 			c.Unselect()
 			c.setCursorAfterUpdate(rngs[0].Start)
 			return true
@@ -3691,9 +3810,11 @@ func (c *Cursor) ToggleBlockComment() bool {
 	if !ok {
 		return false
 	}
-	c.buffer().InsertString(to, close)
-	c.buffer().InsertString(from, open)
-	c.setCursorAfterUpdate(term.Coordinates{Y: from.Y, X: from.X + len(open)})
+	c.buffer().GroupEdits(func() {
+		c.buffer().InsertString(to, close)
+		c.buffer().InsertString(from, open)
+	})
+	c.setCursorAfterUpdate(term.Coordinates{Y: from.Y, X: from.X + cellCount(open)})
 	return true
 }
 
@@ -3959,31 +4080,36 @@ func (c *Cursor) getShiftSelection() (from, to term.Coordinates) {
 }
 
 // ShiftSelectionRight shifts the current selection one indent level to the
-// right. The indent material is controlled by indentRune.
+// right as a single undo step. The indent material is controlled by
+// indentRune.
 func (c *Cursor) ShiftSelectionRight(indentRune rune, tabspaces int) {
 	from, to := c.getShiftSelection()
 
 	c.Unselect()
 
 	indent, _ := c.indentMaterial(indentRune, tabspaces)
-	for y := from.Y; y <= to.Y; y++ {
-		c.buffer().InsertString(term.Coordinates{Y: y}, indent)
-	}
+	c.buffer().GroupEdits(func() {
+		for y := from.Y; y <= to.Y; y++ {
+			c.buffer().InsertString(term.Coordinates{Y: y}, indent)
+		}
+	})
 }
 
 // ShiftSelectionLeft shifts the current selection one indent level to the
-// left. The indent material is controlled by indentRune. It returns false if
-// selection could not be shifted.
+// left as a single undo step. The indent material is controlled by
+// indentRune. It returns false if selection could not be shifted.
 func (c *Cursor) ShiftSelectionLeft(indentRune rune, tabspaces int) (ok bool) {
 	from, to := c.getShiftSelection()
 
 	c.Unselect()
 
-	for y := from.Y; y <= to.Y; y++ {
-		if _, sok := c.shiftRowLeft(y, indentRune, tabspaces); sok {
-			ok = true
+	c.buffer().GroupEdits(func() {
+		for y := from.Y; y <= to.Y; y++ {
+			if _, sok := c.shiftRowLeft(y, indentRune, tabspaces); sok {
+				ok = true
+			}
 		}
-	}
+	})
 	return
 }
 
@@ -4724,12 +4850,15 @@ func (c *Cursor) commentCoverage(rng term.Range) ([]term.Range, bool) {
 	return svc.CommentCoverage(rng)
 }
 
+// commentLineBounds returns the rows the selection covers, or the cursor's
+// row without one. Like VS Code's line commands, a character selection that
+// only reaches the start of its last row does not cover that row.
 func (c *Cursor) commentLineBounds() (int, int) {
-	if _, ok := c.SelectionMode(); ok {
-		if from, to, ok := c.selectionBounds(); ok {
-			from, to = term.CoordinatesSort(from, to)
-			return from.Y, to.Y
+	if from, to, ok := c.SelectionRange(); ok {
+		if c.selection.mode == StandardSelection && to.Y > from.Y && to.X == 0 {
+			to.Y--
 		}
+		return from.Y, to.Y
 	}
 	pos := c.cursorAtScroll()
 	return pos.Y, pos.Y
@@ -4739,22 +4868,22 @@ func (c *Cursor) lineCommentedRanges(_ string, fromY, toY int) []term.Range {
 	ret := make([]term.Range, 0, toY-fromY+1)
 	for y := fromY; y <= toY; y++ {
 		line := c.lineString(y)
-		trimmed := strings.TrimLeft(line, " \t")
+		indent := len(leadingIndent(line))
+		trimmed := line[indent:]
 		if trimmed == "" {
 			ret = append(ret, term.Range{})
 			continue
 		}
-		indent := len(line) - len(trimmed)
 		for _, candidate := range c.commentSpec.Line {
 			comment := candidate
-			if strings.HasPrefix(trimmed, candidate+" ") {
+			if hasCellPrefix(trimmed, candidate+" ") {
 				comment = candidate + " "
 			}
-			if !strings.HasPrefix(trimmed, comment) {
+			if !hasCellPrefix(trimmed, comment) {
 				continue
 			}
 			start := term.Coordinates{Y: y, X: indent}
-			end := term.Coordinates{Y: y, X: indent + len(comment)}
+			end := term.Coordinates{Y: y, X: indent + cellCount(comment)}
 			coverage, ok := c.commentCoverage(term.Range{Start: start, End: end})
 			if ok && len(coverage) != 0 {
 				ret = append(ret, term.Range{Start: start, End: end})
@@ -4765,30 +4894,6 @@ func (c *Cursor) lineCommentedRanges(_ string, fromY, toY int) []term.Range {
 	nextLine:
 	}
 	return ret
-}
-
-func (c *Cursor) setCursorAfterLineCommentToggle(prefix string, inserted bool) {
-	cur := c.cursorAtScroll()
-	adjust := len(prefix)
-	if inserted {
-		adjust++
-	}
-	line := c.lineString(cur.Y)
-	trimmed := strings.TrimLeft(line, " \t")
-	if trimmed == "" {
-		return
-	}
-	indent := len(line) - len(trimmed)
-	if inserted {
-		if cur.X >= indent {
-			cur.X += adjust
-		}
-	} else if cur.X >= indent+adjust {
-		cur.X -= adjust
-	} else {
-		cur.X = max(indent, 0)
-	}
-	c.setCursorAfterUpdate(cur)
 }
 
 func (c *Cursor) lineString(y int) string {

@@ -426,7 +426,7 @@ Rune places its own clipboard commands on <KeyBinding command="clipboardcopy" ch
 | `<alt-l>` | lowercase the current or next word |
 | `<alt-c>` | capitalize the current or next word |
 | `<alt-q>` | fill the paragraph at Rune's ruler column |
-| `<alt-;>` | toggle the language's line comment |
+| `<alt-;>` | toggle the language's line comment on the active region's lines, or the current line |
 
 Emacs word commands treat Unicode letters and digits as word constituents;
 underscores and other punctuation separate words. Line comments require

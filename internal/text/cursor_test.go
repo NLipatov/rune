@@ -5809,6 +5809,64 @@ func TestCursorShiftSelectionRightTable(t *testing.T) {
 			},
 			want: "  hello\nworld",
 		},
+		{
+			name:       "a backward selection indents the same rows",
+			content:    "a\nb\nc",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.MoveDown())
+				require.True(t, c.Select())
+				require.True(t, c.MoveUp())
+			},
+			want: "\ta\n\tb\nc",
+		},
+		{
+			name:       "a block selection indents every row it spans",
+			content:    "ab\ncd\nef",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectBlock())
+				require.True(t, c.MoveDown())
+				require.True(t, c.MoveDown())
+			},
+			want: "\tab\n\tcd\n\tef",
+		},
+		{
+			name:       "rows of wide runes and emoji",
+			content:    "界\n👨‍👧‍👦\n🇯🇵",
+			tabspaces:  2,
+			indentRune: IndentRuneSpace,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+				require.True(t, c.MoveDown())
+			},
+			want: "  界\n  👨‍👧‍👦\n  🇯🇵",
+		},
+		{
+			name:       "rows starting with nul and carriage return cells",
+			content:    "\x00a\n\rb",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+			},
+			want: "\t\x00a\n\t\rb",
+		},
+		{
+			name:       "space indents a tab-indented row in front of the tab",
+			content:    "\ta\nb",
+			tabspaces:  2,
+			indentRune: IndentRuneSpace,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+			},
+			want: "  \ta\n  b",
+		},
 	}
 
 	for _, tc := range tsuite {
@@ -5827,6 +5885,15 @@ func TestCursorShiftSelectionRightTable(t *testing.T) {
 						"space indent must never introduce tabs")
 				}
 			}
+
+			for round := range 2 {
+				require.True(t, c.Undo())
+				assert.Equal(t, tc.content, c.scroll.Buffer().String(), "round %d: one undo reverts the shift", round)
+				require.True(t, c.Redo())
+				assert.Equal(t, tc.want, c.scroll.Buffer().String(), "round %d: one redo reapplies it", round)
+			}
+			require.True(t, c.Undo())
+			assert.False(t, c.Undo())
 		})
 	}
 }
@@ -5937,6 +6004,78 @@ func TestCursorShiftSelectionLeftTable(t *testing.T) {
 			wantOk: true,
 			want:   "a\nb",
 		},
+		{
+			name:       "a backward selection dedents the same rows",
+			content:    "\ta\n\tb\n\tc",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.MoveDown())
+				require.True(t, c.Select())
+				require.True(t, c.MoveUp())
+			},
+			wantOk: true,
+			want:   "a\nb\n\tc",
+		},
+		{
+			name:       "a block selection dedents every row it spans",
+			content:    "\tab\n\tcd",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectBlock())
+				require.True(t, c.MoveDown())
+			},
+			wantOk: true,
+			want:   "ab\ncd",
+		},
+		{
+			name:       "rows of wide runes and emoji",
+			content:    "  界\n  👨‍👧‍👦",
+			tabspaces:  2,
+			indentRune: IndentRuneSpace,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+			},
+			wantOk: true,
+			want:   "界\n👨‍👧‍👦",
+		},
+		{
+			name:       "tab mode removes a single leading space",
+			content:    "  a\nb",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+			},
+			wantOk: true,
+			want:   " a\nb",
+		},
+		{
+			name:       "space mode stops at a tab after spaces",
+			content:    " \ta",
+			tabspaces:  4,
+			indentRune: IndentRuneSpace,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+			},
+			wantOk: true,
+			want:   "\ta",
+		},
+		{
+			name:       "leading nul and carriage return cells are not indentation",
+			content:    "\x00a\n\rb",
+			tabspaces:  4,
+			indentRune: IndentRuneTab,
+			selectSetup: func(c *Cursor) {
+				require.True(t, c.SelectLine())
+				require.True(t, c.MoveDown())
+			},
+			wantOk: false,
+			want:   "\x00a\n\rb",
+		},
 	}
 
 	for _, tc := range tsuite {
@@ -5949,6 +6088,17 @@ func TestCursorShiftSelectionLeftTable(t *testing.T) {
 
 			assert.Equal(t, tc.wantOk, ok)
 			assert.Equal(t, tc.want, c.scroll.Buffer().String())
+
+			if tc.wantOk {
+				for round := range 2 {
+					require.True(t, c.Undo())
+					assert.Equal(t, tc.content, c.scroll.Buffer().String(), "round %d: one undo reverts the shift", round)
+					require.True(t, c.Redo())
+					assert.Equal(t, tc.want, c.scroll.Buffer().String(), "round %d: one redo reapplies it", round)
+				}
+				require.True(t, c.Undo())
+			}
+			assert.False(t, c.Undo())
 		})
 	}
 }
@@ -7776,7 +7926,7 @@ func (s testCommentService) CommentCoverage(rng term.Range) ([]term.Range, bool)
 				if strings.HasPrefix(trimmed, candidate) {
 					ranges = append(ranges, term.Range{
 						Start: term.Coordinates{Y: y, X: indent},
-						End:   term.Coordinates{Y: y, X: len(line)},
+						End:   term.Coordinates{Y: y, X: cellCount(line)},
 					})
 					goto nextLine
 				}
@@ -7787,8 +7937,8 @@ func (s testCommentService) CommentCoverage(rng term.Range) ([]term.Range, bool)
 			closeIdx := strings.LastIndex(line, block.End)
 			if openIdx >= 0 && closeIdx >= openIdx+len(block.Start) {
 				ranges = append(ranges, term.Range{
-					Start: term.Coordinates{Y: y, X: openIdx},
-					End:   term.Coordinates{Y: y, X: closeIdx + len(block.End)},
+					Start: term.Coordinates{Y: y, X: cellCount(line[:openIdx])},
+					End:   term.Coordinates{Y: y, X: cellCount(line[:closeIdx+len(block.End)])},
 				})
 				goto nextLine
 			}
@@ -7800,6 +7950,17 @@ func (s testCommentService) CommentCoverage(rng term.Range) ([]term.Range, bool)
 		return nil, false
 	}
 	return ranges, true
+}
+
+// fixedCommentService reports the same comment ranges for any query, standing
+// in for a syntax tree whose comments span lines or sit side by side.
+type fixedCommentService struct {
+	cell.View
+	ranges []term.Range
+}
+
+func (s fixedCommentService) CommentCoverage(term.Range) ([]term.Range, bool) {
+	return s.ranges, len(s.ranges) > 0
 }
 
 func attachCommentTestView(c *Cursor, spec CommentSpec) {
@@ -7824,6 +7985,10 @@ func TestCursorToggleLineComment(t *testing.T) {
 		name        string
 		content     string
 		at          term.Coordinates
+		exclusive   bool
+		tabspaces   int
+		wrapWidth   int
+		noService   bool
 		selectFn    func(*Cursor)
 		spec        CommentSpec
 		wantHandled bool
@@ -7833,6 +7998,16 @@ func TestCursorToggleLineComment(t *testing.T) {
 
 	goSpec := CommentSpec{Line: []string{"//"}}
 	hashSpec := CommentSpec{Line: []string{"#"}}
+	aplSpec := CommentSpec{Line: []string{"⍝"}}
+	// The cases assert what the selection covered, so a move that stays put
+	// is fine here.
+	selectTo := func(to term.Coordinates) func(*Cursor) {
+		return func(c *Cursor) {
+			c.Select()
+			c.MoveToScroll(to)
+		}
+	}
+	at := func(y, x int) term.Coordinates { return term.Coordinates{Y: y, X: x} }
 
 	tests := []testCase{
 		{
@@ -7851,7 +8026,7 @@ func TestCursorToggleLineComment(t *testing.T) {
 			spec:        goSpec,
 			wantHandled: true,
 			wantContent: "a\nb",
-			wantCursor:  term.Coordinates{Y: 0, X: 1},
+			wantCursor:  term.Coordinates{Y: 0, X: 0},
 		},
 		{
 			name:    "selected two lines comments both lines",
@@ -7879,7 +8054,7 @@ func TestCursorToggleLineComment(t *testing.T) {
 			spec:        goSpec,
 			wantHandled: true,
 			wantContent: "a\nb",
-			wantCursor:  term.Coordinates{Y: 1, X: 1},
+			wantCursor:  term.Coordinates{Y: 1, X: 0},
 		},
 		{
 			name:        "alternate line prefix works",
@@ -7938,7 +8113,7 @@ func TestCursorToggleLineComment(t *testing.T) {
 			spec:        goSpec,
 			wantHandled: true,
 			wantContent: "\ta",
-			wantCursor:  term.Coordinates{Y: 0, X: 2},
+			wantCursor:  term.Coordinates{Y: 0, X: 1},
 		},
 		{
 			name:        "indented content comments at indentation boundary",
@@ -7998,7 +8173,7 @@ func TestCursorToggleLineComment(t *testing.T) {
 			spec:        goSpec,
 			wantHandled: true,
 			wantContent: "a\n\nb",
-			wantCursor:  term.Coordinates{Y: 2, X: 1},
+			wantCursor:  term.Coordinates{Y: 2, X: 0},
 		},
 		{
 			name:        "only-prefix line uncomments to empty",
@@ -8007,14 +8182,358 @@ func TestCursorToggleLineComment(t *testing.T) {
 			spec:        goSpec,
 			wantHandled: true,
 			wantContent: "",
-			wantCursor:  term.Coordinates{Y: 0, X: 1},
+			wantCursor:  term.Coordinates{Y: 0, X: 0},
+		},
+		{
+			name:        "exclusive selection ending at a line start leaves that line alone",
+			content:     "a\nb\nc",
+			exclusive:   true,
+			selectFn:    selectTo(term.Coordinates{Y: 2}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "// a\n// b\nc",
+			wantCursor:  term.Coordinates{Y: 2},
+		},
+		{
+			name:        "exclusive selection ending at a line start uncomments only lines above",
+			content:     "// a\n// b\n// c",
+			exclusive:   true,
+			selectFn:    selectTo(term.Coordinates{Y: 2}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "a\nb\n// c",
+			wantCursor:  term.Coordinates{Y: 2},
+		},
+		{
+			name:        "exclusive selection ending inside a line includes it",
+			content:     "a\nbc",
+			exclusive:   true,
+			selectFn:    selectTo(term.Coordinates{Y: 1, X: 1}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "// a\n// bc",
+			wantCursor:  term.Coordinates{Y: 1, X: 4},
+		},
+		{
+			name:        "exclusive selection within the first line is not shrunk",
+			content:     "ab\nc",
+			exclusive:   true,
+			selectFn:    selectTo(term.Coordinates{X: 1}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "// ab\nc",
+			wantCursor:  term.Coordinates{X: 4},
+		},
+		{
+			name:        "prefixes align at the shallowest indentation",
+			content:     "if a:\n    b\n  c",
+			selectFn:    selectTo(term.Coordinates{Y: 2}),
+			spec:        hashSpec,
+			wantHandled: true,
+			wantContent: "# if a:\n#     b\n#   c",
+			wantCursor:  term.Coordinates{Y: 2, X: 2},
+		},
+		{
+			name:        "prefixes align at a shared nonzero indentation",
+			content:     "  a\n    b",
+			at:          term.Coordinates{X: 2},
+			selectFn:    selectTo(term.Coordinates{Y: 1, X: 4}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "  // a\n  //   b",
+			wantCursor:  term.Coordinates{Y: 1, X: 7},
+		},
+		{
+			name:        "blank lines do not lower the alignment",
+			content:     "  a\n\n  b",
+			at:          term.Coordinates{X: 2},
+			selectFn:    selectTo(term.Coordinates{Y: 2, X: 2}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "  // a\n\n  // b",
+			wantCursor:  term.Coordinates{Y: 2, X: 5},
+		},
+		{
+			name:        "tab and space indents align by visible column",
+			content:     "\ta\n    b",
+			tabspaces:   4,
+			at:          term.Coordinates{X: 1},
+			selectFn:    selectTo(term.Coordinates{Y: 1, X: 4}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "\t// a\n    // b",
+			wantCursor:  term.Coordinates{Y: 1, X: 7},
+		},
+		{
+			name:        "a tab past the alignment column keeps the prefix before it",
+			content:     "\t\ta\n  b",
+			tabspaces:   4,
+			selectFn:    selectTo(term.Coordinates{Y: 1, X: 2}),
+			spec:        goSpec,
+			wantHandled: true,
+			wantContent: "// \t\ta\n  // b",
+			wantCursor:  term.Coordinates{Y: 1, X: 5},
+		},
+		{
+			name:        "lines commented at a shared indentation uncomment in place",
+			content:     "# if a:\n#     b",
+			selectFn:    selectTo(term.Coordinates{Y: 1}),
+			spec:        hashSpec,
+			wantHandled: true,
+			wantContent: "if a:\n    b",
+			wantCursor:  term.Coordinates{Y: 1},
+		},
+		{
+			name: "tabs align at the shallowest tab stop", content: "\t\ta\n\tb", tabspaces: 4,
+			selectFn: selectTo(at(1, 2)), spec: goSpec, wantHandled: true,
+			wantContent: "\t// \ta\n\t// b", wantCursor: at(1, 5),
+		},
+		{
+			name: "tab stops follow a narrow tabspaces", content: "  a\n\tb", tabspaces: 2,
+			selectFn: selectTo(at(1, 1)), spec: goSpec, wantHandled: true,
+			wantContent: "  // a\n\t// b", wantCursor: at(1, 4),
+		},
+		{
+			name: "a tab wider than the alignment keeps the prefix before it", content: "  a\n\tb",
+			tabspaces: 8, selectFn: selectTo(at(1, 1)), spec: goSpec, wantHandled: true,
+			wantContent: "  // a\n// \tb", wantCursor: at(1, 4),
+		},
+		{
+			name: "a space before a tab reaches the same stop", content: " \ta\n    b", tabspaces: 4,
+			selectFn: selectTo(at(1, 4)), spec: goSpec, wantHandled: true,
+			wantContent: " \t// a\n    // b", wantCursor: at(1, 7),
+		},
+		{
+			name: "tabs inside the text are not indentation", content: "a\tb", spec: goSpec,
+			wantHandled: true, wantContent: "// a\tb", wantCursor: at(0, 3),
+		},
+		{
+			name: "uncommenting keeps tab indentation", content: "\t// a\n\t\t// b",
+			selectFn: selectTo(at(1, 5)), spec: goSpec, wantHandled: true,
+			wantContent: "\ta\n\t\tb", wantCursor: at(1, 2),
+		},
+		{
+			name: "lines of only spaces and tabs are skipped", content: "a\n \t \nb",
+			selectFn: selectTo(at(2, 0)), spec: goSpec, wantHandled: true,
+			wantContent: "// a\n \t \n// b", wantCursor: at(2, 3),
+		},
+		{
+			name: "lines of only spaces and tabs toggle nothing", content: " \t\n\t",
+			selectFn: selectTo(at(1, 0)), spec: goSpec, wantHandled: false,
+			wantContent: " \t\n\t", wantCursor: at(1, 0),
+		},
+		{
+			name: "only empty lines toggle nothing", content: "\n\n", at: at(1, 0), spec: goSpec,
+			wantHandled: false, wantContent: "\n\n", wantCursor: at(1, 0),
+		},
+		{
+			name: "wide runes move the caret by cells", content: "界界", at: at(0, 1), spec: goSpec,
+			wantHandled: true, wantContent: "// 界界", wantCursor: at(0, 4),
+		},
+		{
+			name: "uncommenting before wide runes", content: "// 界界", at: at(0, 4), spec: goSpec,
+			wantHandled: true, wantContent: "界界", wantCursor: at(0, 1),
+		},
+		{
+			name: "a zwj emoji is a single cell", content: "👨‍👧‍👦x", at: at(0, 1), spec: goSpec,
+			wantHandled: true, wantContent: "// 👨‍👧‍👦x", wantCursor: at(0, 4),
+		},
+		{
+			name: "flags and skin tones are single cells", content: "🇯🇵👍🏽", at: at(0, 2), spec: goSpec,
+			wantHandled: true, wantContent: "// 🇯🇵👍🏽", wantCursor: at(0, 5),
+		},
+		{
+			name: "uncommenting emoji keeps the caret on its cell", content: "// 🇯🇵👍🏽", at: at(0, 4),
+			spec: goSpec, wantHandled: true, wantContent: "🇯🇵👍🏽", wantCursor: at(0, 1),
+		},
+		{
+			name: "combining marks stay on their base", content: "e\u0301x", at: at(0, 1), spec: goSpec,
+			wantHandled: true, wantContent: "// e\u0301x", wantCursor: at(0, 4),
+		},
+		{
+			name: "uncommenting before a combining mark", content: "// e\u0301x", at: at(0, 4),
+			spec: goSpec, wantHandled: true, wantContent: "e\u0301x", wantCursor: at(0, 1),
+		},
+		{
+			name: "a space carrying a combining mark is content, not indentation", content: " \u0301x",
+			spec: goSpec, wantHandled: true, wantContent: "//  \u0301x", wantCursor: at(0, 3),
+		},
+		{
+			name: "a commented space carrying a combining mark uncomments", content: "//  \u0301x",
+			at: at(0, 4), spec: goSpec, wantHandled: true, wantContent: " \u0301x", wantCursor: at(0, 1),
+		},
+		{
+			name:    "a space carrying a combining mark does not lower the alignment",
+			content: "  a\n \u0301b", selectFn: selectTo(at(1, 1)), spec: goSpec, wantHandled: true,
+			wantContent: "//   a\n//  \u0301b", wantCursor: at(1, 4),
+		},
+		{
+			name: "a lone combining mark is content", content: "\u0301x", spec: goSpec,
+			wantHandled: true, wantContent: "// \u0301x", wantCursor: at(0, 3),
+		},
+		{
+			name: "a prefix space carrying a combining mark keeps the mark", content: "// \u0301x",
+			at: at(0, 3), spec: goSpec, wantHandled: true, wantContent: " \u0301x", wantCursor: at(0, 1),
+		},
+		{
+			name: "a prefix fused with a combining mark is not a comment", content: "#\u0301 x",
+			spec: hashSpec, wantHandled: true, wantContent: "# #\u0301 x", wantCursor: at(0, 2),
+		},
+		{
+			name: "emoji lines align like any other", content: "  😀\n    👍🏽",
+			selectFn: selectTo(at(1, 4)), spec: goSpec, wantHandled: true,
+			wantContent: "  // 😀\n  //   👍🏽", wantCursor: at(1, 7),
+		},
+		{
+			name: "nul cells are content", content: "\x00", spec: goSpec,
+			wantHandled: true, wantContent: "// \x00", wantCursor: at(0, 3),
+		},
+		{
+			name: "uncommenting before a nul cell", content: "// \x00", at: at(0, 3), spec: goSpec,
+			wantHandled: true, wantContent: "\x00", wantCursor: at(0, 0),
+		},
+		{
+			name: "a carriage return is content", content: "a\r", spec: goSpec,
+			wantHandled: true, wantContent: "// a\r", wantCursor: at(0, 3),
+		},
+		{
+			name: "a no-break space is content, not indentation", content: "\u00a0a", spec: goSpec,
+			wantHandled: true, wantContent: "// \u00a0a", wantCursor: at(0, 3),
+		},
+		{
+			name: "an ideographic space is content, not indentation", content: "\u3000a", spec: goSpec,
+			wantHandled: true, wantContent: "// \u3000a", wantCursor: at(0, 3),
+		},
+		{
+			name: "a non-ASCII prefix moves the caret by cells", content: "xy", at: at(0, 2), spec: aplSpec,
+			wantHandled: true, wantContent: "⍝ xy", wantCursor: at(0, 4),
+		},
+		{
+			name: "a non-ASCII prefix uncomments exactly", content: "⍝ xy", at: at(0, 3), spec: aplSpec,
+			wantHandled: true, wantContent: "xy", wantCursor: at(0, 1),
+		},
+		{
+			name: "a non-ASCII prefix uncomments at depth", content: "  ⍝ x\n    ⍝ y",
+			selectFn: selectTo(at(1, 7)), spec: aplSpec, wantHandled: true,
+			wantContent: "  x\n    y", wantCursor: at(1, 5),
+		},
+		{
+			name: "a multi-character prefix comments", content: "x",
+			spec: CommentSpec{Line: []string{"--"}}, wantHandled: true, wantContent: "-- x", wantCursor: at(0, 3),
+		},
+		{
+			name: "a multi-character prefix uncomments", content: "-- x", at: at(0, 3),
+			spec: CommentSpec{Line: []string{"--"}}, wantHandled: true, wantContent: "x", wantCursor: at(0, 0),
+		},
+		{
+			name: "a prefix followed by a tab loses only the prefix", content: "//\ta", at: at(0, 3),
+			spec: goSpec, wantHandled: true, wantContent: "\ta", wantCursor: at(0, 1),
+		},
+		{
+			name: "a prefix followed by spaces loses one space", content: "//  a", at: at(0, 4),
+			spec: goSpec, wantHandled: true, wantContent: " a", wantCursor: at(0, 1),
+		},
+		{
+			name: "lines commented with a secondary prefix uncomment", content: "# a\n// b",
+			selectFn: selectTo(at(1, 4)), spec: CommentSpec{Line: []string{"//", "#"}},
+			wantHandled: true, wantContent: "a\nb", wantCursor: at(1, 1),
+		},
+		{
+			name: "the primary prefix comments", content: "x", spec: CommentSpec{Line: []string{"//", "#"}},
+			wantHandled: true, wantContent: "// x", wantCursor: at(0, 3),
+		},
+		{
+			name: "comments at different depths uncomment in place", content: "// a\n    // b",
+			selectFn: selectTo(at(1, 7)), spec: goSpec, wantHandled: true,
+			wantContent: "a\n    b", wantCursor: at(1, 4),
+		},
+		{
+			name: "a prefix-only indented line uncomments to its indentation", content: "  //", at: at(0, 4),
+			spec: goSpec, wantHandled: true, wantContent: "  ", wantCursor: at(0, 2),
+		},
+		{
+			name: "without a comment service a commented line is commented again", content: "// x",
+			noService: true, spec: goSpec, wantHandled: true, wantContent: "// // x", wantCursor: at(0, 3),
+		},
+		{
+			name: "a backward selection covers the same lines", content: "a\nb\nc", at: at(2, 1),
+			selectFn: selectTo(at(0, 0)), spec: goSpec, wantHandled: true,
+			wantContent: "// a\n// b\n// c", wantCursor: at(0, 3),
+		},
+		{
+			name:    "a backward exclusive selection anchored at a line start skips that line",
+			content: "a\nb\nc", at: at(2, 0), exclusive: true, selectFn: selectTo(at(0, 0)),
+			spec: goSpec, wantHandled: true, wantContent: "// a\n// b\nc", wantCursor: at(0, 3),
+		},
+		{
+			name: "a selection of only a line break comments the line it starts on", content: "a\nb",
+			at: at(0, 1), exclusive: true, selectFn: selectTo(at(1, 0)), spec: goSpec,
+			wantHandled: true, wantContent: "// a\nb", wantCursor: at(1, 0),
+		},
+		{
+			name:    "a block selection covers every row it spans even from column zero",
+			content: "ab\ncd\nef", exclusive: true,
+			selectFn: func(c *Cursor) {
+				require.True(t, c.SelectBlock())
+				_, ok := c.MoveToScroll(at(2, 0))
+				require.True(t, ok)
+			},
+			spec: goSpec, wantHandled: true, wantContent: "// ab\n// cd\n// ef", wantCursor: at(2, 3),
+		},
+		{
+			name: "an explicit range ending at a line start skips that line", content: "a\nb\nc",
+			selectFn: func(c *Cursor) { require.True(t, c.SelectRange(at(0, 0), at(2, 0))) },
+			spec:     goSpec, wantHandled: true, wantContent: "// a\n// b\nc", wantCursor: at(0, 3),
+		},
+		{
+			name: "selecting through a trailing newline", content: "a\nb\n", exclusive: true,
+			selectFn: selectTo(at(2, 0)), spec: goSpec, wantHandled: true,
+			wantContent: "// a\n// b\n", wantCursor: at(2, 0),
+		},
+		{
+			name: "a caret past the line end moves with the text", content: "ab\nc", at: at(0, 4),
+			spec: goSpec, wantHandled: true, wantContent: "// ab\nc", wantCursor: at(0, 7),
+		},
+		{
+			name: "a caret before the alignment column stays", content: "    a\n  b",
+			selectFn: selectTo(at(1, 0)), spec: goSpec, wantHandled: true,
+			wantContent: "  //   a\n  // b", wantCursor: at(1, 0),
+		},
+		{
+			name: "a caret inside the removed prefix snaps to its start", content: "  // a", at: at(0, 3),
+			spec: goSpec, wantHandled: true, wantContent: "  a", wantCursor: at(0, 2),
+		},
+		{
+			name: "a caret on a blank line in the selection stays", content: "a\n\nb",
+			selectFn: selectTo(at(1, 0)), spec: goSpec, wantHandled: true,
+			wantContent: "// a\n\nb", wantCursor: at(1, 0),
+		},
+		{
+			name: "a wrapped line keeps the caret on its text", content: "abcdefghij", wrapWidth: 6,
+			at: at(0, 7), spec: goSpec, wantHandled: true, wantContent: "// abcdefghij", wantCursor: at(0, 10),
+		},
+		{
+			name: "a wrapped line uncomments", content: "// abcdefghij", wrapWidth: 6,
+			at: at(0, 10), spec: goSpec, wantHandled: true, wantContent: "abcdefghij", wantCursor: at(0, 7),
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			c := setupCursorContent(t, 80, 10, tc.content, false)
-			attachCommentTestView(c, tc.spec)
+			width, wrap := 80, false
+			if tc.wrapWidth > 0 {
+				width, wrap = tc.wrapWidth, true
+			}
+			c := setupCursorContent(t, width, 10, tc.content, wrap)
+			c.RightInclusiveSemantics = !tc.exclusive
+			if tc.tabspaces > 0 {
+				c.scroll.SetTabspaces(tc.tabspaces)
+			}
+			if tc.noService {
+				c.SetCommentSpec(tc.spec)
+			} else {
+				attachCommentTestView(c, tc.spec)
+			}
 			setCursorAtOrFail(t, c, tc.at)
 			if tc.selectFn != nil {
 				tc.selectFn(c)
@@ -8023,6 +8542,18 @@ func TestCursorToggleLineComment(t *testing.T) {
 			assert.Equal(t, tc.wantHandled, handled)
 			assert.Equal(t, tc.wantContent, c.buffer().String())
 			assert.Equal(t, tc.wantCursor, c.CursorAtScroll())
+
+			if handled {
+				for round := range 2 {
+					require.True(t, c.Undo())
+					assert.Equal(t, tc.content, c.buffer().String(), "round %d: one undo reverts the toggle", round)
+					require.True(t, c.Redo())
+					assert.Equal(t, tc.wantContent, c.buffer().String(), "round %d: one redo reapplies it", round)
+				}
+				require.True(t, c.Undo())
+			}
+			assert.False(t, c.Undo())
+			assert.Equal(t, tc.content, c.buffer().String())
 		})
 	}
 }
@@ -8034,6 +8565,8 @@ func TestCursorToggleBlockComment(t *testing.T) {
 		name        string
 		content     string
 		at          term.Coordinates
+		exclusive   bool
+		ranges      []term.Range
 		selectFn    func(*Cursor)
 		spec        CommentSpec
 		wantHandled bool
@@ -8042,6 +8575,18 @@ func TestCursorToggleBlockComment(t *testing.T) {
 	}
 
 	spec := CommentSpec{Block: []CommentBlock{{Start: "/*", End: "*/"}}}
+	guillemets := CommentSpec{Block: []CommentBlock{{Start: "«", End: "»"}}}
+	html := CommentSpec{Block: []CommentBlock{{Start: "<!--", End: "-->"}}}
+	at := func(y, x int) term.Coordinates { return term.Coordinates{Y: y, X: x} }
+	rng := func(from, to term.Coordinates) term.Range { return term.Range{Start: from, End: to} }
+	// The cases assert what the selection covered, so a move that stays put
+	// (selecting a single cell) is fine here.
+	selectTo := func(to term.Coordinates) func(*Cursor) {
+		return func(c *Cursor) {
+			c.Select()
+			c.MoveToScroll(to)
+		}
+	}
 
 	tests := []testCase{
 		{
@@ -8131,12 +8676,105 @@ func TestCursorToggleBlockComment(t *testing.T) {
 			wantContent: "/*abc*/",
 			wantCursor:  term.Coordinates{X: 2},
 		},
+		{
+			name: "a multi-line selection wraps across rows", content: "ab\ncd",
+			selectFn: selectTo(at(1, 1)), spec: spec, wantHandled: true,
+			wantContent: "/*ab\ncd*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "wide runes wrap by cell", content: "界界",
+			selectFn: selectTo(at(0, 1)), spec: spec, wantHandled: true,
+			wantContent: "/*界界*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "a zwj emoji wraps whole", content: "👨‍👧‍👦x",
+			selectFn: selectTo(at(0, 0)), spec: spec, wantHandled: true,
+			wantContent: "/*👨‍👧‍👦*/x", wantCursor: at(0, 2),
+		},
+		{
+			name: "a block over a wide rune unwraps", content: "/*界*/", at: at(0, 2),
+			spec: spec, wantHandled: true, wantContent: "界", wantCursor: at(0, 0),
+		},
+		{
+			name: "tabs inside the selection", content: "\ta\tb",
+			selectFn: selectTo(at(0, 3)), spec: spec, wantHandled: true,
+			wantContent: "/*\ta\tb*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "nul cells and carriage returns wrap", content: "\x00\r",
+			selectFn: selectTo(at(0, 1)), spec: spec, wantHandled: true,
+			wantContent: "/*\x00\r*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "an exclusive selection leaves its end out", content: "abc", exclusive: true,
+			selectFn: selectTo(at(0, 2)), spec: spec, wantHandled: true,
+			wantContent: "/*ab*/c", wantCursor: at(0, 2),
+		},
+		{
+			name: "non-ASCII delimiters move the caret by cells", content: "ab",
+			selectFn: selectTo(at(0, 1)), spec: guillemets, wantHandled: true,
+			wantContent: "«ab»", wantCursor: at(0, 1),
+		},
+		{
+			name: "non-ASCII delimiters unwrap exactly", content: "«ab»", at: at(0, 1),
+			spec: guillemets, wantHandled: true, wantContent: "ab", wantCursor: at(0, 0),
+		},
+		{
+			name: "multi-character delimiters wrap", content: "ab",
+			selectFn: selectTo(at(0, 1)), spec: html, wantHandled: true,
+			wantContent: "<!--ab-->", wantCursor: at(0, 4),
+		},
+		{
+			name: "multi-character delimiters unwrap", content: "<!--ab-->", at: at(0, 5),
+			spec: html, wantHandled: true, wantContent: "ab", wantCursor: at(0, 0),
+		},
+		{
+			name: "a block inside a line unwraps in place", content: "x /*ab*/ y", at: at(0, 4),
+			spec: spec, wantHandled: true, wantContent: "x ab y", wantCursor: at(0, 2),
+		},
+		{
+			name: "a block spanning lines unwraps", content: "/*ab\ncd*/", at: at(0, 2),
+			ranges: []term.Range{rng(at(0, 0), at(1, 4))}, spec: spec, wantHandled: true,
+			wantContent: "ab\ncd", wantCursor: at(0, 0),
+		},
+		{
+			name: "two comments under a selection are wrapped together", content: "/*a*/ /*b*/",
+			ranges:   []term.Range{rng(at(0, 0), at(0, 5)), rng(at(0, 6), at(0, 11))},
+			selectFn: selectTo(at(0, 10)), spec: spec, wantHandled: true,
+			wantContent: "/*/*a*/ /*b*/*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "two comments under the caret are not unwrapped", content: "/*a*/ /*b*/", at: at(0, 5),
+			ranges: []term.Range{rng(at(0, 0), at(0, 5)), rng(at(0, 6), at(0, 11))},
+			spec:   spec, wantHandled: false, wantContent: "/*a*/ /*b*/", wantCursor: at(0, 5),
+		},
+		{
+			name: "a line comment under the caret is not unwrapped", content: "// x", at: at(0, 1),
+			ranges: []term.Range{rng(at(0, 0), at(0, 4))}, spec: spec,
+			wantHandled: false, wantContent: "// x", wantCursor: at(0, 1),
+		},
+		{
+			name: "a line comment under a selection is wrapped", content: "// x",
+			ranges:   []term.Range{rng(at(0, 0), at(0, 4))},
+			selectFn: selectTo(at(0, 3)), spec: spec, wantHandled: true,
+			wantContent: "/*// x*/", wantCursor: at(0, 2),
+		},
+		{
+			name: "an empty buffer has nothing to wrap", content: "", spec: spec,
+			wantHandled: false, wantContent: "", wantCursor: at(0, 0),
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			c := setupCursorContent(t, 80, 10, tc.content, false)
-			attachCommentTestView(c, tc.spec)
+			c.RightInclusiveSemantics = !tc.exclusive
+			if tc.ranges != nil {
+				c.buffer().WithView(fixedCommentService{View: c.buffer().View(), ranges: tc.ranges})
+				c.SetCommentSpec(tc.spec)
+			} else {
+				attachCommentTestView(c, tc.spec)
+			}
 			setCursorAtOrFail(t, c, tc.at)
 			if tc.selectFn != nil {
 				tc.selectFn(c)
@@ -8145,6 +8783,168 @@ func TestCursorToggleBlockComment(t *testing.T) {
 			assert.Equal(t, tc.wantHandled, handled)
 			assert.Equal(t, tc.wantContent, c.buffer().String())
 			assert.Equal(t, tc.wantCursor, c.CursorAtScroll())
+
+			if handled {
+				for round := range 2 {
+					require.True(t, c.Undo())
+					assert.Equal(t, tc.content, c.buffer().String(), "round %d: one undo reverts the toggle", round)
+					require.True(t, c.Redo())
+					assert.Equal(t, tc.wantContent, c.buffer().String(), "round %d: one redo reapplies it", round)
+				}
+				require.True(t, c.Undo())
+			}
+			assert.False(t, c.Undo())
+			assert.Equal(t, tc.content, c.buffer().String())
+		})
+	}
+}
+
+func TestIndentWidth(t *testing.T) {
+	tests := []struct {
+		line      string
+		tabspaces int
+		want      int
+	}{
+		{"", 4, 0},
+		{"a", 4, 0},
+		{"  a", 4, 2},
+		{"  ", 4, 2},
+		{"\ta", 4, 4},
+		{"\t\ta", 4, 8},
+		{" \ta", 4, 4},
+		{"   \ta", 4, 4},
+		{"    \ta", 4, 8},
+		{"\t a", 4, 5},
+		{"\ta", 1, 1},
+		{"\ta", 8, 8},
+		{" 界", 4, 1},
+		{"\u00a0a", 4, 0},
+		{"\x00 a", 4, 0},
+		{"\r a", 4, 0},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q/%d", tc.line, tc.tabspaces), func(t *testing.T) {
+			assert.Equal(t, tc.want, indentWidth(tc.line, tc.tabspaces))
+		})
+	}
+}
+
+func TestLeadingIndent(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{"", ""},
+		{"a", ""},
+		{"  a", "  "},
+		{"\t \ta", "\t \t"},
+		{" \t ", " \t "},
+		{" \u0301x", ""},
+		{"  \u0301x", " "},
+		{"\t\u0301x", "\t"},
+		{"\u00a0a", ""},
+		{"\u3000a", ""},
+		{" \x00a", " "},
+		{" \ra", " "},
+		{" 👍🏽", " "},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q", tc.line), func(t *testing.T) {
+			assert.Equal(t, tc.want, leadingIndent(tc.line))
+		})
+	}
+}
+
+func TestHasCellPrefix(t *testing.T) {
+	tests := []struct {
+		s, prefix string
+		want      bool
+	}{
+		{"// a", "// ", true},
+		{"// a", "//", true},
+		{"//a", "// ", false},
+		{"", "", true},
+		{"a", "", true},
+		{"", "#", false},
+		{"#", "#", true},
+		{"// \u0301x", "// ", false},
+		{"// \u0301x", "//", true},
+		{"#\u0301 x", "#", false},
+		{"⍝ x", "⍝ ", true},
+		{"👨‍👧‍👦x", "👨", false},
+		{"👨‍👧‍👦x", "👨‍👧‍👦", true},
+		{"🇯🇵🇫🇷", "🇯🇵", true},
+		{"\r\n", "\r", false},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q/%q", tc.s, tc.prefix), func(t *testing.T) {
+			assert.Equal(t, tc.want, hasCellPrefix(tc.s, tc.prefix))
+		})
+	}
+}
+
+func TestIndentOffsetAtWidth(t *testing.T) {
+	tests := []struct {
+		line      string
+		width     int
+		tabspaces int
+		want      int
+	}{
+		{"", 3, 4, 0},
+		{"a", 0, 4, 0},
+		{"    a", 0, 4, 0},
+		{"    a", 2, 4, 2},
+		{"    a", 4, 4, 4},
+		{"    a", 9, 4, 4},
+		{"  ", 5, 4, 2},
+		{"\t\ta", 2, 4, 0},
+		{"\t\ta", 4, 4, 1},
+		{"\t\ta", 6, 4, 1},
+		{"\t\ta", 8, 4, 2},
+		{" \ta", 1, 4, 1},
+		{" \ta", 3, 4, 1},
+		{" \ta", 4, 4, 2},
+		{"\t a", 5, 4, 2},
+		{"\ta", 1, 1, 1},
+		{"  界", 2, 4, 2},
+		{"\u00a0 a", 1, 4, 0},
+		{"\x00 a", 1, 4, 0},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q/%d/%d", tc.line, tc.width, tc.tabspaces), func(t *testing.T) {
+			assert.Equal(t, tc.want, indentOffsetAtWidth(tc.line, tc.width, tc.tabspaces))
+		})
+	}
+}
+
+func TestCellCount(t *testing.T) {
+	tests := []struct {
+		s    string
+		want int
+	}{
+		{"", 0},
+		{"abc", 3},
+		{"界界", 2},
+		{"👨‍👧‍👦", 1},
+		{"🇯🇵🇫🇷", 2},
+		{"👍🏽", 1},
+		{"e\u0301", 1},
+		{"⍝ ", 2},
+		{"«»", 2},
+		{"\t\x00", 2},
+		{"\r", 1},
+		{"\r\n", 1},
+		{"\ue0b0", 1},
+	}
+	for _, tc := range tests {
+		t.Run(fmt.Sprintf("%q", tc.s), func(t *testing.T) {
+			assert.Equal(t, tc.want, cellCount(tc.s))
+
+			c := setupCursorContent(t, 80, 10, "", false)
+			c.buffer().InsertString(term.Coordinates{}, tc.s)
+			if tc.s != "\r\n" {
+				assert.Equal(t, c.buffer().Columns(0), cellCount(tc.s), "matches the buffer's cells")
+			}
 		})
 	}
 }
