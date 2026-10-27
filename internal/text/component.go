@@ -160,7 +160,7 @@ func (c *Component) newFileBuffer(
 		c.releaseLoader(file, l)
 		return nil, nil, err
 	}
-	return c.buildEditorHandler(file, buf, fc, readOnly, recover)
+	return c.buildEditorHandler(file, buf, fc, nil, readOnly, recover)
 }
 
 // loadFileBuffer performs only the disk I/O half of newFileBuffer:
@@ -206,23 +206,47 @@ func (c *Component) releaseLoader(file workspaceapi.URI, l workspace.FileLoader)
 	}
 }
 
+// syntaxParseable reports whether buf is small enough to install a
+// syntax tree into.
+func (c *Component) syntaxParseable(buf *cell.Buffer) bool {
+	return c.config.MaxSyntaxParseSize == 0 || buf.Size() <= c.config.MaxSyntaxParseSize
+}
+
+// parseSyntax parses the syntax tree of buf, the freshly loaded buffer of a
+// streamed tab, on the calling load worker. It returns nil when the tab is to
+// install its tree through SyntaxTree, or none at all.
+func (c *Component) parseSyntax(file workspaceapi.URI, buf *cell.Buffer) syntax.ParsedTree {
+	if c.config.SyntaxParse == nil || !c.syntaxParseable(buf) {
+		return nil
+	}
+	return c.config.SyntaxParse(c.ctx, c.config.PkgManager, file, buf, c.config.Syntax)
+}
+
+// buildEditorHandler installs parsed, when not nil, as buf's syntax tree.
 func (c *Component) buildEditorHandler(
 	file workspaceapi.URI, buf *cell.Buffer, fc workspace.FlusherCloser,
-	readOnly, recover bool,
+	parsed syntax.ParsedTree, readOnly, recover bool,
 ) (handler Handler, ret *editorFlusherCloser, err error) {
 	interrupter := browser.EventPublisherInterrupter(c)
+	// A tree publishes its highlights as it is installed, which is
+	// before the editor it highlights exists.
+	var pendingLocs textapi.LocationList
 	locs := syntax.FuncLocationSetter(func(ll textapi.LocationList) {
 		if handler == nil {
+			pendingLocs = ll
 			return
 		}
 		handler.SetLocationList(textapi.LocationPriorityInfo, "syntax", ll)
 	})
 
 	var tree syntax.Tree
-	if c.config.SyntaxTree != nil &&
-		(c.config.MaxSyntaxParseSize == 0 || buf.Size() <= c.config.MaxSyntaxParseSize) {
-		// install tree in Buffer first so editor can use its
-		// capabilities while initializing
+	// install tree in Buffer first so editor can use its
+	// capabilities while initializing
+	switch {
+	case parsed != nil:
+		tree = parsed.Install(c.config, interrupter, locs, fc, c.workspace)
+		fc = tree
+	case c.config.SyntaxTree != nil && c.syntaxParseable(buf):
 		tree = c.config.SyntaxTree(c.ctx, c.config, interrupter,
 			c.config.PkgManager, locs, file, buf, fc, c.workspace, c.config.Syntax)
 		fc = tree
@@ -231,6 +255,10 @@ func (c *Component) buildEditorHandler(
 	handler, err = c.ed.Edit(WithBars(c.ctx, BarOptions{}), file, buf, readOnly, recover)
 	if err != nil {
 		return nil, nil, err
+	}
+	if pendingLocs != nil {
+		handler.SetLocationList(textapi.LocationPriorityInfo, "syntax", pendingLocs)
+		pendingLocs = nil
 	}
 
 	var commands []textapi.CommandManual
@@ -630,8 +658,12 @@ func (c *Component) openFileTabStreaming(
 		buf := cell.NewBuffer()
 		fc, _, loadErr := c.loadFileBuffer(
 			l, file, recoveryFilename, buf, readOnly, forceRecover)
+		var parsed syntax.ParsedTree
+		if loadErr == nil {
+			parsed = c.parseSyntax(file, buf)
+		}
 
-		c.config.ScheduleNextTick(func() {
+		scheduled := c.config.ScheduleNextTick(func() {
 			if loadErr != nil {
 				c.releaseLoader(file, l)
 			}
@@ -642,7 +674,7 @@ func (c *Component) openFileTabStreaming(
 			)
 			if loadErr == nil {
 				realHandler, efc, buildErr = c.buildEditorHandler(
-					file, buf, fc, readOnly, recovering)
+					file, buf, fc, parsed, readOnly, recovering)
 			}
 			openErr := loadErr
 			if openErr == nil {
@@ -652,6 +684,9 @@ func (c *Component) openFileTabStreaming(
 				streamingTab, sh, def, file, readOnly, recovering,
 				realHandler, efc, openErr)
 		})
+		if !scheduled && parsed != nil {
+			_ = parsed.Close()
+		}
 	})
 
 	return streamingTab, nil

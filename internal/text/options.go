@@ -93,6 +93,11 @@ type Config struct {
 	// commands. It is injected rather than linked so that editors which
 	// never parse files build without the parser's cgo dependencies.
 	SyntaxTree syntax.NewTreeFunc
+	// SyntaxParse parses the syntax tree of a StreamingOpen file tab on
+	// its load worker, so the tab installs a tree that is already parsed
+	// instead of one SyntaxTree parses on the event loop. When nil,
+	// streamed tabs install their tree through SyntaxTree.
+	SyntaxParse syntax.ParseTreeFunc
 	// SwapDirectory reports the directory holding file's swap entry,
 	// named after the full path of the file it backs. It is asked per
 	// file because one editor opens files on many hosts, and a
@@ -476,6 +481,14 @@ func WithMaxSyntaxParseSize(size int) Option {
 func WithSyntaxTree(fn syntax.NewTreeFunc) Option {
 	return func(cfg *Config) {
 		cfg.SyntaxTree = fn
+	}
+}
+
+// WithSyntaxParse returns an Option that sets the function parsing the
+// syntax tree of streamed file tabs. See Config.SyntaxParse.
+func WithSyntaxParse(fn syntax.ParseTreeFunc) Option {
+	return func(cfg *Config) {
+		cfg.SyntaxParse = fn
 	}
 }
 

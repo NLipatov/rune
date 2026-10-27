@@ -1579,6 +1579,7 @@ func (h *workspaceManagerHandler) textOpts(
 		text.WithSyntaxConfig(cfg.syntaxConfig()),
 		text.WithMaxSyntaxParseSize(cfg.editorMaxSizeForSyntax()),
 		text.WithSyntaxTree(treesitter.New),
+		text.WithSyntaxParse(treesitter.Parse),
 		text.WithSwapDirectory(h.swapDirectory(cfg, ws, uri)),
 		text.WithMarkdownConfig(markdownConfig),
 		text.WithClipboard(h.clip),
