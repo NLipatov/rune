@@ -767,6 +767,55 @@ func TestDrawPaintsPicturesOnTheirCells(t *testing.T) {
 		rects[0], "the picture covers exactly its cells' pixels")
 }
 
+func TestSetCursorEffect(t *testing.T) {
+	gui, _ := newTestGUI(t, &mockHandler{})
+
+	require.NoError(t, gui.SetCursorEffect(CursorTrailShader, time.Second))
+	assert.NotNil(t, gui.cursorEffect.shader)
+	assert.Equal(t, time.Second, gui.cursorEffect.duration)
+	assert.Equal(t, jumpThreshold{rows: 2, columns: 9}, gui.cursorEffect.jump)
+
+	everyKey := jumpShader("const MinJumpRows = 1\nconst MinJumpColumns = 1")
+	require.NoError(t, gui.SetCursorEffect([]byte(everyKey), time.Second))
+	assert.Equal(t, jumpThreshold{rows: 1, columns: 1}, gui.cursorEffect.jump)
+
+	require.Error(t, gui.SetCursorEffect([]byte("package main"), time.Second))
+	assert.Nil(t, gui.cursorEffect.shader, "a broken shader turns the effect off")
+
+	require.Error(t, gui.SetCursorEffect([]byte(jumpShader("const MinJumpRows = 0")), time.Second))
+	assert.Nil(t, gui.cursorEffect.shader, "an invalid jump constant turns the effect off")
+
+	require.NoError(t, gui.SetCursorEffect(CursorTrailShader, time.Second))
+	require.NoError(t, gui.SetCursorEffect(nil, time.Second))
+	assert.Nil(t, gui.cursorEffect.shader)
+
+	require.NoError(t, gui.SetCursorEffect(CursorTrailShader, 0))
+	assert.Nil(t, gui.cursorEffect.shader)
+}
+
+func TestDrawTracksTheCursorCellForTheCursorEffect(t *testing.T) {
+	mock := &mockHandler{
+		assertDraw:  func(term.Writer) {},
+		assertEvent: func(term.Event) (bool, bool) { return false, true },
+		cursor:      term.Coordinates{X: 3, Y: 2},
+		showCursor:  true,
+	}
+	gui, _ := newTestGUI(t, mock)
+	require.NoError(t, gui.SetCursorEffect(CursorTrailShader, time.Second))
+	require.NoError(t, gui.Update())
+
+	r := gui.renderer
+	screen := ebiten.NewImage(r.frame.Bounds().Dx(), r.frame.Bounds().Dy())
+	t.Cleanup(screen.Deallocate)
+	benchdraw.BeginFrame(t)
+	gui.Draw(screen)
+	benchdraw.EndFrame(t)
+
+	assert.Equal(t, term.Coordinates{X: 3, Y: 2}, gui.cursorEffect.cell)
+	assert.Equal(t, r.cursorBounds(term.Cell{}, mock.cursor, term.CursorStyleDefault),
+		gui.cursorEffect.bounds)
+}
+
 // stubWindowClosing installs a processWindowClosed that reports one
 // pending close request for ev, mirroring ebiten consuming the closing
 // flag on the first read of a frame.
@@ -1002,6 +1051,8 @@ type mockHandler struct {
 	width, height int
 	assertDraw    func(term.Writer)
 	assertEvent   func(term.Event) (bool, bool)
+	cursor        term.Coordinates
+	showCursor    bool
 }
 
 func (m *mockHandler) Resize(width, height int) {
@@ -1017,7 +1068,7 @@ func (m *mockHandler) Handle(ev term.Event) (exit, handled bool) {
 }
 
 func (m *mockHandler) Cursor() (c term.Coordinates, s term.CursorStyle, show bool) {
-	return
+	return m.cursor, term.CursorStyleDefault, m.showCursor
 }
 
 func (m *mockHandler) Selection() (string, bool) {

@@ -20,6 +20,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/config"
@@ -304,6 +306,81 @@ func getGUIAltModifier(browser browser.Browser, cfg config.Config) gui.AltModifi
 			"Invalid 'gui.alt_modifier': %v", err)
 	}
 	return modifier
+}
+
+// defaultCursorEffectDuration applies when 'animations.cursor' sets no
+// duration.
+const defaultCursorEffectDuration = 250 * time.Millisecond
+
+// getCursorEffect reads 'animations.cursor' from the root config: the Kage
+// source of the shader played when the cursor jumps, the built-in trail
+// unless 'shader' names a file, and how long it plays. True plays the
+// built-in trail, and a section is on unless 'enabled' is false. A nil
+// source turns the effect off: the key is absent or false, or one of its
+// values is invalid.
+func getCursorEffect(b browser.Browser, cfg config.Config) ([]byte, time.Duration) {
+	animations, err := cfg.GetConfig("animations")
+	if err != nil {
+		// The IDE already reports an 'animations' that is not a section.
+		return nil, 0
+	}
+	section, err := animations.GetConfig("cursor")
+	if err == config.ErrInvalidType {
+		on, err := animations.GetBool("cursor")
+		if err != nil {
+			_, _ = b.Notify(browserapi.LevelError,
+				"Invalid 'animations.cursor': must be true, false or a section")
+			return nil, 0
+		}
+		if !on {
+			return nil, 0
+		}
+		section = config.NopConfig()
+	} else if err != nil {
+		if err != config.ErrNotFound {
+			_, _ = b.Notify(browserapi.LevelError,
+				"Could not load 'animations.cursor' from config: %v", err)
+		}
+		return nil, 0
+	}
+	if enabled, err := section.GetBool("enabled"); err == nil && !enabled {
+		return nil, 0
+	} else if err != nil && err != config.ErrNotFound {
+		_, _ = b.Notify(browserapi.LevelError,
+			"Could not load 'animations.cursor.enabled' from config: %v", err)
+		return nil, 0
+	}
+
+	duration := defaultCursorEffectDuration
+	if s, err := section.GetString("duration"); err == nil {
+		if duration, err = time.ParseDuration(s); err != nil || duration <= 0 {
+			_, _ = b.Notify(browserapi.LevelError,
+				"Invalid 'animations.cursor.duration' %q: must be a positive "+
+					"duration such as \"250ms\"", s)
+			return nil, 0
+		}
+	} else if err != config.ErrNotFound {
+		_, _ = b.Notify(browserapi.LevelError,
+			"Could not load 'animations.cursor.duration' from config: %v", err)
+		return nil, 0
+	}
+
+	path, err := section.GetString("shader")
+	if err != nil && err != config.ErrNotFound {
+		_, _ = b.Notify(browserapi.LevelError,
+			"Could not load 'animations.cursor.shader' from config: %v", err)
+		return nil, 0
+	}
+	if path == "" {
+		return gui.CursorTrailShader, duration
+	}
+	src, err := os.ReadFile(os.ExpandEnv(path))
+	if err != nil {
+		_, _ = b.Notify(browserapi.LevelError,
+			"Could not read 'animations.cursor.shader': %v", err)
+		return nil, 0
+	}
+	return src, duration
 }
 
 func getGUIEnvVars(cfg config.Config) (ret config.Config, err error) {

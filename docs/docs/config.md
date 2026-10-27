@@ -334,100 +334,20 @@ For ready-to-copy `exo` configs (Vim, Neovim, Helix, Nano, and more), see the
   See the [Examples](./learn/exoeditor.md#examples) in the Exoeditor guide for
   the recommended `command.key` per editor.
 
-## Tab animations
+## Animations
 
-`animations.active_content_tab` plays over content tabs whose program reports
-it is [working](./learn/terminal/program-status.md), and
-`animations.active_workspace_tab` over the workspace tabs that own one. Both
-take the same keys:
+These keys set the animations Rune plays and the shaders they play. See
+[Animations](./learn/animations.md) for each of them, and for the shaders
+available:
 
-- `enabled`: set to `false` to turn the effect off.
-- `shader`: one of `blaze`, `burn`, `inferno`, `pulse` or `shine`.
-- `fps`: how many times per second the effect redraws.
-- `loop`: how long one loop of the effect lasts, such as `"2400ms"`. The
-  flames of `blaze` and `inferno` take a few dozen loops to come round, so a
-  shorter loop makes the fire faster.
-
-Settings that only apply to one shader go under a key named after it, and are
-only used while that shader is selected. All of them are optional:
-
-| Shader | Setting | Effect |
-| --- | --- | --- |
-| `pulse`, `shine` | `color` | The colour the label is blended toward. Defaults to white. |
-| `pulse`, `shine` | `intensity` | 0 to 1: how far the label is blended at the peak, where 1 reaches `color`. Subtle by default, so the label keeps its status colour. |
-| `shine` | `band_width` | 0 to 1: how much of the label the band covers. Narrower reads as a glint, wider as a wash. |
-| `shine` | `direction` | The way the band sweeps: `bottom_left_to_top_right` (default), `top_left_to_bottom_right`, `left_to_right`, `right_to_left`, `top_to_bottom` or `bottom_to_top`. |
-| `blaze`, `inferno` | `color` | Turns the flames' red to this colour's hue, keeping their shading. Defaults to red; a grey also keeps them red. |
-| `blaze`, `inferno` | `swap_red_blue` | Blue flames rather than red, which do not read as an error. Applied after `color`. |
-| `burn` | `gradient` | The list of colours a character goes through as it burns. |
-| `burn` | `duration` | 0 to 1: the part of a loop each character burns for. Shorter makes a narrower wave. |
-| `burn` | `seed` | Picks another burn order. |
-| `burn` | `origin` | 0 to 1: where across the label the wave starts, 0 being its left edge. `None` (the default) starts it at a random character. |
-| `blaze`, `burn`, `inferno` | `animate_background` | `true` animates the cell background rather than only colouring the text: blaze and inferno set it on fire, and burn burns the label glyph by glyph. |
-
-```yaml tab
-animations:
-  active_workspace_tab:
-    shader: shine
-    shine:
-      color: green
-      intensity: 0.8
-      band_width: 0.4
-```
-
-```python tab
-config["animations"]["active_workspace_tab"]["shine"] = {
-    "color":      "green",
-    "intensity":  0.8,
-    "band_width": 0.4,
-}
-```
-
-## Screensaver
-
-`animations.screensaver` plays a shader once Rune has had no input for a while.
-Each time it starts, it plays the next of the shaders you list, starting over
-after the last one. The shader plays a pass at a time, over and over, until
-input stops it. Each shader decides what it draws, including whether your
-workspace still shows through.
-
-- `shaders`: the shaders to play, by the names `:shaderrun` completes, such as
-  `matrix`, `rain` or `inferno`. A single name, such as `shaders: inferno`,
-  plays just that one. Empty by default, which means there is no screensaver.
-- `idle_timeout`: how long Rune waits without input before it starts, such as
-  `"10m"` (the default).
-- `duration`: how long one pass lasts. Defaults to `"1m"`. The fires, `blaze`
-  and `inferno`, keep their own pace, so a pass of one lasts as many whole
-  cycles of the fire as it takes to cover `duration`: about 31s each for
-  `blaze` and 100s for `inferno`.
-- `time_shader`: how a pass plays the shader's animation:
-  - `loop` (the default): from start to end.
-  - `ping_pong`: to the end and back.
-  - `reverse`: from end to start.
-  - `accelerate`: starting slow and speeding up.
-  - `decelerate`: starting fast and slowing down.
-  - `boomerang`: to the end and back, slowing down at the end.
-- `fps`: how many times per second it redraws. Defaults to 30.
-- `enabled`: set to `false` to turn it off without removing your shaders.
-
-Any key, mouse movement, click or paste stops it. That input is not swallowed:
-it still reaches the editor, so the key that wakes Rune up is typed as usual.
-
-```yaml tab
-animations:
-  screensaver:
-    shaders: [matrix, rain, inferno]
-    idle_timeout: 5m
-    duration: 30s
-    time_shader: ping_pong
-```
-
-```python tab
-config["animations"]["screensaver"]["shaders"] = ["matrix", "rain", "inferno"]
-config["animations"]["screensaver"]["idle_timeout"] = "5m"
-config["animations"]["screensaver"]["duration"] = "30s"
-config["animations"]["screensaver"]["time_shader"] = "ping_pong"
-```
+- `animations.intro`: the intro of the built-in logo when Rune starts.
+- `animations.loading_workspace` and `animations.open_workspace`: while a
+  workspace loads and once it opens.
+- `animations.command_prompt`: over the command prompt while it is open.
+- `animations.active_content_tab` and `animations.active_workspace_tab`: over
+  tabs whose program is working.
+- `animations.screensaver`: once Rune has had no input for a while.
+- `animations.cursor`: over the window when the cursor jumps (GUI only).
 
 ## GUI
 

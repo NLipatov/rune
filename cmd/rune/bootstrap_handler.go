@@ -513,6 +513,10 @@ func (b *bootstrapHandler) setupConfiguredIDE(
 	}
 	b.g.SetKeyMapping(getGUIKeyMapping(i.Browser(), guiCfg))
 	b.g.SetAltModifier(getGUIAltModifier(i.Browser(), guiCfg))
+	if err := b.g.SetCursorEffect(getCursorEffect(i.Browser(), i.Config())); err != nil {
+		_, _ = i.Browser().Notify(browserapi.LevelError,
+			"Could not compile 'animations.cursor.shader': %v", err)
+	}
 
 	if err := subscribeCommands(b.g, client, i,
 		b.transparentWindow, b.configPath, b.launchCmd); err != nil {

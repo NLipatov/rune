@@ -375,7 +375,7 @@ Rune Agent reports its chats this way.
 Program status is configured under `terminal.status`. The activity effects
 that play over working tabs are configured separately, under
 `animations.active_content_tab` and `animations.active_workspace_tab`; see
-[Tab animations](../../config.md#tab-animations). The status inbox is
+[Over working tabs](../animations.md#over-working-tabs). The status inbox is
 configured under [`program_status`](#configuring-the-inbox).
 
 | Key | Default | Effect |

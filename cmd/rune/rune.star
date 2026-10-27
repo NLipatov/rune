@@ -224,6 +224,9 @@ config = {
         "prompt": "rune> ",
     },
     "animations": {
+        # See the Animations guide for each animation and the shaders
+        # they can play.
+        #
         # Plays while a workspace is being installed
         # (addWorkspace). The default gray-fade desaturates the
         # screen to signal the IDE is busy.
@@ -241,7 +244,7 @@ config = {
             #"shader":   "burn",
             #"duration": "1s",
         },
-        # Plays a shineFrame sweep over the command prompt frame
+        # Plays a radar sweep round the command prompt frame
         # while it's open. Set to False to suppress the effect.
         "command_prompt": {
             "enabled":  True,
@@ -249,10 +252,22 @@ config = {
             "angular_width": 0.33,
             "cycles": 1,
         },
+        # Plays over the window for "duration" each time the cursor jumps
+        # (GUI only, needs a restart). Off unlike the others. "shader" is
+        # the path of a .kage file written in Kage, Ebitengine's shading
+        # language ($VARS are expanded); empty plays the built-in flame
+        # trail. The shader reads the window, returns its final colors and
+        # decides how far a jump is; see "Cursor effect" in the Animations
+        # guide.
+        "cursor": {
+            "enabled":  False,
+            "shader":   "",
+            "duration": "250ms",
+        },
         # Plays over content tabs whose program reports it is working.
         # "shader" is one of blaze, burn, inferno, pulse or shine.
         # Settings for one shader go under a key named after it;
-        # see "Tab animations" in the Config docs.
+        # see "Over working tabs" in the Animations guide.
         "active_content_tab": {
             "enabled": True,
             "shader":  "shine",

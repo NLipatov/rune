@@ -34,6 +34,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"github.com/unstablebuild/tcell/v3"
 	"unstable.build/rune/internal/cell"
+	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/term/gui/drawrect"
 	"unstable.build/rune/internal/term/gui/font"
 )
@@ -107,6 +108,7 @@ type GUI struct {
 		style term.CursorStyle
 		show  bool
 	}
+	cursorEffect cursorEffect
 
 	pendingEvents []term.Event
 	needsDraw     bool
@@ -183,6 +185,8 @@ func New(handler tui.Handler, options ...Option) (*GUI, error) {
 	ret.drag = newDragPoller(ret.mouse)
 	ret.pointer = newPointer()
 	ret.links = newLinkScanner(ret.pointer)
+	ret.cursorEffect.now = time.Now
+	ret.cursorEffect.wake = func() { debug.CapturePanicReport(ret.scheduleFrame) }
 	ret.ctx = context.Background()
 	ret.ctx, ret.cancelCtx = context.WithCancel(ret.ctx)
 
@@ -260,6 +264,7 @@ func (g *GUI) Close() error {
 		}
 		g.runAcceptedUserFuncs()
 		g.cancelCtx()
+		g.cursorEffect.close()
 		if g.renderer != nil {
 			g.renderer.deallocate()
 			g.renderer = nil
@@ -301,7 +306,7 @@ func (g *GUI) buildRunGameOptions() ebiten.RunGameOptions {
 
 // Draw satisfies ebiten.Game. It renders the terminal GUI to the ebtien window.
 func (g *GUI) Draw(screen *ebiten.Image) {
-	if !g.needsRender {
+	if !g.needsRender && !g.cursorEffect.needsFrame() {
 		return
 	}
 	screen.Clear()
@@ -797,6 +802,8 @@ func (g *GUI) resize(width, height int, deviceScale float64) {
 		g.fontManager, g.bgOpacity, g.fgOpacity, g.enableLigatures,
 		g.cursorAttributes, g.defaultAttr)
 	g.renderer.forceFullRepaint = g.forceFullRepaint
+	g.renderer.cursorEffect = &g.cursorEffect
+	g.cursorEffect.reset()
 	g.needsDraw = true
 }
 
@@ -815,6 +822,44 @@ func (g *GUI) SetAltModifier(modifier AltModifier) {
 // called before Run or on the event loop.
 func (g *GUI) SetKeyMapping(m map[term.KeyComb]term.KeyComb) {
 	g.input.setKeyMapping(m)
+}
+
+// SetCursorEffect plays the Kage shader src over the whole window for
+// duration every time the cursor jumps. The shader reads the window, as
+// drawn below the cursor, from imageSrc0, and the color it returns
+// replaces the pixel. The uniforms it may declare are:
+//
+//   - Time float: seconds since the cursor jumped.
+//   - Duration float: duration in seconds.
+//   - Cursor vec4: x, y, width and height in pixels of the cursor.
+//   - PreviousCursor vec4: the same, for where the cursor jumped from.
+//   - CursorColor vec4: the cursor color, premultiplied.
+//
+// A jump is a move of at least MinJumpRows rows, or of at least
+// MinJumpColumns columns along a row, which the shader may declare as
+// integer constants of at least 1. They default to 2 and 9, so typing,
+// Enter and line wraps play nothing; a shader that sets both to 1 plays
+// on every keystroke and pays for it on every frame while typing.
+// Smaller moves keep a playing effect going, with Cursor following them.
+//
+// A nil src or a non-positive duration turns the effect off. An error,
+// which also turns it off, means src did not compile, declares one of the
+// uniforms above with another type, or sets a jump constant to anything
+// but an integer literal of at least 1. Like SetKeyMapping, it must be
+// called before Run or on the event loop.
+func (g *GUI) SetCursorEffect(src []byte, duration time.Duration) error {
+	g.cursorEffect.shader = nil
+	g.cursorEffect.reset()
+	if src == nil || duration <= 0 {
+		return nil
+	}
+	shader, jump, err := compileCursorEffect(src)
+	if err != nil {
+		return err
+	}
+	g.cursorEffect.shader, g.cursorEffect.jump = shader, jump
+	g.cursorEffect.duration = duration
+	return nil
 }
 
 // CellPixelSize reports the cell pitch in device pixels, which is what

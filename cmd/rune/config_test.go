@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -282,6 +283,158 @@ func TestGetGUIAltModifierUnconfigured(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	b := browsertest.NewMockBrowser(ctrl)
 	require.Equal(t, gui.AltModifierNone, getGUIAltModifier(b, guiCfg))
+}
+
+func TestGetCursorEffect(t *testing.T) {
+	dir := t.TempDir()
+	shaderPath := filepath.Join(dir, "cursor.kage")
+	require.NoError(t, os.WriteFile(shaderPath, []byte("package main"), 0o644))
+	t.Setenv("RUNE_TEST_SHADER_DIR", dir)
+	cursor := func(v any) config.Config {
+		return config.MapConfig(map[string]any{
+			"animations": map[string]any{"cursor": v},
+		})
+	}
+
+	cases := []struct {
+		name         string
+		cfg          config.Config
+		wantSrc      []byte
+		wantDuration time.Duration
+		wantNotify   bool
+	}{
+		{name: "no animations is off", cfg: config.MapConfig(map[string]any{})},
+		{
+			name: "absent is off",
+			cfg:  config.MapConfig(map[string]any{"animations": map[string]any{}}),
+		},
+		{
+			name: "animations of the wrong type is off",
+			cfg:  config.MapConfig(map[string]any{"animations": "off"}),
+		},
+		{name: "false is off", cfg: cursor(false)},
+		{
+			name:         "true plays the built-in trail",
+			cfg:          cursor(true),
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:       "cursor of the wrong type",
+			cfg:        cursor("yes"),
+			wantNotify: true,
+		},
+		{
+			name: "disabled",
+			cfg:  cursor(map[string]any{"enabled": false, "duration": "1s"}),
+		},
+		{
+			name:       "enabled of the wrong type",
+			cfg:        cursor(map[string]any{"enabled": "yes"}),
+			wantNotify: true,
+		},
+		{
+			name:         "enabled",
+			cfg:          cursor(map[string]any{"enabled": true}),
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:         "a section is on unless disabled",
+			cfg:          cursor(map[string]any{}),
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:         "duration",
+			cfg:          cursor(map[string]any{"duration": "400ms"}),
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: 400 * time.Millisecond,
+		},
+		{
+			name:       "invalid duration",
+			cfg:        cursor(map[string]any{"duration": "soon"}),
+			wantNotify: true,
+		},
+		{
+			name:       "non-positive duration",
+			cfg:        cursor(map[string]any{"duration": "0s"}),
+			wantNotify: true,
+		},
+		{
+			name:         "shader file with variables expanded",
+			cfg:          cursor(map[string]any{"shader": "$RUNE_TEST_SHADER_DIR/cursor.kage"}),
+			wantSrc:      []byte("package main"),
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:       "missing shader file",
+			cfg:        cursor(map[string]any{"shader": filepath.Join(dir, "missing.kage")}),
+			wantNotify: true,
+		},
+		{
+			name:       "shader of the wrong type",
+			cfg:        cursor(map[string]any{"shader": 42}),
+			wantNotify: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			b := browsertest.NewMockBrowser(ctrl)
+			if tc.wantNotify {
+				b.EXPECT().Notify(gomock.Any(), gomock.Any(), gomock.Any()).Return("", nil)
+			}
+			src, duration := getCursorEffect(b, tc.cfg)
+			assert.Equal(t, tc.wantSrc, src)
+			assert.Equal(t, tc.wantDuration, duration)
+		})
+	}
+}
+
+func TestGetCursorEffectFromUserConfig(t *testing.T) {
+	cases := []struct {
+		name         string
+		file         string
+		config       string
+		wantSrc      []byte
+		wantDuration time.Duration
+	}{
+		{name: "off by default", file: "config.star"},
+		{
+			name:         "enabled in Starlark",
+			file:         "config.star",
+			config:       "config[\"animations\"][\"cursor\"][\"enabled\"] = True\n",
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:         "true in YAML",
+			file:         "config.yaml",
+			config:       "animations:\n  cursor: true\n",
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: defaultCursorEffectDuration,
+		},
+		{
+			name:         "enabled with a duration in YAML",
+			file:         "config.yaml",
+			config:       "animations:\n  cursor:\n    enabled: true\n    duration: 400ms\n",
+			wantSrc:      gui.CursorTrailShader,
+			wantDuration: 400 * time.Millisecond,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), tc.file)
+			require.NoError(t, os.WriteFile(path, []byte(tc.config), 0o644))
+
+			ctrl := gomock.NewController(t)
+			src, duration := getCursorEffect(browsertest.NewMockBrowser(ctrl),
+				mustLoadConfig(t, path))
+			assert.Equal(t, tc.wantSrc, src)
+			assert.Equal(t, tc.wantDuration, duration)
+		})
+	}
 }
 
 func TestGetGUIFontSize(t *testing.T) {
