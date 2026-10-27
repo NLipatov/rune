@@ -17,12 +17,17 @@
 package markdown
 
 import (
+	"context"
+	"errors"
+	"image"
 	"strings"
 	"unicode"
 
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/term"
+
+	"unstable.build/rune/internal/cell"
 )
 
 // Component renders markdown content in a terminal.
@@ -37,11 +42,20 @@ type Component struct {
 	offset        int
 	totalHeight   int
 
-	// heightCache memoizes Height for heightCacheWidth. Blocks are
-	// immutable once parsed, so the cache only has to be dropped when
-	// Init replaces them.
+	// heightCache memoizes Height for heightCacheWidth. It is dropped
+	// when Init replaces the blocks and when loaded images change their
+	// heights.
 	heightCache      int
 	heightCacheWidth int
+
+	// cell is the last cell size Draw saw, shared with the image blocks.
+	// imageBlocks indexes the image blocks in blocks.
+	cell        cellSize
+	imageBlocks []int
+	// images opens pictures when imagesSupported, which NewWithConfig
+	// sets from Config.ImagesConfig.
+	images          images
+	imagesSupported bool
 
 	searchQuery   string
 	searchResults []textapi.Location
@@ -61,11 +75,23 @@ func New(content string) (*Component, error) {
 }
 
 // NewWithConfig creates a new markdown component with the given content
-// and custom configuration. Returns an error if parsing fails.
+// and custom configuration. Returns an error if parsing fails, or when
+// cfg.ImagesConfig sets only one of Storage and Interrupter.
 func NewWithConfig(content string, cfg Config) (*Component, error) {
+	imgs := cfg.ImagesConfig
+	if (imgs.Storage == nil) != (imgs.Interrupter == nil) {
+		return nil, errors.New("markdown: images need both a storage and an interrupter")
+	}
 	c := &Component{
 		cfg:     &cfg,
 		anchors: make(map[string]int),
+		images: images{
+			fs:          imgs.FS,
+			storage:     imgs.Storage,
+			dir:         imgs.Dir,
+			interrupter: imgs.Interrupter,
+		},
+		imagesSupported: imgs.Storage != nil,
 	}
 	if err := c.Init(content); err != nil {
 		return nil, err
@@ -77,7 +103,7 @@ func NewWithConfig(content string, cfg Config) (*Component, error) {
 // string using the existing configuration. It resets the scroll offset and
 // recalculates block heights when the component has already been sized.
 func (c *Component) Init(content string) error {
-	blocks, err := parse(content, c.cfg)
+	blocks, err := parse(content, c.cfg, c.images, c.imagesSupported)
 	if err != nil {
 		return err
 	}
@@ -91,6 +117,7 @@ func (c *Component) Init(content string) error {
 		clear(c.anchors)
 	}
 	c.buildAnchors()
+	c.findImages()
 	if c.width > 0 {
 		c.recalculateHeights(c.width)
 	} else {
@@ -143,6 +170,7 @@ func (c *Component) Draw(w term.Writer) {
 	if c.width <= 0 || c.height <= 0 {
 		return
 	}
+	c.updateImages(w.Context())
 	w = term.BoundsCheckWriter(c.width, c.height, w)
 	y := -c.offset
 	for i, blk := range c.blocks {
@@ -694,7 +722,8 @@ func (c *Component) runSearch() {
 	}
 }
 
-// Close cancels any in-flight syntax highlighting goroutines.
+// Close cancels any in-flight syntax highlighting goroutines and closes
+// the pictures of its images.
 func (c *Component) Close() error {
 	c.closeBlocks()
 	return nil
@@ -702,8 +731,11 @@ func (c *Component) Close() error {
 
 func (c *Component) closeBlocks() {
 	for _, blk := range c.blocks {
-		if cb, ok := blk.(*codeBlock); ok {
-			cb.close()
+		switch b := blk.(type) {
+		case *codeBlock:
+			b.close()
+		case *imageBlock:
+			b.close()
 		}
 	}
 }
@@ -719,8 +751,105 @@ func (c *Component) buildAnchors() {
 	}
 }
 
+func (c *Component) findImages() {
+	c.imageBlocks = c.imageBlocks[:0]
+	for i, blk := range c.blocks {
+		if ib, ok := blk.(*imageBlock); ok {
+			ib.cell = &c.cell
+			c.imageBlocks = append(c.imageBlocks, i)
+		}
+	}
+}
+
+// updateImages takes the cell size from ctx, starts loading every image
+// once it is known, and lays the content out again when images that
+// finished loading changed the height of their blocks.
+func (c *Component) updateImages(ctx context.Context) {
+	if len(c.imageBlocks) == 0 {
+		return
+	}
+	if px, ok := cell.PixelSizeFromContext(ctx); ok {
+		c.cell = cellSize{px: px, ok: true}
+	}
+	stale := false
+	for _, i := range c.imageBlocks {
+		ib := c.blocks[i].(*imageBlock)
+		if c.cell.ok {
+			ib.start()
+		}
+		ib.Resize(c.width, 0)
+		stale = stale || ib.height() != c.blockHeights[i]
+	}
+	if stale {
+		c.relayout()
+	}
+}
+
+// relayout recalculates block heights while keeping the content at the
+// top of the view in place: the first block that starts at or below the
+// top row keeps its screen row or, when none does, the block containing
+// the top row keeps the top row's offset into it. A view at the top
+// stays at the top.
+func (c *Component) relayout() {
+	anchor, below, into := -1, 0, 0
+	if c.offset > 0 {
+		y := 0
+		for i, h := range c.blockHeights {
+			if y >= c.offset {
+				anchor, below, into = i, y-c.offset, 0
+				break
+			}
+			if y+h > c.offset {
+				anchor, below, into = i, 0, c.offset-y
+			}
+			y += h
+		}
+	}
+	c.recalculateHeights(c.width)
+	c.heightCacheWidth = 0
+	if anchor >= 0 {
+		y := 0
+		for _, h := range c.blockHeights[:anchor] {
+			y += h
+		}
+		c.SeekTo(y - below + min(into, max(c.blockHeights[anchor]-1, 0)))
+	} else {
+		c.SeekTo(c.offset)
+	}
+	if c.searchQuery != "" {
+		c.runSearch()
+	}
+}
+
+// InheritImageSizes lays c's images out at the sizes prev loaded for the
+// same destinations until they load themselves, so that replacing prev
+// with c, a render of changed content, does not move what is on screen
+// while the images load again. An image that fails to load drops the
+// size it inherited. c also takes prev's cell size in pixels, so the
+// sizes apply before c is first drawn.
+func (c *Component) InheritImageSizes(prev *Component) {
+	if prev.cell.ok {
+		c.cell = prev.cell
+	}
+	sizes := make(map[string]image.Point)
+	for _, i := range prev.imageBlocks {
+		prev.blocks[i].(*imageBlock).sizes(sizes)
+	}
+	for _, i := range c.imageBlocks {
+		c.blocks[i].(*imageBlock).inherit(sizes)
+	}
+	if c.width > 0 {
+		c.recalculateHeights(c.width)
+		c.heightCacheWidth = 0
+		c.SeekTo(c.offset)
+		if c.searchQuery != "" {
+			c.runSearch()
+		}
+	}
+}
+
 // Height returns the total height needed to render all blocks at the
-// given width. This is a pure calculation with no side effects.
+// given width. Image blocks grow as their images load.
 func (c *Component) Height(width int) int {
 	if width > 0 && c.heightCacheWidth == width {
 		return c.heightCache

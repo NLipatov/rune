@@ -22,8 +22,11 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 )
 
-// Config defines the styling options for markdown rendering.
+// Config defines the styling options for markdown rendering, and the
+// pictures shown in place of images.
 type Config struct {
+	ImagesConfig
+
 	// Header styles (H1-H6)
 	H1, H2, H3, H4, H5, H6 term.Attributes
 	// HeaderPrefix controls whether headers display the '#' prefix (e.g., "# Title").

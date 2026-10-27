@@ -450,12 +450,16 @@ type imageViewFixture struct {
 
 // newImageViewFixture shows memory:///tmp/<file> in a width x height
 // text.Component. images selects a writer that draws images as ASCII
-// art over one that cannot draw them.
+// art over one that cannot draw them. opts apply to the component's
+// config.
 func newImageViewFixture(
-	t *testing.T, file string, width, height int, images bool,
+	t *testing.T, file string, width, height int, images bool, opts ...text.Option,
 ) *imageViewFixture {
 	f := &imageViewFixture{t: t, irq: make(chan struct{}, 1)}
 	cfg := text.DefaultConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	// Coalesces pending interrupts like the host event loop.
 	cfg.EventPublisher = func(term.Event) bool {
 		select {

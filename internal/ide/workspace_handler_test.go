@@ -11470,6 +11470,29 @@ func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 		"without a syntax tree hook, file tabs lose highlights, folds and indents")
 }
 
+func TestTextOptsEnableMarkdownImages(t *testing.T) {
+	var cfg ideConfig
+	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+	cfg.storage = storagestub.NewInMemoryService()
+	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
+	require.NoError(t, err)
+
+	textCfg := text.DefaultConfig()
+	for _, opt := range (&workspaceManagerHandler{}).textOpts(cfg, nil, uri, nil) {
+		opt(&textCfg)
+	}
+	// Images are cached in a partition of their own.
+	require.NotNil(t, textCfg.MarkdownImageStorage,
+		"without image storage, markdown view tabs show alt text")
+	ctx := context.Background()
+	require.NoError(t, textCfg.MarkdownImageStorage.Set(ctx, "image", map[string]any{"a": 1}))
+	images, err := cfg.storage.Partition("markdown_images")
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, images.Get(ctx, "image", &doc))
+	assert.ErrorIs(t, cfg.storage.Get(ctx, "image", &doc), storageapi.ErrNotFound)
+}
+
 func TestWorkspaceRootURI(t *testing.T) {
 	mustURI := func(t *testing.T, s string) workspaceapi.URI {
 		u, err := workspaceapi.ParseURI(s)

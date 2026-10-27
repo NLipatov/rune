@@ -84,18 +84,38 @@ func sponsorsTiers(url string) string {
 		"at any time. Private sponsorships are never listed on this page.\n"
 }
 
-func openSlot(url string) string {
-	return "- [Your name here](<" + url + ">)\n"
+const slotLogo = "https://assets.rune.build/images/rune-logo-transparent-1024x1024.png"
+
+// The attribute blocks sizing the pictures of each row.
+const (
+	diamondSize  = "{cols=36 rows=9}"
+	platinumSize = "{cols=24 rows=6}"
+	otherSize    = "{cols=18 rows=5}"
+	backerSize   = "{rows=2}"
+)
+
+// picture is the image of src sized by size, captioned with name.
+func picture(name, src, size string) string {
+	return "![" + name + "](<" + src + "> \"" + name + "\")" + size
 }
 
-func diamondSlot(url string) string  { return openSlot(tierURL(url, "671970")) }
-func platinumSlot(url string) string { return openSlot(tierURL(url, "671967")) }
+func linked(img, url string) string {
+	return "[" + img + "](<" + url + ">)"
+}
+
+func openSlot(url, size string) string {
+	return linked(picture("Your logo here", slotLogo, size), url) + "\n"
+}
+
+func diamondSlot(url string) string  { return openSlot(tierURL(url, "671970"), diamondSize) }
+func platinumSlot(url string) string { return openSlot(tierURL(url, "671967"), platinumSize) }
+func otherSlot(url string) string    { return openSlot(url, otherSize) }
 
 // emptySponsorRows are the logo rows with only their open slot.
 func emptySponsorRows(url string) string {
 	return "\n### Diamond Sponsors\n\n" + diamondSlot(url) +
 		"\n### Platinum Sponsors\n\n" + platinumSlot(url) +
-		"\n### Other Sponsors\n\n" + openSlot(url)
+		"\n### Other Sponsors\n\n" + otherSlot(url)
 }
 
 func TestRenderSponsors(t *testing.T) {
@@ -148,33 +168,64 @@ func TestRenderSponsors(t *testing.T) {
 				SponsorURL: d,
 				Tiers: []sponsorTier{
 					{ID: "diamond", Sponsors: []sponsor{
-						{Login: "acme", Name: "Acme Corp", URL: "https://acme.dev"},
-						{Login: "plain"},
+						{
+							Login: "acme", Name: "Acme Corp", URL: "https://acme.dev",
+							AvatarURL: "https://avatars.githubusercontent.com/u/1?v=4",
+							LogoURL:   "https://acme.dev/logo.png",
+						},
+						{Login: "plain", LogoURL: "https://avatars.githubusercontent.com/u/2?v=4"},
 					}},
-					{ID: "platinum", Sponsors: []sponsor{{Login: "beta", Name: "Beta", URL: "https://beta.dev"}}},
-					{ID: "gold", Sponsors: []sponsor{{Login: "g", Name: "Gold Co", URL: "https://g.dev"}}},
-					{ID: "silver", Sponsors: []sponsor{{Login: "s", Name: "Silver Co"}}},
-					{ID: "bronze", Sponsors: []sponsor{{Login: "b", Name: "B", URL: "https://b.dev"}}},
+					{ID: "platinum", Sponsors: []sponsor{{
+						Login: "beta", Name: "Beta", URL: "https://beta.dev",
+						LogoURL: "https://avatars.githubusercontent.com/u/3?v=4",
+					}}},
+					{ID: "gold", Sponsors: []sponsor{{
+						Login: "g", Name: "Gold Co", URL: "https://g.dev",
+						LogoURL: "https://avatars.githubusercontent.com/u/4?v=4",
+					}}},
+					{ID: "silver", Sponsors: []sponsor{{
+						Login: "s", Name: "Silver Co", LogoURL: "https://s.dev/s.webp",
+					}}},
+					{ID: "bronze", Sponsors: []sponsor{{
+						Login: "b", Name: "B", URL: "https://b.dev",
+						LogoURL: "https://avatars.githubusercontent.com/u/5?s=460&v=4",
+					}}},
 					{ID: "backer", Sponsors: []sponsor{
-						{Login: "alice", URL: "https://github.com/alice"}, {Login: "bob", Name: "Bob"},
+						{
+							Login: "alice", URL: "https://github.com/alice",
+							AvatarURL: "https://avatars.githubusercontent.com/u/6?u=abc&v=4",
+							LogoURL:   "https://alice.dev/logo.png",
+						},
+						{
+							Login: "bob", Name: "Bob",
+							AvatarURL: "https://avatars.githubusercontent.com/u/7?v=4",
+						},
 					}},
 				},
 			},
 			want: sponsorsHeader(d) +
 				"\n### Diamond Sponsors\n\n" +
-				"- [Acme Corp](<https://acme.dev>)\n" +
-				"- plain\n" +
+				linked(picture("Acme Corp", "https://acme.dev/logo.png", diamondSize),
+					"https://acme.dev") + " " +
+				picture("plain", "https://avatars.githubusercontent.com/u/2?s=160&v=4",
+					diamondSize) + " " +
 				diamondSlot(d) +
 				"\n### Platinum Sponsors\n\n" +
-				"- [Beta](<https://beta.dev>)\n" +
+				linked(picture("Beta", "https://avatars.githubusercontent.com/u/3?s=112&v=4",
+					platinumSize), "https://beta.dev") + " " +
 				platinumSlot(d) +
 				"\n### Other Sponsors\n\n" +
-				"- [Gold Co](<https://g.dev>)\n" +
-				"- Silver Co\n" +
-				"- [B](<https://b.dev>)\n" +
-				openSlot(d) +
+				linked(picture("Gold Co", "https://avatars.githubusercontent.com/u/4?s=64&v=4",
+					otherSize), "https://g.dev") + " " +
+				picture("Silver Co", "https://s.dev/s.webp", otherSize) + " " +
+				linked(picture("B", "https://avatars.githubusercontent.com/u/5?s=64&v=4",
+					otherSize), "https://b.dev") + " " +
+				otherSlot(d) +
 				"\n### Backers\n\n" +
-				"[alice](<https://github.com/alice>), Bob\n" +
+				linked(picture("alice", "https://avatars.githubusercontent.com/u/6?s=48&u=abc&v=4",
+					backerSize), "https://github.com/alice") + " " +
+				picture("Bob", "https://avatars.githubusercontent.com/u/7?s=48&v=4", backerSize) +
+				"\n" +
 				sponsorsTiers(d),
 		},
 		{
@@ -182,17 +233,17 @@ func TestRenderSponsors(t *testing.T) {
 			resp: sponsorsResponse{
 				SponsorURL: d,
 				Tiers: []sponsorTier{
-					{ID: "bronze", Sponsors: []sponsor{{Login: "b", Name: "B"}}},
-					{ID: "gold", Sponsors: []sponsor{{Login: "g", Name: "G"}}},
+					{ID: "bronze", Sponsors: []sponsor{{Login: "b", Name: "B", LogoURL: "https://b.dev/b.png"}}},
+					{ID: "gold", Sponsors: []sponsor{{Login: "g", Name: "G", LogoURL: "https://g.dev/g.png"}}},
 				},
 			},
 			want: sponsorsHeader(d) +
 				"\n### Diamond Sponsors\n\n" + diamondSlot(d) +
 				"\n### Platinum Sponsors\n\n" + platinumSlot(d) +
 				"\n### Other Sponsors\n\n" +
-				"- G\n" +
-				"- B\n" +
-				openSlot(d) +
+				picture("G", "https://g.dev/g.png", otherSize) + " " +
+				picture("B", "https://b.dev/b.png", otherSize) + " " +
+				otherSlot(d) +
 				sponsorsTiers(d),
 		},
 		{
@@ -208,7 +259,10 @@ func TestRenderSponsors(t *testing.T) {
 			resp: sponsorsResponse{
 				SponsorURL: d,
 				Tiers: []sponsorTier{
-					{ID: "bronze", Sponsors: []sponsor{{Login: "x", Name: "*[evil](x)*"}}},
+					{ID: "bronze", Sponsors: []sponsor{
+						{Login: "x", Name: "*[evil](x)*", LogoURL: "https://x.dev/x.png"},
+						{Login: "q", Name: `A "B" &amp; C\`, LogoURL: "https://q.dev/q.png"},
+					}},
 					{ID: "backer", Sponsors: []sponsor{{Login: "under_score"}}},
 				},
 			},
@@ -216,8 +270,9 @@ func TestRenderSponsors(t *testing.T) {
 				"\n### Diamond Sponsors\n\n" + diamondSlot(d) +
 				"\n### Platinum Sponsors\n\n" + platinumSlot(d) +
 				"\n### Other Sponsors\n\n" +
-				"- " + `\*\[evil\](x)\*` + "\n" +
-				openSlot(d) +
+				`![\*\[evil\](x)\*](<https://x.dev/x.png> "*[evil](x)*")` + otherSize + " " +
+				`![A "B" &amp; C\\](<https://q.dev/q.png> "A \"B\" \&amp; C\\")` + otherSize + " " +
+				otherSlot(d) +
 				"\n### Backers\n\n" +
 				`under\_score` + "\n" +
 				sponsorsTiers(d),
@@ -228,16 +283,47 @@ func TestRenderSponsors(t *testing.T) {
 				SponsorURL: d,
 				Tiers: []sponsorTier{
 					{ID: "backer", Sponsors: []sponsor{
-						{Login: "a", Name: "A", URL: "file:///etc/passwd"},
-						{Login: "b", Name: "B", URL: "https://b.dev/>[x](y)"},
-						{Login: "c", Name: "C", URL: "relative/path"},
-						{Login: "d", Name: "D", URL: "http://d.dev/ok"},
+						{Login: "a", Name: "A", URL: "file:///etc/passwd", AvatarURL: "https://a.dev/a.png"},
+						{Login: "b", Name: "B", URL: "https://b.dev/>[x](y)", AvatarURL: "https://b.dev/b.png"},
+						{Login: "c", Name: "C", URL: "relative/path", AvatarURL: "https://c.dev/c.png"},
+						{Login: "d", Name: "D", URL: "http://d.dev/ok", AvatarURL: "https://d.dev/d.png"},
 					}},
 				},
 			},
 			want: sponsorsHeader(d) + emptySponsorRows(d) +
 				"\n### Backers\n\n" +
-				"A, B, C, [D](<http://d.dev/ok>)\n" +
+				picture("A", "https://a.dev/a.png", backerSize) + " " +
+				picture("B", "https://b.dev/b.png", backerSize) + " " +
+				picture("C", "https://c.dev/c.png", backerSize) + " " +
+				linked(picture("D", "https://d.dev/d.png", backerSize), "http://d.dev/ok") + "\n" +
+				sponsorsTiers(d),
+		},
+		{
+			name: "sponsors whose pictures cannot be shown are named",
+			resp: sponsorsResponse{
+				SponsorURL: d,
+				Tiers: []sponsorTier{
+					{ID: "gold", Sponsors: []sponsor{
+						{Login: "a", Name: "A", URL: "https://a.dev", LogoURL: "http://a.dev/a.png"},
+						{Login: "b", Name: "B", LogoURL: "file:///b.png"},
+						{Login: "c", Name: "C", LogoURL: "https://c.dev/>[x](y)"},
+						{Login: "d", Name: "D", LogoURL: "logo.png"},
+						{Login: "e", Name: "E"},
+					}},
+					{ID: "backer", Sponsors: []sponsor{
+						// Backers show profile photos, never logos.
+						{Login: "f", Name: "F", LogoURL: "https://f.dev/f.png"},
+					}},
+				},
+			},
+			want: sponsorsHeader(d) +
+				"\n### Diamond Sponsors\n\n" + diamondSlot(d) +
+				"\n### Platinum Sponsors\n\n" + platinumSlot(d) +
+				"\n### Other Sponsors\n\n" +
+				otherSlot(d) +
+				"\n[A](<https://a.dev>), B, C, D, E\n" +
+				"\n### Backers\n\n" +
+				"F\n" +
 				sponsorsTiers(d),
 		},
 	} {
@@ -262,11 +348,15 @@ func TestFetchSponsors(t *testing.T) {
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(`{"sponsor_url":"https://s","updated_at":"2026-10-22T00:00:00Z",
 					"tiers":[{"id":"gold","name":"Gold","monthly_usd":250,
-					"sponsors":[{"login":"g","name":"G","url":"https://g","theme":"aurum","logo_url":"x"}]}],
+					"sponsors":[{"login":"g","name":"G","url":"https://g","theme":"aurum",
+					"avatar_url":"https://a/g","logo_url":"https://g/logo.png"}]}],
 					"private_count":4}`))
 			},
 			want: sponsorsResponse{SponsorURL: "https://s", Tiers: []sponsorTier{
-				{ID: "gold", Sponsors: []sponsor{{Login: "g", Name: "G", URL: "https://g"}}},
+				{ID: "gold", Sponsors: []sponsor{{
+					Login: "g", Name: "G", URL: "https://g",
+					AvatarURL: "https://a/g", LogoURL: "https://g/logo.png",
+				}}},
 			}, PrivateCount: 4},
 		},
 		{

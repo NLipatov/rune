@@ -14,13 +14,8 @@ Rune is free and open source, built entirely through open-source contributions a
 {{range .Rows}}
 ### {{.Label}}
 
-{{if .SlotURL}}
-{{- range .Sponsors}}- {{link .}}
-{{end}}- [Your name here](<{{.SlotURL}}>)
-{{else}}
-{{- range $i, $s := .Sponsors}}{{if $i}}, {{end}}{{link $s}}{{end}}
+{{join .Paragraphs "\n\n"}}
 {{end}}
-{{- end}}
 {{- with .PrivateCount}}
 {{.}} {{if eq . 1}}sponsor{{else}}sponsors{{end}} chose to keep their sponsorship private.
 {{end}}

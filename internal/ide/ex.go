@@ -3702,10 +3702,17 @@ func (c companionTerminalHandler) Close() error {
 
 // openMarkdownFloating renders md as a read-only markdown view in a
 // centered floating window pinned to a fixed width. It is shared by the
-// cheatsheet and keybindings commands so both views line up.
+// cheatsheet and keybindings commands so both views line up. md has no
+// file to resolve paths against, so it shows only https images.
 func (e *ex) openMarkdownFloating(md, title string, width int) error {
 	mdCfg := e.config.Markdown
 	mdCfg.HeaderPrefix = false
+	if storage := e.config.MarkdownImageStorage; storage != nil {
+		mdCfg.ImagesConfig = markdown.ImagesConfig{
+			Storage:     storage,
+			Interrupter: browser.EventPublisherInterrupter(e.Browser()),
+		}
+	}
 	mdComp, err := markdown.NewWithConfig(md, mdCfg)
 	if err != nil {
 		return fmt.Errorf("new markdown component: %w", err)

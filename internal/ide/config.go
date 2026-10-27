@@ -3586,6 +3586,9 @@ func (c ideConfig) statusBarConfig(
 // statusBarImagesPartition caches the images status bar layouts download.
 const statusBarImagesPartition = "status_bar_images"
 
+// markdownImagesPartition caches the images markdown view tabs download.
+const markdownImagesPartition = "markdown_images"
+
 func (c ideConfig) auxiliaryBarFolds() bool {
 	cfg, ok := c.auxiliaryBar()
 	if !ok {

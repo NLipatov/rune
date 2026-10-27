@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1884,7 +1885,16 @@ func (c *Component) loadMarkdown(
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read file: %w", err)
 	}
-	component, err := markdown.NewWithConfig(string(data), c.config.Markdown)
+	cfg := c.config.Markdown
+	if storage := c.config.MarkdownImageStorage; storage != nil {
+		cfg.ImagesConfig = markdown.ImagesConfig{
+			Storage:     storage,
+			Interrupter: browser.EventPublisherInterrupter(c),
+			FS:          c.workspace,
+			Dir:         path.Dir(uri.Path()),
+		}
+	}
+	component, err := markdown.NewWithConfig(string(data), cfg)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("new markdown component: %w", err)
 	}

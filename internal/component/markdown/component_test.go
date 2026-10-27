@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/component"
+	"github.com/unstablebuild/rune-go-sdk/component/comptest"
 	"github.com/unstablebuild/rune-go-sdk/term"
 )
 
@@ -1343,4 +1344,213 @@ func TestCodeBlockCopyIconHover(t *testing.T) {
 	assert.True(t, md.HoverCodeBlockCopy(term.Coordinates{X: 0, Y: icon.Y}))
 	assert.Equal(t, onCodeBg(cfg.CodeBlockCopyIconAttr), drawIcon().Attributes(),
 		"moving off the icon clears the highlight")
+}
+
+// imageDoc has an image between paragraphs. Each block takes two rows
+// until the image loads at cells(4, 3), which makes its block four rows.
+const imageDoc = "Para 1\n\nPara 2\n\n![i](i.png)\n\nPara 3\n\nPara 4\n\nPara 5"
+
+func TestImageLoadKeepsTheView(t *testing.T) {
+	tests := []struct {
+		name       string
+		content    string
+		height     int
+		offset     int
+		wantOffset int
+		want       string
+	}{
+		{
+			name:    "stays at the top",
+			content: imageDoc, height: 4,
+			offset: 0, wantOffset: 0,
+			want: `
+Para 1    
+          
+Para 2    
+          `,
+		},
+		{
+			name:    "keeps the block at the top row in place",
+			content: imageDoc, height: 4,
+			offset: 6, wantOffset: 8,
+			want: `
+Para 3    
+          
+Para 4    
+          `,
+		},
+		{
+			name:    "keeps the first block below the top row in place",
+			content: imageDoc, height: 4,
+			offset: 5, wantOffset: 7,
+			want: `
+          
+Para 3    
+          
+Para 4    `,
+		},
+		{
+			name:    "keeps the offset into the block at the top row when none starts below it",
+			content: "![i](i.png)\n\n```\n1\n2\n3\n4\n5\n6\n```",
+			height:  3,
+			offset:  4, wantOffset: 6,
+			want: `
+3         
+4         
+5         `,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			img := &fakeImage{size: cells(4, 3)}
+			md := newImageComponent(t, tt.content, map[string]*fakeImage{"i.png": img})
+			w := newImageWriter(10, tt.height, true)
+			md.Resize(10, tt.height)
+			md.Draw(w)
+			md.SeekTo(tt.offset)
+			require.Equal(t, tt.offset, md.SeekOffset())
+
+			comptest.TestComponent(t, md, w, []comptest.TestCase{
+				{Action: func() { img.settled = true }, Expected: tt.want},
+			})
+			assert.Equal(t, tt.wantOffset, md.SeekOffset())
+		})
+	}
+}
+
+func TestImagesStartWithTheCellSize(t *testing.T) {
+	a, b := &fakeImage{}, &fakeImage{}
+	md := newImageComponent(t, "![a](a.png)"+strings.Repeat("\n\nPara", 20)+"\n\n![b](b.png)",
+		map[string]*fakeImage{"a.png": a, "b.png": b})
+	md.Resize(10, 3)
+
+	md.Draw(newImageWriter(10, 3, false))
+	assert.Zero(t, a.starts+b.starts, "nothing starts without a cell size")
+
+	md.Draw(newImageWriter(10, 3, true))
+	assert.Equal(t, 1, a.starts)
+	assert.Equal(t, 1, b.starts, "images below the view start too")
+
+	md.Draw(newImageWriter(10, 3, false))
+	assert.Equal(t, 2, b.starts, "the last cell size seen is kept")
+}
+
+func TestImageLoadMovesSearchResults(t *testing.T) {
+	img := &fakeImage{size: cells(4, 3)}
+	md := newImageComponent(t, imageDoc, map[string]*fakeImage{"i.png": img})
+	md.Resize(10, 4)
+	md.Draw(newImageWriter(10, 4, true))
+	md.Search("Para 3")
+	require.Len(t, md.searchResults, 1)
+	assert.Equal(t, 6, md.searchResults[0].From.Y)
+
+	img.settled = true
+	md.Draw(newImageWriter(10, 4, true))
+	require.Len(t, md.searchResults, 1)
+	assert.Equal(t, 8, md.searchResults[0].From.Y)
+	assert.Equal(t, 14, md.Height(10))
+}
+
+func TestImagesClose(t *testing.T) {
+	images := map[string]*fakeImage{"a.png": {}, "b.png": {}}
+	md := newImageComponent(t, "![a](a.png)", images)
+	require.NoError(t, md.Init("![b](b.png)"))
+	assert.Equal(t, 1, images["a.png"].closes, "Init closes the images it replaces")
+	useFakes(md, images)
+	require.NoError(t, md.Close())
+	assert.Equal(t, 1, images["b.png"].closes, "Close closes the images")
+}
+
+func TestInheritImageSizes(t *testing.T) {
+	prevImg := loaded(cells(4, 3))
+	prev := newImageComponent(t, imageDoc, map[string]*fakeImage{"i.png": prevImg})
+	prev.Resize(10, 4)
+	prev.Draw(newImageWriter(10, 4, true))
+	prev.SeekTo(8)
+	const onScreen = `
+Para 3    
+          
+Para 4    
+          `
+
+	tests := []struct {
+		name string
+		// settle settles the next image, or fails it when its size is zero.
+		settle     *fakeImage
+		wantOffset int
+		want       string
+	}{
+		{
+			name:       "lays out at the inherited size while loading",
+			wantOffset: 8,
+			want:       onScreen,
+		},
+		{
+			name:       "lays out at the loaded size",
+			settle:     loaded(cells(4, 3)),
+			wantOffset: 8,
+			want:       onScreen,
+		},
+		{
+			name:       "drops the inherited size when the image fails",
+			settle:     &fakeImage{settled: true},
+			wantOffset: 6,
+			want:       onScreen,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			img := &fakeImage{size: cells(4, 3)}
+			next := newImageComponent(t, imageDoc, map[string]*fakeImage{"i.png": img})
+			next.Resize(10, 4)
+			next.InheritImageSizes(prev)
+			next.SeekTo(prev.SeekOffset())
+			assert.Equal(t, 8, next.SeekOffset(), "the swap keeps the view")
+
+			w := newImageWriter(10, 4, true)
+			comptest.TestComponent(t, next, w, []comptest.TestCase{
+				{Expected: onScreen},
+				{Action: func() {
+					if tt.settle != nil {
+						*img = *tt.settle
+					}
+				}, Expected: tt.want},
+			})
+			assert.Equal(t, tt.wantOffset, next.SeekOffset())
+		})
+	}
+}
+
+func TestInheritImageSizesShowsTheLabelInTheInheritedBox(t *testing.T) {
+	prev := newImageComponent(t, "![i](i.png)\n\nText",
+		map[string]*fakeImage{"i.png": loaded(cells(4, 3))})
+	prev.Resize(10, 5)
+	prev.Draw(newImageWriter(10, 5, true))
+
+	next := newImageComponent(t, "![i](i.png)\n\nText",
+		map[string]*fakeImage{"i.png": {}})
+	next.InheritImageSizes(prev)
+	next.Resize(10, 5)
+	comptest.TestComponent(t, next, newImageWriter(10, 5, true), []comptest.TestCase{
+		{Expected: `
+i         
+          
+          
+          
+Text      `},
+	})
+}
+
+func TestImageScrolledPartlyOutOfView(t *testing.T) {
+	md := newImageComponent(t, "![a](a.png)\n\nText",
+		map[string]*fakeImage{"a.png": loaded(cells(3, 3))})
+	md.Resize(6, 3)
+	md.Draw(newImageWriter(6, 3, true))
+	md.SeekTo(2)
+	comptest.TestComponent(t, md, newImageWriter(6, 3, true), []comptest.TestCase{
+		{Expected: `
+███   
+      
+Text  `},
+	})
 }

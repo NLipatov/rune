@@ -21,8 +21,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -62,6 +65,8 @@ import (
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/cell"
 	tcomponent "unstable.build/rune/internal/component"
+	"unstable.build/rune/internal/component/asciiart"
+	"unstable.build/rune/internal/component/imageuri/imageuritest"
 	"unstable.build/rune/internal/component/notifications"
 	"unstable.build/rune/internal/debug"
 	thandler "unstable.build/rune/internal/handler"
@@ -9580,13 +9585,14 @@ func TestSponsorsOpensFloatingWindow(t *testing.T) {
 			handler: func(w http.ResponseWriter, _ *http.Request) {
 				http.Error(w, "sponsors unavailable", http.StatusServiceUnavailable)
 			},
-			want: "Your name here",
+			want: "Your logo here",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			defer srv.Close()
-			b := newExForTesting(t, texttest.NopEditor())
+			b := newExForTesting(t, texttest.NopEditor(),
+				text.WithMarkdownImageStorage(storagestub.NewInMemoryService()))
 			b.ex.sponsorsURL = srv.URL
 			scheduled := make(chan func(), 1)
 			b.ex.sched = func(fn func()) bool {
@@ -9612,6 +9618,268 @@ func TestSponsorsOpensFloatingWindow(t *testing.T) {
 func TestSponsorsRequiresURL(t *testing.T) {
 	b := newExForTesting(t, texttest.NopEditor())
 	assert.EqualError(t, b.ex.sponsors(bgctx), "sponsors: no sponsor list is configured")
+}
+
+func TestSponsorsDrawsPictures(t *testing.T) {
+	const avatar = "https://avatars.githubusercontent.com/u/"
+	pictures := map[string][]byte{
+		"https://acme.dev/logo.png": imageuritest.SamplePNG,
+		avatar + "3?s=112&v=4":      squarePNG(t, 112, 0x40),
+		avatar + "4?s=64&v=4":       squarePNG(t, 64, 0x80),
+		// GitHub may serve a profile photo larger than asked for.
+		avatar + "6?s=48&v=4": squarePNG(t, 420, 0xc0),
+		avatar + "7?s=48&v=4": squarePNG(t, 48, 0x20),
+		sponsorSlotLogo:       squarePNG(t, 1024, 0xe0),
+	}
+	for _, tc := range []struct {
+		name     string
+		handler  http.HandlerFunc
+		pictures int
+		expected string
+	}{
+		{
+			name:     "sponsor list",
+			pictures: 8,
+			expected: sponsorsPictures86x53,
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"sponsor_url":"https://example.com/sponsor","tiers":[
+					{"id":"diamond","sponsors":[{"login":"acme","name":"Acme",
+						"url":"https://acme.dev","logo_url":"https://acme.dev/logo.png"}]},
+					{"id":"platinum","sponsors":[{"login":"beta","name":"Beta",
+						"logo_url":"` + avatar + `3?v=4"}]},
+					{"id":"gold","sponsors":[{"login":"gold","name":"Gold",
+						"logo_url":"` + avatar + `4?v=4"}]},
+					{"id":"bronze","sponsors":[{"login":"plain","name":"Plain Co",
+						"logo_url":"http://plain.dev/logo.png"}]},
+					{"id":"backer","sponsors":[
+						{"login":"alice","avatar_url":"` + avatar + `6?v=4","logo_url":"https://alice.dev/a.png"},
+						{"login":"carol"},
+						{"login":"bob","avatar_url":"` + avatar + `7?v=4"}]}]}`))
+			},
+		},
+		{
+			name:     "api unavailable shows the open slots",
+			pictures: 3,
+			expected: sponsorsOpenSlots86x53,
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "sponsors unavailable", http.StatusServiceUnavailable)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			storage := storagestub.NewInMemoryService()
+			for uri, data := range pictures {
+				imageuritest.Cache(t, storage, uri, data)
+			}
+			// Each picture interrupts once, when it has loaded.
+			var loaded atomic.Int32
+			publish := func(ev term.Event) bool {
+				if ev.Type == term.EventInterrupt {
+					loaded.Add(1)
+				}
+				return true
+			}
+			b := newExForTesting(t, texttest.NopEditor(),
+				text.WithMarkdownImageStorage(storage),
+				func(cfg *text.Config) { cfg.EventPublisher = publish })
+			b.ex.sponsorsURL = srv.URL
+			scheduled := make(chan func(), 1)
+			b.ex.sched = func(fn func()) bool {
+				scheduled <- fn
+				return true
+			}
+			require.NoError(t, b.ex.sponsors(bgctx))
+			select {
+			case fn := <-scheduled:
+				fn()
+			case <-time.After(10 * time.Second):
+				t.Fatal("sponsors never scheduled its window")
+			}
+
+			const width, height = 86, 53
+			b.Resize(width, height)
+			w := asciiart.NewStringWriter(width, height, asciiart.DefaultConfig())
+			w.SetContext = cell.ContextWithPixelSize(context.Background(),
+				cell.PixelSize{Width: 10, Height: 20})
+			draw := func() string {
+				require.NoError(t, w.Clear(term.Attributes{}))
+				b.Draw(w)
+				require.NoError(t, w.Flush())
+				return w.String()
+			}
+			// Pictures start loading on the first frame that knows the size
+			// of a cell.
+			draw()
+			require.Eventually(t, func() bool {
+				return int(loaded.Load()) >= tc.pictures
+			}, 10*time.Second, time.Millisecond, "the pictures never loaded")
+			// The host redraws on the interrupts of the loads, before the
+			// user scrolls past the introduction to the sponsors.
+			draw()
+			for range 17 {
+				b.Handle(term.Event{Type: term.EventKey, Ch: 'j'})
+			}
+			assert.Equal(t, tc.expected, draw())
+		})
+	}
+}
+
+// Frames of the sponsors window scrolled to its rows, named after what
+// they show and the size of the terminal.
+const (
+	sponsorsPictures86x53 = `┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                    │
+├─█●███████████████████████████████████ Sponsors ███████████████████████████████████─┤
+│ │                                                                                │ │
+│ │ Diamond Sponsors                                                               │ │
+│ │                                                                                │ │
+│ │        @@@@@@@@@@@@@@@@@@@@@@                99999999999999999999              │ │
+│ │        @@@@bbba@ccc@;cc;@@@@@                99999999999999999999              │ │
+│ │        @@@@@@@#c#@@;;@@@@@@@@                99999999999999999999              │ │
+│ │        @@@@ccc;@;;;@:;::@@@@@                99999999999999999999              │ │
+│ │        @@@@@@@#;#@@;:@@@@@@@@                99999999999999999999              │ │
+│ │        @@@@;;;:@:::@+:++@@@@@                99999999999999999999              │ │
+│ │        @@@@@##@@@#@@@##@@@@@@                99999999999999999999              │ │
+│ │        :;::::9#:@W+#@@=#=#@:@                99999999999999999999              │ │
+│ │        @@@@@@@@@@@@@@@@@@@@@@                99999999999999999999              │ │
+│ │                 Acme                            Your logo here                 │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Platinum Sponsors                                                              │ │
+│ │                                                                                │ │
+│ │      -------------            9999999999999                                    │ │
+│ │      -------------            9999999999999                                    │ │
+│ │      -------------            9999999999999                                    │ │
+│ │      -------------            9999999999999                                    │ │
+│ │      -------------            9999999999999                                    │ │
+│ │      -------------            9999999999999                                    │ │
+│ │           Beta                Your logo here                                   │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Other Sponsors                                                                 │ │
+│ │                                                                                │ │
+│ │    aaaaaaaaaaa        99999999999                                              │ │
+│ │    aaaaaaaaaaa        99999999999                                              │ │
+│ │    aaaaaaaaaaa        99999999999                                              │ │
+│ │    aaaaaaaaaaa        99999999999                                              │ │
+│ │    aaaaaaaaaaa        99999999999                                              │ │
+│ │        Gold          Your logo here                                            │ │
+│ │                                                                                │ │
+│ │ Plain Co                                                                       │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Backers                                                                        │ │
+│ │                                                                                │ │
+│ │ 5555  ''''                                                                     │ │
+│ │ 5555  ''''                                                                     │ │
+│ │ alice bob                                                                      │ │
+│ │                                                                                │ │
+│ │ carol                                                                          │ │
+│ │                                                                                │ │
+│ │ ────────────────────────────────────────────────────────────────────────────── │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+└─└────────────────────────────────────────────────────────────────────────────────┘─┘`
+	sponsorsOpenSlots86x53 = `┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                    │
+├─█●███████████████████████████████████ Sponsors ███████████████████████████████████─┤
+│ │                                                                                │ │
+│ │ Diamond Sponsors                                                               │ │
+│ │                                                                                │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │         99999999999999999999                                                   │ │
+│ │            Your logo here                                                      │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Platinum Sponsors                                                              │ │
+│ │                                                                                │ │
+│ │      9999999999999                                                             │ │
+│ │      9999999999999                                                             │ │
+│ │      9999999999999                                                             │ │
+│ │      9999999999999                                                             │ │
+│ │      9999999999999                                                             │ │
+│ │      9999999999999                                                             │ │
+│ │      Your logo here                                                            │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Other Sponsors                                                                 │ │
+│ │                                                                                │ │
+│ │    99999999999                                                                 │ │
+│ │    99999999999                                                                 │ │
+│ │    99999999999                                                                 │ │
+│ │    99999999999                                                                 │ │
+│ │    99999999999                                                                 │ │
+│ │   Your logo here                                                               │ │
+│ │                                                                                │ │
+│ │ ────────────────────────────────────────────────────────────────────────────── │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ Tiers                                                                          │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ $5 a month                                                                     │ │
+│ │                                                                                │ │
+│ │ • Your GitHub username is added to Rune's sponsors page                        │ │
+│ │ • 2 x small Rune sticker in the mail (50mm x 50mm or 2x2").                    │ │
+│ │                                                                                │ │
+│ │                                                                                │ │
+│ │ $10 a month                                                                    │ │
+│ │                                                                                │ │
+└─└────────────────────────────────────────────────────────────────────────────────┘─┘`
+)
+
+// squarePNG is a size x size picture of a single gray.
+func squarePNG(t *testing.T, size int, gray uint8) []byte {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, size, size))
+	for i := range img.Pix {
+		img.Pix[i] = gray
+	}
+	var b bytes.Buffer
+	require.NoError(t, png.Encode(&b, img))
+	return b.Bytes()
+}
+
+func TestOpenMarkdownFloatingLoadsImages(t *testing.T) {
+	// The image server only records that the image was requested, which
+	// is as far as a loopback listener without a trusted certificate gets.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close() //nolint:errcheck
+	requested := make(chan struct{}, 1)
+	go debug.CapturePanicReport(func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		requested <- struct{}{}
+	})
+
+	b := newExForTesting(t, texttest.NopEditor(),
+		text.WithMarkdownImageStorage(storagestub.NewInMemoryService()))
+	md := "![logo](https://" + ln.Addr().String() + "/logo.png)\n"
+	require.NoError(t, b.ex.openMarkdownFloating(md, "Doc", 16))
+	b.Resize(30, 12)
+	w := term.NewStringWriter(30, 12)
+	// Images load once the frame tells them the size of a cell.
+	w.SetContext = cell.ContextWithPixelSize(context.Background(),
+		cell.PixelSize{Width: 10, Height: 20})
+	b.Draw(w)
+	select {
+	case <-requested:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the floating window never loaded its image")
+	}
 }
 
 func TestOpenMarkdownFloatingScrollBar(t *testing.T) {

@@ -1582,6 +1582,8 @@ func (h *workspaceManagerHandler) textOpts(
 		text.WithSyntaxParse(treesitter.Parse),
 		text.WithSwapDirectory(h.swapDirectory(cfg, ws, uri)),
 		text.WithMarkdownConfig(markdownConfig),
+		text.WithMarkdownImageStorage(
+			storageapi.WithPartition(cfg.storage, markdownImagesPartition)),
 		text.WithClipboard(h.clip),
 		text.WithOpenRouter(h),
 		text.WithFileExplorer(text.FileExplorerConfig{

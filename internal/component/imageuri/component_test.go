@@ -824,3 +824,19 @@ func (c countingFile) Close() error {
 	c.closes.Add(1)
 	return c.File.Close()
 }
+
+func TestNewServesImageuritestCache(t *testing.T) {
+	storage := storagestub.NewInMemoryService()
+	const uri = "https://example.invalid/sample.png"
+	imageuritest.Cache(t, storage, uri, imageuritest.SamplePNG)
+	c, err := imageuri.New(uri, time.Hour, storage, term.NopInterrupter(), imageuri.Style{})
+	require.NoError(t, err)
+	defer c.Close() //nolint:errcheck
+	c.Start()
+	require.Eventually(t, func() bool {
+		_, settled := c.Size()
+		return settled
+	}, 10*time.Second, time.Millisecond)
+	size, _ := c.Size()
+	assert.Equal(t, image.Pt(194, 179), size)
+}

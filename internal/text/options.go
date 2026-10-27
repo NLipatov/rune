@@ -106,9 +106,14 @@ type Config struct {
 	SwapDirectory func(file workspaceapi.URI) string
 	PkgManager    syntax.PkgManager
 	Markdown      markdown.Config
-	Clipboard     clipboard.Register
-	OpenRouter    OpenRouter
-	Comments      CommentConfig
+	// MarkdownImageStorage, when set, shows the images of markdown view
+	// tabs, and caches the https images they download in it. It is used
+	// as-is: the caller owns its partitioning and lifetime. When nil,
+	// markdown view tabs show alt text in place of images.
+	MarkdownImageStorage storageapi.Service
+	Clipboard            clipboard.Register
+	OpenRouter           OpenRouter
+	Comments             CommentConfig
 	// OnLinkClick handles a link clicked in a markdown tab and reports
 	// whether it did. Links it declines, or every link when it is nil,
 	// only scroll to the in-document anchors they name.
@@ -504,6 +509,13 @@ func WithSwapDirectory(resolve func(file workspaceapi.URI) string) Option {
 func WithMarkdownConfig(markdown markdown.Config) Option {
 	return func(cfg *Config) {
 		cfg.Markdown = markdown
+	}
+}
+
+// WithMarkdownImageStorage sets Config.MarkdownImageStorage.
+func WithMarkdownImageStorage(storage storageapi.Service) Option {
+	return func(cfg *Config) {
+		cfg.MarkdownImageStorage = storage
 	}
 }
 
