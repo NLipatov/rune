@@ -1051,8 +1051,11 @@ func (m *Manager) initializeMultiServer(
 	m.servers[key] = mls
 	m.mu.Unlock()
 
+	// Pending opens are drained once through mls so the notify fans
+	// out to every child; draining per child would let the first one
+	// consume them and leave the rest rejecting later didChanges.
+	m.sendPendingOpens(key, mls)
 	for _, child := range children {
-		m.sendPendingOpens(key, child)
 		watched := child
 		go debug.CapturePanicReport(func() {
 			m.watchServer(&lang, watched)
@@ -1090,7 +1093,7 @@ func (m *Manager) installRestarted(key serverKey, old, restarted *langServer) bo
 // the workspace root entirely (no root can ever contain them, so the
 // first same-language server claims them); the rest stay in
 // pendingOpens for a future server init.
-func (m *Manager) sendPendingOpens(key serverKey, srv *langServer) {
+func (m *Manager) sendPendingOpens(key serverKey, srv server) {
 	m.mu.Lock()
 	var opens []textapi.Event
 	for uri, ev := range m.pendingOpens {

@@ -246,6 +246,37 @@ func TestCrashedServerThatCannotRestartIsFailed(t *testing.T) {
 	assert.ErrorIs(t, onlyServer(t, m).LastError, spawnErr)
 }
 
+func TestPendingOpenReachesEveryMultiServerChild(t *testing.T) {
+	t.Parallel()
+	exec := newFakeProcExecutor()
+	m := newLifecycleTestManager(t, exec, &mockNotifications{}, Config{})
+	openURI := lifecycleRoot + "/main.py"
+	require.NoError(t, m.handle(textapi.Event{
+		Type: textapi.EventTypeOpen, URI: makeURI(t, openURI), Content: "x = 1\n",
+	}))
+
+	opts, err := json.Marshal(map[string]any{
+		"langID":  "python",
+		"command": "/bin/ty server",
+		"alternate_commands": map[string]string{
+			"textDocument/formatting": "/bin/ruff server",
+		},
+	})
+	require.NoError(t, err)
+	_, err = m.Initialize(t.Context(), semanticapi.InitializeParams{
+		RootURI: lifecycleRoot, InitializeOptions: opts,
+	})
+	require.NoError(t, err)
+
+	for _, pid := range []workspaceapi.Pid{1, 2} {
+		assert.Eventually(t, func() bool {
+			_, opens := exec.proc(pid).received()
+			return slices.Equal(opens, []string{openURI})
+		}, 5*time.Second, 10*time.Millisecond,
+			"child %d must receive didOpen, or it rejects every later didChange", pid)
+	}
+}
+
 func TestInstallRestartedRefusesServerNoLongerRegistered(t *testing.T) {
 	t.Parallel()
 	m := New(makeURI(t, lifecycleRoot), nil, nil, nil, nil, nil,
