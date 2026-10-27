@@ -210,3 +210,7 @@ func (e *fakeExecutor) exitFor(key string) (error, bool) {
 	err, ok := e.exits[key]
 	return err, ok
 }
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

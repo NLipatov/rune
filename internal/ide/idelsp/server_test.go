@@ -380,6 +380,10 @@ func (e *recordingStartExecutor) Signal(
 	return nil
 }
 
+func (*recordingStartExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (e *recordingStartExecutor) Close() error {
 	return nil
 }
@@ -634,6 +638,11 @@ func (e *retainingExecutor) StartCommand(
 }
 
 func (e *retainingExecutor) Signal(workspaceapi.Pid, syscall.Signal) error { return nil }
+
+func (*retainingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (e *retainingExecutor) Close() error {
 	if e.cancel != nil {
 		e.cancel()

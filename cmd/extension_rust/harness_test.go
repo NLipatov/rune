@@ -786,3 +786,15 @@ func newTestURI(t *testing.T) workspaceapi.URI {
 	require.NoError(t, err)
 	return uri
 }
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (realExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (*captureExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

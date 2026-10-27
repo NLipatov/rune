@@ -542,3 +542,7 @@ func (l *requestLSP) recorded() []semanticapi.ExecuteRequestParams {
 	defer l.mu.Unlock()
 	return append([]semanticapi.ExecuteRequestParams(nil), l.requests...)
 }
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

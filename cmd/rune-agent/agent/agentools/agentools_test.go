@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -1881,4 +1882,12 @@ func TestApplyPatch_notifiesLSP_addAndDelete(t *testing.T) {
 	}
 	assert.Contains(t, addEvent.URI, "new.go")
 	assert.Contains(t, deleteEvent.URI, "hello.txt")
+}
+
+func (localExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (*recordingExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

@@ -26,6 +26,7 @@ package dreamtest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1063,3 +1064,7 @@ func (noopNotifications) UpdateNotificationProgress(string, string, int64, int64
 var (
 	_ browserapi.Notifications = noopNotifications{}
 )
+
+func (mockExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

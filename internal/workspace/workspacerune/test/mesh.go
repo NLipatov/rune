@@ -149,11 +149,11 @@ func ServeWorkspaces(
 
 	uri, err := workspaceapi.CurrentUserHostURI("/")
 	require.NoError(t, err)
-	scheme, err := workspace.NewFileScheme(
+	dataDir := t.TempDir()
+	scheme, err := workspace.NewFileSchemeFunc(dataDir, "")(
 		context.Background(), config.NopConfig(), uri)
 	require.NoError(t, err)
 
-	dataDir := t.TempDir()
 	server, err := runenet.ServeWorkspace(node, scheme, dataDir, opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() {

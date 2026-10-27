@@ -209,6 +209,10 @@ func (t *testLoader) Signal(workspaceapi.Pid, syscall.Signal) error {
 	panic("unimplemented")
 }
 
+func (*testLoader) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (t *testLoader) Close() error {
 	panic("unimplemented")
 }

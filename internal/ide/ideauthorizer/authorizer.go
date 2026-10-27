@@ -35,6 +35,7 @@ import (
 	"github.com/unstablebuild/blue/auth/grpcauth"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/extensionapi"
+	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
 	"github.com/unstablebuild/rune-go-sdk/api/storageapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi/workspacerpc"
@@ -205,8 +206,9 @@ type Config struct {
 
 // NewAuthorizer returns an Authorizer that satisfies both the workspace
 // CommandAuthorizer interface and the blue auth authorizer used by the
-// extension runner for gRPC middleware. resolver finds the executables
-// commands run on the workspace host, which approvals are bound to.
+// extension runner for gRPC middleware. host is the scheme of the
+// workspace at workspaceURI: the executables its commands run, which
+// approvals are bound to, are looked up and read through it.
 //
 // Command approvals saved by older versions of Rune, which covered every
 // program with the same name, are deleted.
@@ -215,7 +217,9 @@ func NewAuthorizer(
 	promptOpener PromptOpener, storage storageapi.Service,
 	scheduleNextTick func(func()) bool,
 	status browser.TabManager,
-	trust *pkgtrust.Store, resolver ExecutableResolver, config Config,
+	trust *pkgtrust.Store,
+	host schemeapi.Scheme, workspaceURI workspaceapi.URI,
+	config Config,
 ) (*Authorizer, error) {
 	if editor == nil {
 		return nil, errors.New("editor is required")
@@ -226,15 +230,15 @@ func NewAuthorizer(
 	if trust == nil {
 		return nil, errors.New("trust store is required")
 	}
-	if resolver == nil {
-		return nil, errors.New("executable resolver is required")
+	if host == nil {
+		return nil, errors.New("workspace host is required")
 	}
 	a := &Authorizer{
 		prompter: newPermissionPrompter(promptOpener, scheduleNextTick, status),
 		storage:  storage,
 		config:   config,
 		trust:    trust,
-		resolver: resolver,
+		resolver: newExecutableResolver(host, workspaceURI),
 		once:     make(map[string]pluginPermissionOnceDecision),
 		pending:  make(map[string]*pendingPrompt),
 	}
@@ -289,7 +293,7 @@ type Authorizer struct {
 	storage  storageapi.Service
 	config   Config
 	trust    *pkgtrust.Store
-	resolver ExecutableResolver
+	resolver *executableResolver
 
 	onceMu sync.Mutex
 	once   map[string]pluginPermissionOnceDecision

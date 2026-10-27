@@ -19,6 +19,7 @@ package agentshell
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -458,3 +459,7 @@ var (
 	_ browserapi.Notifications = noopNotifications{}
 	_ textapi.REPLHandler      = (*shell)(nil)
 )
+
+func (mockExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

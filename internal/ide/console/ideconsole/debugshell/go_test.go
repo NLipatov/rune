@@ -874,6 +874,10 @@ func (s *localScheme) Signal(
 	return proc.Signal(sig)
 }
 
+func (*localScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (s *localScheme) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

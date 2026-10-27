@@ -214,6 +214,11 @@ func (s *fixtureScheme) Signal(_ workspaceapi.Pid, _ syscall.Signal) error {
 	panic("not implemented")
 }
 func (s *fixtureScheme) Close() error { return nil }
+
+func (*fixtureScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (s *fixtureScheme) NewPty(_ context.Context) (workspaceapi.Pty, error) {
 	panic("not implemented")
 }

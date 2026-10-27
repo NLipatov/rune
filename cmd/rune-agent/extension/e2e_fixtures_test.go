@@ -19,6 +19,7 @@ package extension
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -839,4 +840,8 @@ func maxTokensE2EHandler(t *testing.T, model llmapi.ModelEntry) (tui.Handler, *a
 		interruptCh: interruptCh,
 		settle:      100 * time.Millisecond,
 	}, ag
+}
+
+func (*lookupExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -449,3 +450,7 @@ func (realExecutor) Close() error                                  { return nil 
 // newDirExecutor returns a realExecutor rooted at dir, so commands that
 // do not set Cmd.Dir run in the workspace directory.
 func newDirExecutor(dir string) realExecutor { return realExecutor{dir: dir} }
+
+func (realExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

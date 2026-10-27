@@ -3441,6 +3441,12 @@ func (a workspaceExecutorAdapter) Signal(
 	return a.e.Signal(pid, sig)
 }
 
+func (a workspaceExecutorAdapter) LookPath(
+	ctx context.Context, name, dir string,
+) (string, error) {
+	return a.e.LookPath(ctx, name, dir)
+}
+
 func (a workspaceExecutorAdapter) Close() error {
 	return a.e.Close()
 }

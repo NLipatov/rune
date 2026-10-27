@@ -206,6 +206,11 @@ func (m *workspaceRunner) Signal(pid workspaceapi.Pid, sig syscall.Signal) error
 	return m.executor.Signal(pid, sig)
 }
 
+// LookPath returns the path of the file StartCommand runs for name in dir.
+func (m *workspaceRunner) LookPath(ctx context.Context, name, dir string) (string, error) {
+	return m.executor.LookPath(ctx, name, dir)
+}
+
 // Run runs the given extension with an executable at the given path,
 // with the given config. An extension that fails to start is still
 // registered, errored, so its log can be read.

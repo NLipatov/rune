@@ -882,3 +882,11 @@ func TestHandlerPointerLeaves(t *testing.T) {
 		require.NoError(t, h.Close())
 	}
 }
+
+func (*localExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (schemeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

@@ -160,7 +160,14 @@ denies it. A script is fingerprinted, not the interpreter its `#!` line names,
 and runners like `uv run` or `npx` only bind the runner, not the program they
 install. A program Rune cannot find when it checks the command, such as one
 an earlier step of the script builds or one relative to a directory the
-script changes to, has no file to bind to, so Rune asks every time it runs.
+script changes to, or a script names with `~` or a variable, has no file to
+bind to, so Rune asks every time it runs.
+
+Rune asks the workspace host which file a command runs each time it checks
+the command, so a change to the host's `PATH`, such as a package that
+updates `gui.env` there, cannot make an approval cover another file. An SSH
+or network host running a Rune too old to tell has every command asked
+about until you update Rune there.
 
 Command approvals saved by Rune versions before this check covered every
 program with the same name. Rune forgets them and tells you so, and asks

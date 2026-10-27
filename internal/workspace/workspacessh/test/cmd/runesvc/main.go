@@ -70,9 +70,13 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "runesvc: install shell rc:", err)
 	}
-	if err := hostenv.New(*dataDir, shellRCDir).Apply(guiEnv(*dataDir)); err != nil {
-		fmt.Fprintln(os.Stderr, "runesvc: apply host environment:", err)
+	host := hostenv.New(*dataDir, shellRCDir)
+	applyEnv := func() {
+		if err := host.Apply(guiEnv(*dataDir)); err != nil {
+			fmt.Fprintln(os.Stderr, "runesvc: apply host environment:", err)
+		}
 	}
+	applyEnv()
 	scheme, err := workspace.NewFileSchemeFunc(*dataDir, shellRCDir)(
 		context.Background(), config.NopConfig(), uri)
 	if err != nil {
@@ -93,7 +97,7 @@ func main() {
 	sleepServeDelay(*dataDir)
 
 	grpcServer := workspacessh.NewSchemeServer()
-	if err := servePackages(grpcServer, filepath.Join(*dataDir, "bin")); err != nil {
+	if err := servePackages(grpcServer, filepath.Join(*dataDir, "bin"), applyEnv); err != nil {
 		fmt.Fprintln(os.Stderr, "runesvc: serve packages:", err)
 		os.Exit(6)
 	}

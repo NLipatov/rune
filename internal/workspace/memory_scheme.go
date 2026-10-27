@@ -19,6 +19,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -402,6 +403,11 @@ func (m *memoryScheme) StartCommand(ctx context.Context, cmd workspaceapi.Cmd) (
 
 func (m *memoryScheme) Signal(pid workspaceapi.Pid, signal syscall.Signal) error {
 	return errExecute
+}
+
+// LookPath reports that the scheme cannot tell: it runs no files.
+func (m *memoryScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", fmt.Errorf("%w: %w", errExecute, errors.ErrUnsupported)
 }
 
 func (m *memoryScheme) NewPty(ctx context.Context) (workspaceapi.Pty, error) {

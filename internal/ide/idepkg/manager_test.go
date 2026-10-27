@@ -1428,6 +1428,10 @@ func (s *localScheme) Signal(_ workspaceapi.Pid, _ syscall.Signal) error {
 	panic("not implemented")
 }
 
+func (*localScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (s *localScheme) Close() error { return nil }
 
 // schemeapi.Terminal

@@ -20,6 +20,7 @@ package agentools
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,4 +105,8 @@ func TestWebBrowserDrivesHeadlessChrome(t *testing.T) {
 
 	failed := executeWebBrowser(t, tool, ctx, "click", "@e999")
 	assert.True(t, failed.IsError)
+}
+
+func (hostExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

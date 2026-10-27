@@ -47,13 +47,13 @@ var (
 	_ ideconsole.CommandHandler = (*Executor)(nil)
 )
 
-// Executor wraps a workspaceapi.Executor, tracking every
+// Executor wraps a schemeapi.Executor, tracking every
 // started process so it can be listed, signalled, or stopped
-// from a repl.Handler. It implements both
-// workspaceapi.Executor and ideconsole.CommandHandler.
+// from a repl.Handler. It implements workspaceapi.Executor,
+// schemeapi.Executor and ideconsole.CommandHandler.
 type Executor struct {
 	mu           sync.RWMutex
-	underlying   workspaceapi.Executor
+	underlying   schemeapi.Executor
 	processes    map[workspaceapi.Pid]processInfo
 	history      map[workspaceapi.Pid]processInfo
 	failedStarts []processInfo
@@ -102,7 +102,7 @@ const maxFailedStarts = 64
 
 // NewExecutor returns an Executor that delegates to
 // underlying while tracking running processes.
-func NewExecutor(underlying workspaceapi.Executor) *Executor {
+func NewExecutor(underlying schemeapi.Executor) *Executor {
 	return &Executor{
 		underlying: underlying,
 		processes:  make(map[workspaceapi.Pid]processInfo),
@@ -135,7 +135,7 @@ func (e *Executor) Start(
 	cmd.Stdout = sink.classify("stdout", cmd.Stdout)
 	cmd.Stderr = sink.classify("stderr", cmd.Stderr)
 
-	pid, err := e.underlying.Start(ctx, cmd)
+	pid, err := e.underlying.StartCommand(ctx, cmd)
 	if err != nil {
 		sink.close()
 		e.recordFailedStart(cmd, err)
@@ -256,6 +256,11 @@ func (e *Executor) StartCommand(
 	ctx context.Context, cmd workspaceapi.Cmd,
 ) (workspaceapi.Pid, error) {
 	return e.Start(ctx, cmd)
+}
+
+// LookPath delegates to the underlying executor.
+func (e *Executor) LookPath(ctx context.Context, name, dir string) (string, error) {
+	return e.underlying.LookPath(ctx, name, dir)
 }
 
 // RegisterProcessCommand registers the "process" REPL command in

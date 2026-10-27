@@ -18,6 +18,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -368,4 +369,8 @@ func TestServerDeathDuringConnectFailsFastWithStderr(t *testing.T) {
 	require.Len(t, servers, 1)
 	assert.Equal(t, StatusError, servers[0].Status)
 	assert.Contains(t, servers[0].Error, "boom: credentials missing")
+}
+
+func (*localExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

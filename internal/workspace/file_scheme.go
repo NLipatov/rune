@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -36,7 +37,6 @@ import (
 	"time"
 
 	"github.com/ernestrc/go-multierror"
-	"github.com/ernestrc/sensible/find"
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/blue/bluectx"
 	"github.com/unstablebuild/blue/logging"
@@ -457,40 +457,21 @@ func (p *fileScheme) StartCommand(ctx context.Context, cmd workspaceapi.Cmd) (
 	if procattr.ControlsTerminal(cmd.SysProcAttr) {
 		cmd = p.withShellRC(cmd)
 	}
-	// Unlike file paths, the executable comes from configuration such as
-	// an extension entrypoint of "$RUNE_DATADIR/bin/x", and is expanded
-	// here so an SSH workspace resolves it against the remote environment.
 	dataDir := p.hostDataDir()
-	cmd.Path, err = workspaceapi.ExpandPath(
-		os.Expand(cmd.Path, func(name string) string {
-			if name == hostenv.DataDirVar {
-				return dataDir
-			}
-			return os.Getenv(name)
-		}), p.getUserOrLookup,
-		func() (string, error) { return "", nil })
+	cmd.Path, err = expandCmdPath(cmd.Path, dataDir, p.getUserOrLookup)
 	if err != nil {
-		return 0, fmt.Errorf("expand cmd.Path: %w", err)
+		return 0, err
 	}
 	// $RUNE_DATADIR names the data directory of the host that runs the
 	// command, which only this host knows; other variables in arguments
 	// are left for the program, which may be a shell, to expand.
 	cmd.Args = expandDataDirArgs(cmd.Args, dataDir)
 	cmd.Env = expandDataDirEnv(cmd.Env, dataDir)
-	path := cmd.Path
-	if filepath.Base(cmd.Path) == cmd.Path {
-		path, err = find.Executable(cmd.Path)
-		if err != nil {
-			p.log(log.WarnLevel,
-				"find.Executable: could not find executable of '%s' in path. "+
-					"Falling back to shell expanding it: %v", cmd.Path, err)
-			path = cmd.Path
-		}
-	}
 	// ensure that if file scheme is closed, all commands are cleaned up
 	var cancelFn func()
 	ctx, cancelFn = bluectx.First(p.ctx, ctx)
-	stdcmd := exec.CommandContext(ctx, path, cmd.Args...)
+	// exec looks a bare name up in the PATH like LookPath does.
+	stdcmd := exec.CommandContext(ctx, cmd.Path, cmd.Args...)
 
 	if cmd.Dir != "" {
 		stdcmd.Dir = cmd.Dir
@@ -578,6 +559,61 @@ func (p *fileScheme) hostDataDir() string {
 		return p.dataDir
 	}
 	return os.Getenv(hostenv.DataDirVar)
+}
+
+// LookPath satisfies schemeapi.Executor.
+func (p *fileScheme) LookPath(_ context.Context, name, dir string) (string, error) {
+	if name == "" {
+		name = resolveLoginShell()
+	}
+	expanded, err := expandCmdPath(name, p.hostDataDir(), p.getUserOrLookup)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(expanded) == expanded {
+		found, err := exec.LookPath(expanded)
+		if err != nil {
+			return "", fmt.Errorf("look up %s: %w: %w", name, fs.ErrNotExist, err)
+		}
+		return found, nil
+	}
+	if !filepath.IsAbs(expanded) {
+		if dir == "" {
+			dir = p.workspace.Path()
+		}
+		expanded = filepath.Join(dir, expanded)
+	}
+	if info, err := os.Stat(expanded); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("look up %s: %w", name, fs.ErrNotExist)
+	}
+	return expanded, nil
+}
+
+// expandCmdPath expands the environment variables, with $RUNE_DATADIR
+// naming dataDir, and a leading "~" in name, a Cmd.Path.
+func expandCmdPath(
+	name, dataDir string, getUser func() (*user.User, error),
+) (string, error) {
+	// Unlike file paths, the executable comes from configuration such as
+	// an extension entrypoint of "$RUNE_DATADIR/bin/x", and is expanded
+	// here so an SSH workspace resolves it against the remote environment.
+	expanded := os.Expand(name, func(v string) string {
+		if v == hostenv.DataDirVar {
+			return dataDir
+		}
+		return os.Getenv(v)
+	})
+	// A relative path is left for exec to resolve against Cmd.Dir:
+	// cleaning "./x" to "x" would look it up in the PATH instead.
+	if !filepath.IsAbs(expanded) && !strings.HasPrefix(expanded, "~") {
+		return expanded, nil
+	}
+	expanded, err := workspaceapi.ExpandPath(expanded, getUser,
+		func() (string, error) { return "", nil })
+	if err != nil {
+		return "", fmt.Errorf("expand cmd.Path: %w", err)
+	}
+	return expanded, nil
 }
 
 // expandDataDirArgs copies rather than edits args, which the caller owns.

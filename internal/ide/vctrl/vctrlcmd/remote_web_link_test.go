@@ -18,6 +18,7 @@ package vctrlcmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -390,4 +391,8 @@ func setupGitRepos(t *testing.T) (reposPath string) {
 	reposPath = tmpDir + "/repos"
 
 	return
+}
+
+func (*gitTestExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

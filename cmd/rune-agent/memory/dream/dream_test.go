@@ -1405,3 +1405,11 @@ func (f *failingFS) Remove(_ string) error                   { return nil }
 func (f *failingFS) Stat(_ string) (os.FileInfo, error)      { return nil, f.statErr }
 func (f *failingFS) ReadDir(_ string) ([]os.DirEntry, error) { return nil, nil }
 func (f *failingFS) MkdirAll(_ string, _ os.FileMode) error  { return nil }
+
+func (*mockExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (osExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

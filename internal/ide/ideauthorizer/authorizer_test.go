@@ -21,11 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
-	"os"
-	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -130,100 +126,6 @@ func (s *stubPromptOpener) Floating(
 	}
 	p.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
 	return browsertest.NopWindow(), nil
-}
-
-// fakeResolver is a host where every file exists unless it is missing,
-// and holds its own path unless its contents were set. Programs are
-// looked up in hostPATH.
-type fakeResolver struct {
-	mu       sync.Mutex
-	host     string
-	hostPATH []string
-	missing  map[string]bool
-	contents map[string]string
-	modified map[string]time.Time
-}
-
-func newFakeResolver(missing ...string) *fakeResolver {
-	r := &fakeResolver{
-		hostPATH: []string{"/usr/bin", "/bin"},
-		missing:  map[string]bool{},
-		contents: map[string]string{},
-		modified: map[string]time.Time{},
-	}
-	for _, m := range missing {
-		r.missing[m] = true
-	}
-	return r
-}
-
-func (r *fakeResolver) setContent(p, content string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.contents[p] = content
-	r.modified[p] = time.Date(2026, 10, 25, 14, 2, 0, 0, time.Local)
-}
-
-func (r *fakeResolver) HostID() string { return r.host }
-
-func (r *fakeResolver) setMissing(p string, missing bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.missing[p] = missing
-}
-
-func (r *fakeResolver) HostPATH(context.Context) ([]string, error) {
-	return r.hostPATH, nil
-}
-
-func (r *fakeResolver) Resolve(
-	_ context.Context, name, dir string, pathList []string,
-) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if dir == "" {
-		dir = "/ws"
-	}
-	var candidates []string
-	switch {
-	case path.IsAbs(name):
-		candidates = []string{path.Clean(name)}
-	case strings.Contains(name, "/"):
-		candidates = []string{path.Join(dir, name)}
-	default:
-		if pathList == nil {
-			pathList = r.hostPATH
-		}
-		for _, d := range pathList {
-			if !path.IsAbs(d) {
-				d = path.Join(dir, d)
-			}
-			candidates = append(candidates, path.Join(d, name))
-		}
-	}
-	for _, c := range candidates {
-		if !r.missing[c] {
-			return c, nil
-		}
-	}
-	return "", ErrExecutableNotFound
-}
-
-func (r *fakeResolver) Fingerprint(_ context.Context, p string) (ExecutableFingerprint, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.missing[p] {
-		return ExecutableFingerprint{}, ErrExecutableNotFound
-	}
-	content, ok := r.contents[p]
-	if !ok {
-		content = p
-	}
-	return ExecutableFingerprint{
-		SHA256:  sha256Hex(content),
-		Size:    int64(len(content)),
-		ModTime: r.modified[p],
-	}, nil
 }
 
 // storedCommandDecisions returns the command decisions in storage.
@@ -365,7 +267,7 @@ func mustNewAutoAuthorizer(
 ) *Authorizer {
 	t.Helper()
 	a, err := NewAuthorizer(editor, opener, storage, syncScheduleNextTick, &capturingStatus{},
-		testTrustStore(t), newFakeResolver(), Config{
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{
 			AutoAuthorizeExtensions: true,
 			AutoAuthorizeCommands:   true,
 		})
@@ -400,7 +302,7 @@ func TestAuthorizerAutoAuthorizeScopes(t *testing.T) {
 			opener := &stubPromptOpener{decision: PermissionAllowOnce}
 			a, err := NewAuthorizer(texttest.NopEditor(), opener,
 				storagestub.NewInMemoryService(), syncScheduleNextTick, &capturingStatus{},
-				testTrustStore(t), newFakeResolver(), tc.config)
+				testTrustStore(t), newFakeHost(), testWorkspace, tc.config)
 			require.NoError(t, err)
 			ext := testPluginExtension(nil)
 
@@ -471,7 +373,7 @@ func TestAuthorizerAutoAuthorizeStartCommandGrantsWithoutPrompt(t *testing.T) {
 	// auto-authorization is also enabled.
 	trustedFingerprint := "D3F9E65DE72888CC03D45CF5064D4ABCFA6D9338"
 	a, err := NewAuthorizer(texttest.NopEditor(), opener, storage,
-		syncScheduleNextTick, &capturingStatus{}, testTrustStore(t), newFakeResolver(), Config{
+		syncScheduleNextTick, &capturingStatus{}, testTrustStore(t), newFakeHost(), testWorkspace, Config{
 			AutoAuthorizeCommands:          true,
 			AutoAuthorizeVerifiedPublisher: true,
 		})
@@ -526,7 +428,7 @@ func TestAuthorizerVerifiedPublisherAutoAuthorizes(t *testing.T) {
 	opener := &stubPromptOpener{decision: PermissionDenyOnce}
 	a, err := NewAuthorizer(texttest.NopEditor(), opener,
 		storagestub.NewInMemoryService(), syncScheduleNextTick, &capturingStatus{},
-		testTrustStore(t), newFakeResolver(), Config{
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{
 			AutoAuthorizeVerifiedPublisher: true,
 			AutoAuthorizeCommands:          true,
 		})
@@ -550,7 +452,7 @@ func TestAuthorizerVerifiedPublisherAloneStillPromptsCommands(t *testing.T) {
 	opener := &stubPromptOpener{decision: PermissionAllowOnce}
 	a, err := NewAuthorizer(texttest.NopEditor(), opener,
 		storagestub.NewInMemoryService(), syncScheduleNextTick, &capturingStatus{},
-		testTrustStore(t), newFakeResolver(), Config{
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{
 			AutoAuthorizeVerifiedPublisher: true,
 		})
 	require.NoError(t, err)
@@ -574,7 +476,7 @@ func TestAuthorizerVerifiedPublisherToggleAndStoredDeny(t *testing.T) {
 
 	opener := &stubPromptOpener{decision: PermissionAllowOnce}
 	a, err := NewAuthorizer(texttest.NopEditor(), opener, storage,
-		syncScheduleNextTick, &capturingStatus{}, testTrustStore(t), newFakeResolver(),
+		syncScheduleNextTick, &capturingStatus{}, testTrustStore(t), newFakeHost(), testWorkspace,
 		Config{AutoAuthorizeVerifiedPublisher: true})
 	require.NoError(t, err)
 	assert.ErrorIs(t, a.Authorize(context.Background(), blueauth.UserClaims[Extension]{Extra: ext},
@@ -584,7 +486,7 @@ func TestAuthorizerVerifiedPublisherToggleAndStoredDeny(t *testing.T) {
 	noToggleOpener := &stubPromptOpener{decision: PermissionAllowOnce}
 	withoutToggle, err := NewAuthorizer(texttest.NopEditor(), noToggleOpener,
 		storagestub.NewInMemoryService(), syncScheduleNextTick, &capturingStatus{},
-		testTrustStore(t), newFakeResolver(), Config{})
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{})
 	require.NoError(t, err)
 	require.NoError(t, withoutToggle.Authorize(context.Background(),
 		blueauth.UserClaims[Extension]{Extra: ext}, testWindowManagerResource))
@@ -1223,7 +1125,7 @@ func mustNewAuthorizer(
 ) *Authorizer {
 	t.Helper()
 	a, err := NewAuthorizer(editor, opener, storage, syncScheduleNextTick, &capturingStatus{},
-		testTrustStore(t), newFakeResolver(), Config{})
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{})
 	require.NoError(t, err)
 	return a
 }
@@ -1235,7 +1137,7 @@ func mustNewAuthorizerWithStatus(
 ) *Authorizer {
 	t.Helper()
 	a, err := NewAuthorizer(editor, opener, storage, syncScheduleNextTick, status,
-		testTrustStore(t), newFakeResolver(), Config{})
+		testTrustStore(t), newFakeHost(), testWorkspace, Config{})
 	require.NoError(t, err)
 	return a
 }
@@ -1271,7 +1173,7 @@ func newTestAuthorizerCore(
 		prompter: newPermissionPrompter(opener, syncScheduleNextTick, &capturingStatus{}),
 		storage:  storage,
 		trust:    pkgtrust.NewStore(),
-		resolver: newFakeResolver(),
+		resolver: newExecutableResolver(newFakeHost(), testWorkspace),
 		once:     make(map[string]pluginPermissionOnceDecision),
 		pending:  make(map[string]*pendingPrompt),
 	}
@@ -2271,14 +2173,15 @@ func TestAuthorizerPersistedScopeDoesNotCoverOtherExecutables(t *testing.T) {
 func TestAuthorizerPersistedScopeDoesNotCoverShadowingExecutable(t *testing.T) {
 	t.Parallel()
 
-	r := newFakeResolver("/home/u/go/bin/git")
-	r.hostPATH = []string{"/home/u/go/bin", "/usr/bin"}
+	host := newFakeHost("/home/u/go/bin/git")
+	host.setPATH("/home/u/go/bin", "/usr/bin")
 	opener := &stubPromptOpener{
 		decision: PermissionAllowAlways,
 		picks:    []string{"git *"},
 	}
-	a := newTestAuthorizerCore(opener, storagestub.NewInMemoryService())
-	a.resolver = r
+	a, err := NewAuthorizer(texttest.NopEditor(), opener, storagestub.NewInMemoryService(),
+		syncScheduleNextTick, &capturingStatus{}, testTrustStore(t), host, testWorkspace, Config{})
+	require.NoError(t, err)
 	ctx := blueauth.ContextWithClaims(context.Background(),
 		blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
 	cmd := workspaceapi.Cmd{Path: "bash", Args: []string{"-c", "git status"}}
@@ -2287,11 +2190,53 @@ func TestAuthorizerPersistedScopeDoesNotCoverShadowingExecutable(t *testing.T) {
 	require.Equal(t, 1, opener.calls)
 
 	// A git dropped earlier in the PATH is another program.
-	r.setMissing("/home/u/go/bin/git", false)
+	host.setMissing("/home/u/go/bin/git", false)
 	opener.decision = PermissionDenyOnce
 	require.ErrorIs(t, a.AuthorizeCommand(ctx, cmd), blueauth.ErrForbidden)
 	require.Equal(t, 2, opener.calls)
 	assert.Contains(t, opener.messages[1], "`/home/u/go/bin/git`")
+}
+
+func TestAuthorizerDoesNotBindProgramsTheShellExpands(t *testing.T) {
+	t.Parallel()
+
+	storage := storagestub.NewInMemoryService()
+	opener := &stubPromptOpener{decision: PermissionAllowOnce}
+	a := newTestAuthorizerCore(opener, storage)
+	ctx := blueauth.ContextWithClaims(context.Background(),
+		blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
+	// The command sets the HOME the shell expands "~" against, so the
+	// file the host would look up for "~/bin/tool" is not what runs.
+	cmd := workspaceapi.Cmd{
+		Path: "bash", Args: []string{"-c", "~/bin/tool"}, Env: []string{"HOME=/tmp/evil"},
+	}
+	require.NoError(t, a.AuthorizeCommand(ctx, cmd))
+	require.NoError(t, a.AuthorizeCommand(ctx, cmd))
+	assert.Equal(t, 2, opener.calls, "a program with no file to bind to is asked about every time")
+	once := []string{PromptOptionYes, PromptOptionNo}
+	assert.Equal(t, [][]string{once, once}, opener.options)
+	assert.Empty(t, storedScopes(t, storage))
+}
+
+func TestAuthorizerAsksEveryTimeAboutWhatAHostThatCannotTellRuns(t *testing.T) {
+	t.Parallel()
+
+	storage := storagestub.NewInMemoryService()
+	opener := &stubPromptOpener{decision: PermissionAllowOnce}
+	a, err := NewAuthorizer(texttest.NopEditor(), opener, storage, syncScheduleNextTick,
+		&capturingStatus{}, testTrustStore(t),
+		hostAnswering{fakeHost: newFakeHost(), err: errors.ErrUnsupported}, testWorkspace, Config{})
+	require.NoError(t, err)
+	ctx := blueauth.ContextWithClaims(context.Background(),
+		blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
+	// A program the host cannot tell the file of is not one it lacks: it
+	// may run any file by its name.
+	cmd := workspaceapi.Cmd{Path: "rg", Args: []string{"--version"}}
+	require.NoError(t, a.AuthorizeCommand(ctx, cmd))
+	require.NoError(t, a.AuthorizeCommand(ctx, cmd))
+	once := []string{PromptOptionYes, PromptOptionNo}
+	assert.Equal(t, [][]string{once, once}, opener.options)
+	assert.Empty(t, storedScopes(t, storage))
 }
 
 func TestAuthorizerTransparentWrappersScopeTheCommandTheyRun(t *testing.T) {
@@ -2338,14 +2283,15 @@ func TestAuthorizerRenewsChangedExecutable(t *testing.T) {
 		t.Run(strings.TrimSpace(tc.option), func(t *testing.T) {
 			t.Parallel()
 
-			r := newFakeResolver()
+			host := newFakeHost()
 			storage := storagestub.NewInMemoryService()
 			opener := &stubPromptOpener{
 				decision: PermissionAllowAlways,
 				picks:    []string{"git *", "git status *"},
 			}
-			a := newTestAuthorizerCore(opener, storage)
-			a.resolver = r
+			a, err := NewAuthorizer(texttest.NopEditor(), opener, storage, syncScheduleNextTick,
+				&capturingStatus{}, testTrustStore(t), host, testWorkspace, Config{})
+			require.NoError(t, err)
 			ext := testRegularExtension(extensionapi.NewPermissions(extensionapi.PermissionExecute))
 			ctx := blueauth.ContextWithClaims(context.Background(),
 				blueauth.UserClaims[Extension]{Extra: ext})
@@ -2353,10 +2299,10 @@ func TestAuthorizerRenewsChangedExecutable(t *testing.T) {
 				Path: "git", Args: []string{"status"},
 			}))
 
-			r.setContent("/usr/bin/git", "rebuilt")
+			host.write("/usr/bin/git", "rebuilt", 0o755, time.Date(2026, 10, 25, 14, 2, 0, 0, time.Local))
 			opener.renewal = tc.option
 			push := workspaceapi.Cmd{Path: "git", Args: []string{"push"}}
-			err := a.AuthorizeCommand(ctx, push)
+			err = a.AuthorizeCommand(ctx, push)
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
 			} else {
@@ -2527,7 +2473,7 @@ func TestNewAuthorizerForgetsLegacyCommandDecisions(t *testing.T) {
 	notes := &capturingNotifications{}
 	newAuthorizer := func() {
 		_, err := NewAuthorizer(texttest.NopEditor(), nil, storage, syncScheduleNextTick,
-			&capturingStatus{}, testTrustStore(t), newFakeResolver(),
+			&capturingStatus{}, testTrustStore(t), newFakeHost(), testWorkspace,
 			Config{Notifications: notes})
 		require.NoError(t, err)
 	}
@@ -2563,13 +2509,14 @@ func TestAuthorizerNeverPersistsApprovalsOfProgramsNotFound(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			r := newFakeResolver("/usr/bin/tool", "/bin/tool")
 			storage := storagestub.NewInMemoryService()
 			opener := &stubPromptOpener{
 				decision: PermissionAllowAlways,
 			}
-			a := newTestAuthorizerCore(opener, storage)
-			a.resolver = r
+			a, err := NewAuthorizer(texttest.NopEditor(), opener, storage, syncScheduleNextTick,
+				&capturingStatus{}, testTrustStore(t), newFakeHost("/usr/bin/tool", "/bin/tool"),
+				testWorkspace, Config{})
+			require.NoError(t, err)
 			ext := testPluginExtension(nil)
 			ctx := blueauth.ContextWithClaims(context.Background(),
 				blueauth.UserClaims[Extension]{Extra: ext})
@@ -2600,21 +2547,19 @@ func TestAuthorizerAuthorizeCommandBuildsOnPastDecisions(t *testing.T) {
 	rebuilt := built.Add(19 * time.Hour)
 	content := func(p string) string { return "#!/bin/sh\n# " + p + "\n" }
 	const rebuiltGit = "#!/bin/sh\n# git, rebuilt with a fix\n"
-	host := diskHost{t: t, root: t.TempDir()}
+	host := newBareHost()
 	for _, p := range []string{
 		"/bin/bash", "/bin/sh", "/usr/bin/git", "/usr/bin/tail", "/usr/bin/head",
 		"/usr/bin/sed", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/rm", "/usr/bin/make",
 		"/usr/bin/timeout", "/usr/bin/grep", "/usr/bin/docker", "/home/u/bin/git",
 		"/ws/build", "/ws/sub/build",
 	} {
-		host.write(p, content(p), built)
+		host.write(p, content(p), 0o755, built)
 	}
 	storage := storagestub.NewInMemoryService()
 	opener := &stubPromptOpener{}
 	a, err := NewAuthorizer(texttest.NopEditor(), opener, storage, syncScheduleNextTick,
-		&capturingStatus{}, testTrustStore(t), NewWorkspaceResolver(WorkspaceResolverConfig{
-			FS: host, Root: "/ws", Home: "/home/u", HostPATH: staticHostPATH("/usr/bin", "/bin"),
-		}), Config{})
+		&capturingStatus{}, testTrustStore(t), host, testWorkspace, Config{})
 	require.NoError(t, err)
 	agent := testRegularExtension(extensionapi.NewPermissions(extensionapi.PermissionExecute))
 	other := agent
@@ -2698,7 +2643,7 @@ func TestAuthorizerAuthorizeCommandBuildsOnPastDecisions(t *testing.T) {
 			wantOptions: scopes, wantNote: "Runs `/home/u/bin/git`." + pick,
 			wantErr: blueauth.ErrForbidden},
 		{name: "a rebuilt executable asks to renew the approvals that run it",
-			setup: func() { host.write("/usr/bin/git", rebuiltGit, rebuilt) },
+			setup: func() { host.write("/usr/bin/git", rebuiltGit, 0o755, rebuilt) },
 			cmd:   run("git", "log"), renew: PromptOptionRenew, wantOptions: renewal,
 			wantNote: "**`/usr/bin/git`** has changed since you approved `git *` for extension " +
 				"Test Extension.\n\nsha256 `" + fingerprintPreview(sha256Hex(content("/usr/bin/git"))) +
@@ -2822,7 +2767,7 @@ func TestAuthorizerAuthorizeCommandBuildsOnPastDecisions(t *testing.T) {
 			decision: PermissionAllowOnce, wantOptions: once,
 			wantNote: "Runs `stdbuf` (not found, so Rune asks every time)."},
 		{name: "once it is installed it is another program",
-			setup:       func() { host.write("/usr/bin/stdbuf", content("/usr/bin/stdbuf"), built) },
+			setup:       func() { host.write("/usr/bin/stdbuf", content("/usr/bin/stdbuf"), 0o755, built) },
 			cmd:         run("sh", "-c", "stdbuf -oL git log > /tmp/log 2>&1; echo $?"),
 			wantOptions: programs,
 			wantNote: "Runs `/usr/bin/stdbuf`.\n\nChoosing **Always** approves " +
@@ -2887,30 +2832,6 @@ func TestAuthorizerAuthorizeCommandBuildsOnPastDecisions(t *testing.T) {
 				changedEntries(fingerprints, storedFingerprints(t, storage)))))
 		})
 	}
-}
-
-// diskHost is a workspace host whose file system is a directory on the
-// disk, so that the resolver the IDE uses finds and fingerprints its
-// executables: /usr/bin/git is <root>/usr/bin/git.
-type diskHost struct {
-	t    *testing.T
-	root string
-}
-
-func (h diskHost) Stat(name string) (fs.FileInfo, error) { return os.Stat(h.file(name)) }
-
-func (h diskHost) Open(name string) (workspaceapi.File, error) { return os.Open(h.file(name)) }
-
-func (h diskHost) file(name string) string {
-	return filepath.Join(h.root, filepath.FromSlash(name))
-}
-
-// write writes the executable p, modified at mtime so that the prompts
-// that show it read the same on every run.
-func (h diskHost) write(p, content string, mtime time.Time) {
-	h.t.Helper()
-	writeExecutable(h.t, h.file(p), content, 0o755)
-	require.NoError(h.t, os.Chtimes(h.file(p), mtime, mtime))
 }
 
 // storedFingerprints maps the executables in storage to the digests the

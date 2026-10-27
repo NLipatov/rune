@@ -18,6 +18,7 @@ package llamaserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -174,6 +175,10 @@ func (f *fakeExecutor) Signal(_ workspaceapi.Pid, sig syscall.Signal) error {
 	defer f.mu.Unlock()
 	f.signals = append(f.signals, sig)
 	return nil
+}
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (f *fakeExecutor) Close() error { return nil }

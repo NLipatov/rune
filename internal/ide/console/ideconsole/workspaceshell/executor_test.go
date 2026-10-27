@@ -19,6 +19,7 @@ package workspaceshell
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/config"
-	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	"github.com/unstablebuild/rune-go-sdk/handler/repl"
@@ -42,7 +42,7 @@ import (
 
 const testWidth = 200
 
-// mockExecutor is a minimal workspaceapi.Executor for testing.
+// mockExecutor is a minimal schemeapi.Executor for testing.
 type mockExecutor struct {
 	mu       sync.Mutex
 	nextPid  workspaceapi.Pid
@@ -52,6 +52,8 @@ type mockExecutor struct {
 	startErr error
 	// When true, SIGTERM also causes process exit in Signal.
 	termExits bool
+	// paths maps "name\x00dir" to what LookPath returns.
+	paths map[string]string
 }
 
 type signalCall struct {
@@ -66,7 +68,7 @@ func newMockExecutor() *mockExecutor {
 	}
 }
 
-func (m *mockExecutor) Start(
+func (m *mockExecutor) StartCommand(
 	_ context.Context, cmd workspaceapi.Cmd,
 ) (workspaceapi.Pid, error) {
 	m.mu.Lock()
@@ -97,6 +99,13 @@ func (m *mockExecutor) Signal(
 		w.WatchProcess() <- nil
 	}
 	return nil
+}
+
+func (m *mockExecutor) LookPath(_ context.Context, name, dir string) (string, error) {
+	if p, ok := m.paths[name+"\x00"+dir]; ok {
+		return p, nil
+	}
+	return "", fs.ErrNotExist
 }
 
 func (m *mockExecutor) Close() error { return nil }
@@ -1389,26 +1398,17 @@ func TestRedactEnv(t *testing.T) {
 	}
 }
 
-// schemeExecutorAdapter wraps a schemeapi.Executor as a
-// workspaceapi.Executor for use with NewExecutor.
-type schemeExecutorAdapter struct {
-	s schemeapi.Executor
-}
+func TestExecutorLookPathIsTheUnderlyingExecutors(t *testing.T) {
+	mock := newMockExecutor()
+	mock.paths = map[string]string{"git\x00/ws": "/usr/bin/git"}
+	exec := NewExecutor(mock)
 
-func (a schemeExecutorAdapter) Start(
-	ctx context.Context, cmd workspaceapi.Cmd,
-) (workspaceapi.Pid, error) {
-	return a.s.StartCommand(ctx, cmd)
-}
+	got, err := exec.LookPath(context.Background(), "git", "/ws")
+	require.NoError(t, err)
+	assert.Equal(t, "/usr/bin/git", got)
 
-func (a schemeExecutorAdapter) Signal(
-	pid workspaceapi.Pid, sig syscall.Signal,
-) error {
-	return a.s.Signal(pid, sig)
-}
-
-func (a schemeExecutorAdapter) Close() error {
-	return a.s.Close()
+	_, err = exec.LookPath(context.Background(), "git", "/other")
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 func TestE2EProcessTreeWithRealExecutor(t *testing.T) {
@@ -1423,7 +1423,7 @@ func TestE2EProcessTreeWithRealExecutor(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = scheme.Close() }()
 
-	exec := NewExecutor(schemeExecutorAdapter{s: scheme.(schemeapi.Executor)})
+	exec := NewExecutor(scheme)
 
 	ctx := context.Background()
 

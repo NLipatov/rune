@@ -130,8 +130,16 @@ func (p *protocolDrivingExecutor) StartCommand(
 	return pid, nil
 }
 
+func (*protocolDrivingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (r *recordingExecutor) Signal(workspaceapi.Pid, syscall.Signal) error {
 	return nil
+}
+
+func (*recordingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (r *recordingExecutor) Close() error {
@@ -148,6 +156,10 @@ func (s startErrorExecutor) StartCommand(context.Context, workspaceapi.Cmd) (wor
 
 func (s startErrorExecutor) Signal(workspaceapi.Pid, syscall.Signal) error {
 	return nil
+}
+
+func (startErrorExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (s startErrorExecutor) Close() error {
@@ -172,6 +184,10 @@ func (e *exitingExecutor) StartCommand(
 	cmd.Watcher.WatchProcess() <- e.err
 	e.wait()
 	return pid, nil
+}
+
+func (*exitingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func extensionMetadata(t *testing.T, id string) []byte {
@@ -263,6 +279,10 @@ func (e *stressExecutor) started() workspaceapi.Pid {
 
 func (e *stressExecutor) Signal(workspaceapi.Pid, syscall.Signal) error {
 	return nil
+}
+
+func (*stressExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (e *stressExecutor) Close() error {

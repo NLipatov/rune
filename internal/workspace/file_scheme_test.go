@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -1243,4 +1244,72 @@ func runShellCommand(
 	require.NoError(t, err)
 	require.NoError(t, <-ch)
 	return stdout.String()
+}
+
+func TestFileSchemeLookPathIsWhatStartCommandRuns(t *testing.T) {
+	dataDir, first, second, root, ws := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	for _, p := range []string{
+		filepath.Join(first, "tool"),
+		filepath.Join(second, "tool"),
+		filepath.Join(second, "plain"),
+		filepath.Join(dataDir, "bin", "x"),
+		filepath.Join(root, "tool"),
+		filepath.Join(root, "sub", "tool"),
+		filepath.Join(ws, "tool"),
+	} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nprintf %s '"+p+"'\n"), 0o755))
+	}
+	// exec skips a file it cannot run and looks further down the PATH.
+	require.NoError(t, os.WriteFile(filepath.Join(first, "plain"), []byte("x"), 0o644))
+	ctx := context.Background()
+	s, err := NewFileSchemeFunc(dataDir, "")(ctx, nil, dirURI(t, ws))
+	require.NoError(t, err)
+	defer s.Close()
+	// runs checks that the file LookPath tells a Cmd with name and dir
+	// runs is the file StartCommand runs.
+	runs := func(name, dir, want string) {
+		t.Helper()
+		got, err := s.LookPath(ctx, name, dir)
+		require.NoError(t, err, name)
+		assert.Equal(t, want, got, name)
+		var stdout bytes.Buffer
+		ch := make(chan error, 1)
+		_, err = s.StartCommand(ctx, workspaceapi.Cmd{
+			Path: name, Dir: dir, Stdout: &stdout, Watcher: workspaceapi.ChanProcessWatcher(ch),
+		})
+		require.NoError(t, err, name)
+		require.NoError(t, <-ch, name)
+		assert.Equal(t, want, stdout.String(), "StartCommand runs %s", name)
+	}
+
+	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
+	runs("tool", root, filepath.Join(first, "tool"))
+	runs("plain", root, filepath.Join(second, "plain"))
+	runs("./tool", root, filepath.Join(root, "tool"))
+	runs("./tool", "", filepath.Join(ws, "tool"))
+	runs("sub/../tool", root, filepath.Join(root, "tool"))
+	runs("sub/tool", root, filepath.Join(root, "sub", "tool"))
+	runs("$RUNE_DATADIR/bin/x", root, filepath.Join(dataDir, "bin", "x"))
+
+	t.Setenv("PATH", second+string(os.PathListSeparator)+first)
+	runs("tool", root, filepath.Join(second, "tool"))
+
+	for _, name := range []string{"missing", "./missing", "sub"} {
+		_, err = s.LookPath(ctx, name, root)
+		assert.ErrorIs(t, err, fs.ErrNotExist, name)
+		_, err = s.StartCommand(ctx, workspaceapi.Cmd{Path: name, Dir: root})
+		assert.Error(t, err, "StartCommand runs no %s either", name)
+	}
+
+	other := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(other, "bin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(other, "bin", "x"), []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("RUNE_DATADIR", other)
+	envScheme, err := NewFileScheme(ctx, nil, dirURI(t, ws))
+	require.NoError(t, err)
+	defer envScheme.Close()
+	got, err := envScheme.LookPath(ctx, "$RUNE_DATADIR/bin/x", "")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(other, "bin", "x"), got)
 }

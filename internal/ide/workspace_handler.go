@@ -791,8 +791,7 @@ func (h *workspaceManagerHandler) init(
 	}
 	h.empty.markHome()
 
-	wsExec := workspaceshell.NewExecutor(
-		workspaceExecutorAdapter{e: h.homeWorkspace})
+	wsExec := workspaceshell.NewExecutor(h.homeWorkspace)
 	trackedCwd := &trackedWorkspace{Workspace: h.homeWorkspace, exec: wsExec}
 	extExec, err := newExtensionsExecutor()
 	if err != nil {
@@ -2031,8 +2030,7 @@ func (h *workspaceManagerHandler) buildWorkspaceAsync(
 	}
 	tm.workspace = wh
 
-	wsExec := workspaceshell.NewExecutor(
-		workspaceExecutorAdapter{e: cwd})
+	wsExec := workspaceshell.NewExecutor(cwd)
 	trackedCwd := &trackedWorkspace{Workspace: cwd, exec: wsExec}
 	extExec, err := newExtensionsExecutor()
 	if err != nil {
@@ -2391,7 +2389,7 @@ func (h *workspaceManagerHandler) buildExtensions(
 	}
 	cmdAuthorizer, err := ideauthorizer.NewAuthorizer(
 		ed, promptOpener, promptStorage, cfg.scheduleNextTick, ex.tm,
-		h.trust, newCommandResolver(cwd, uri, uri.Path(), installDir), ideauthorizer.Config{
+		h.trust, cwd, uri, ideauthorizer.Config{
 			AutoAuthorizeExtensions:        cfg.authorizerAutoAuthorizeExtensions(),
 			AutoAuthorizeCommands:          cfg.authorizerAutoAuthorizeCommands(),
 			AutoAuthorizeVerifiedPublisher: cfg.authorizerAutoAuthorizeVerified(),

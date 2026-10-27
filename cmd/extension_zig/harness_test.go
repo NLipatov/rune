@@ -742,3 +742,11 @@ func (m *fakeWM) SetWindowContent(browserapi.Window, browserapi.Handler) error {
 func (m *fakeWM) CloseWindow(browserapi.Window) error                          { return nil }
 
 func (m *fakeWM) SetTabStatus(workspaceapi.URI, browserapi.TabStatus) error { return nil }
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
+func (realExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

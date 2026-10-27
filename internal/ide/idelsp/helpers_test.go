@@ -375,6 +375,10 @@ func (s *localScheme) Signal(pid workspaceapi.Pid, sig syscall.Signal) error {
 	return proc.Signal(sig)
 }
 
+func (*localScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (s *localScheme) Close() error {
 	return nil
 }
@@ -484,6 +488,10 @@ func (e *fakeProcExecutor) Signal(pid workspaceapi.Pid, _ syscall.Signal) error 
 	}
 	p.exit(errors.New("signal: killed"))
 	return nil
+}
+
+func (*fakeProcExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (e *fakeProcExecutor) Close() error { return nil }

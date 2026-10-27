@@ -103,6 +103,12 @@ func (t *NopScheme) InstallDataDir(context.Context) (string, error) {
 	return "", errors.ErrUnsupported
 }
 
+// LookPath satisfies schemeapi.Scheme with the "host cannot say"
+// default.
+func (t *NopScheme) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 // NewFile satisfies schemeapi.Scheme
 func (t *NopScheme) NewFile(fd uintptr, name string) workspaceapi.File {
 	return nopFile{}

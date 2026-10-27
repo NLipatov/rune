@@ -105,9 +105,10 @@ func EnsureImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repo root: %v", err)
 	}
+	internal := filepath.Join(root, "internal")
 	cmd := exec.Command("docker", "build",
-		"-f", filepath.Join(root, "workspace/workspacessh/test/Dockerfile"),
-		"-t", imageName, root)
+		"-f", filepath.Join(internal, "workspace/workspacessh/test/Dockerfile"),
+		"-t", imageName, internal)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

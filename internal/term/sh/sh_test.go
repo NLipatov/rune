@@ -749,6 +749,10 @@ func (s *stubExecutor) StartCommand(
 func (s *stubExecutor) Signal(workspaceapi.Pid, syscall.Signal) error { return nil }
 func (s *stubExecutor) Close() error                                  { return nil }
 
+func (*stubExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func TestExternalCommandRoutedThroughExecutor(t *testing.T) {
 	// A path that does not exist locally, mimicking a remote (ssh)
 	// workspace whose directory only exists on the remote host. With

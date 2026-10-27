@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -493,4 +494,8 @@ func TestProcessTestOutput(t *testing.T) {
 		assert.Equal(t, browserapi.LevelWarn, last.Level)
 		assert.Contains(t, last.Message, "no matching test ran")
 	})
+}
+
+func (*capturingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }

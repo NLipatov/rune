@@ -1171,6 +1171,10 @@ func (e *catOnlyExecutor) StartCommand(
 
 func (e *catOnlyExecutor) Signal(workspaceapi.Pid, syscall.Signal) error { return nil }
 
+func (*catOnlyExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (e *catOnlyExecutor) Close() error { return nil }
 
 func (e *catOnlyExecutor) commands() [][]string {

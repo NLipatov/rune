@@ -396,3 +396,7 @@ func TestLookupAgentBrowser(t *testing.T) {
 		})
 	}
 }
+
+func (*browserExec) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

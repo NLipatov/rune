@@ -18,6 +18,7 @@ package exoeditor
 
 import (
 	"context"
+	"errors"
 	"syscall"
 	"testing"
 
@@ -119,6 +120,10 @@ func (stubExecutor) StartCommand(context.Context, workspaceapi.Cmd) (workspaceap
 }
 func (stubExecutor) Signal(workspaceapi.Pid, syscall.Signal) error { return nil }
 func (stubExecutor) Close() error                                  { return nil }
+
+func (stubExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
 
 type stubTabManager struct{}
 

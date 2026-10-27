@@ -331,6 +331,10 @@ func (e *pluginTestExecutor) Signal(pid workspaceapi.Pid, signal syscall.Signal)
 	return nil
 }
 
+func (*pluginTestExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (e *pluginTestExecutor) Close() error {
 	return nil
 }

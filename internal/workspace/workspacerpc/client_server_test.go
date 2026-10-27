@@ -24,6 +24,7 @@ import (
 
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -456,6 +457,49 @@ func TestServerStartCommandAuthorizer(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "denied")
 	})
+}
+
+func TestServerLookPath(t *testing.T) {
+	ws, first, second := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, p := range []string{
+		filepath.Join(first, "tool"), filepath.Join(second, "tool"), filepath.Join(ws, "run"),
+	} {
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755))
+	}
+	uri, err := workspaceapi.ParseURI("file://" + ws)
+	require.NoError(t, err)
+	scheme, err := workspace.NewFileScheme(context.Background(), config.NopConfig(), uri)
+	require.NoError(t, err)
+	defer scheme.Close()
+	client, cleanup := setupClientServerIntegrationTest(t, scheme)
+	defer cleanup()
+	ctx := context.Background()
+
+	t.Setenv("PATH", first)
+	got, err := client.LookPath(ctx, "tool", "")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(first, "tool"), got)
+	got, err = client.LookPath(ctx, "./run", "")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(ws, "run"), got, "the server defaults the directory")
+
+	t.Setenv("PATH", second+string(os.PathListSeparator)+first)
+	got, err = client.LookPath(ctx, "tool", "")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(second, "tool"), got, "the server reads its PATH on every call")
+
+	_, err = client.LookPath(ctx, "missing", "")
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	memURI, err := workspaceapi.ParseURI("memory:///tmp")
+	require.NoError(t, err)
+	mem, err := workspace.NewMemoryScheme(ctx, config.NopConfig(), memURI)
+	require.NoError(t, err)
+	memClient, memCleanup := setupClientServerIntegrationTest(t, mem)
+	defer memCleanup()
+	_, err = memClient.LookPath(ctx, "tool", "")
+	assert.ErrorIs(t, err, errors.ErrUnsupported,
+		"a scheme that cannot tell is not taken to run nothing")
 }
 
 func TestServerChrootErrorPropagation(t *testing.T) {

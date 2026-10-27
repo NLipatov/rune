@@ -396,3 +396,7 @@ func TestReadGoplsLspPath(t *testing.T) {
 		assert.Equal(t, browserapi.LevelWarn, mn.getMessages()[0].Level)
 	})
 }
+
+func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}

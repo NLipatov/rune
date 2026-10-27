@@ -155,7 +155,7 @@ func (a *Authorizer) checkCommand(
 	ctx context.Context, prefix string, command pluginPermissionCommandDetail, env []string,
 ) (*commandCheck, error) {
 	c := &commandCheck{
-		host:    a.resolver.HostID(),
+		host:    a.resolver.hostID,
 		command: command,
 		plan:    planCommand(command.Path, command.Args, command.Env),
 	}
@@ -165,8 +165,7 @@ func (a *Authorizer) checkCommand(
 			Name: command.Path, Role: roleBound, Code: -1, Shell: -1, TopLevel: true,
 		}}
 	}
-	var innerPATH []string
-	innerPATHRead := false
+	innerPATH, _ := envPATH(env)
 	exes := map[string]int{}
 	for _, inv := range invocations {
 		p := checkedProgram{inv: inv, exe: -1}
@@ -175,16 +174,14 @@ func (a *Authorizer) checkCommand(
 		case inv.Shell >= 0:
 			p.path = c.programs[inv.Shell].path
 		default:
+			// A nil pathList has the workspace host look the name up as
+			// it does for a Cmd.Path, in the PATH programs inherit from it.
 			var pathList []string
 			switch {
 			case inv.TopLevel:
 			case inv.StdPATH:
 				pathList = stdPATH
 			default:
-				if !innerPATHRead {
-					innerPATH = a.innerPATH(ctx, env)
-					innerPATHRead = true
-				}
 				pathList = innerPATH
 			}
 			if !inv.TopLevel && dirDependent(inv.Name, pathList) {
@@ -196,8 +193,11 @@ func (a *Authorizer) checkCommand(
 					break
 				}
 			}
-			resolved, err := a.resolver.Resolve(ctx, inv.Name, command.Dir, pathList)
-			absent := inv.First && errors.Is(err, ErrExecutableNotFound)
+			if !inv.TopLevel && shellExpanded(inv.Name) {
+				break
+			}
+			resolved, err := a.resolver.resolve(ctx, inv.Name, command.Dir, pathList)
+			absent := inv.First && errors.Is(err, errExecutableNotFound)
 			if absent {
 				resolved = inv.Name + absentSuffix
 			} else if err != nil {
@@ -212,7 +212,7 @@ func (a *Authorizer) checkCommand(
 				if absent {
 					e.Current = ExecutableFingerprint{SHA256: absentSHA256}
 				} else {
-					e.Current, e.Err = a.resolver.Fingerprint(ctx, resolved)
+					e.Current, e.Err = a.resolver.fingerprint(ctx, resolved)
 				}
 				c.executables = append(c.executables, e)
 			}
@@ -229,16 +229,11 @@ func (a *Authorizer) checkCommand(
 	return c, nil
 }
 
-// innerPATH returns the PATH programs a command starts are looked up in.
-func (a *Authorizer) innerPATH(ctx context.Context, env []string) []string {
-	if p, ok := envPATH(env); ok {
-		return p
-	}
-	p, err := a.resolver.HostPATH(ctx)
-	if err != nil || p == nil {
-		return []string{}
-	}
-	return p
+// shellExpanded reports whether what name, a program a shell starts,
+// runs depends on the environment the shell expands it against, which
+// the command can change.
+func shellExpanded(name string) bool {
+	return strings.HasPrefix(name, "~") || strings.Contains(name, "$")
 }
 
 // dirDependent reports whether what name runs depends on the directory

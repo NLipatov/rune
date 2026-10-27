@@ -213,6 +213,13 @@ func (w workspaceCwd) StartCommand(
 	return w.Scheme.StartCommand(ctx, cmd)
 }
 
+func (w workspaceCwd) LookPath(ctx context.Context, name, dir string) (string, error) {
+	if dir == "" {
+		dir = w.Root()
+	}
+	return w.Scheme.LookPath(ctx, name, dir)
+}
+
 func (w workspaceCwd) Chroot(path string) (schemeapi.Scheme, error) {
 	sub, err := w.Scheme.Chroot(path)
 	if err != nil {

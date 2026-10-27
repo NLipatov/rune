@@ -541,6 +541,10 @@ func (e *testExecutor) Signal(pid workspaceapi.Pid, signal syscall.Signal) error
 	return nil
 }
 
+func (*testExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (e *testExecutor) Close() error {
 	return nil
 }
@@ -576,6 +580,10 @@ func (s *stalledExecutor) StartCommand(
 ) (workspaceapi.Pid, error) {
 	<-ctx.Done()
 	return 0, ctx.Err()
+}
+
+func (*stalledExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func TestComponentSpawnTimeout(t *testing.T) {
@@ -642,6 +650,10 @@ func (e *recordingExecutor) StartCommand(
 	defer e.mu.Unlock()
 	e.cmd = cmd
 	return 0, nil
+}
+
+func (*recordingExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (e *recordingExecutor) snapshotCmd() workspaceapi.Cmd {
@@ -1551,6 +1563,10 @@ func (e *parkedStartExecutor) StartCommand(
 	return 1, nil
 }
 
+func (*parkedStartExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func TestComponentCloseWaitsForInflightStartCommand(t *testing.T) {
 	t.Parallel()
 
@@ -1743,6 +1759,10 @@ func (e *pidExecutor) StartCommand(
 	context.Context, workspaceapi.Cmd,
 ) (workspaceapi.Pid, error) {
 	return e.startedPid, nil
+}
+
+func (*pidExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func TestComponentPidExposesStartedProcess(t *testing.T) {

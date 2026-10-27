@@ -88,6 +88,21 @@ func (mr *MockWorkspaceMockRecorder) LoaderFor(file any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoaderFor", reflect.TypeOf((*MockWorkspace)(nil).LoaderFor), file)
 }
 
+// LookPath mocks base method.
+func (m *MockWorkspace) LookPath(ctx context.Context, name, dir string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LookPath", ctx, name, dir)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LookPath indicates an expected call of LookPath.
+func (mr *MockWorkspaceMockRecorder) LookPath(ctx, name, dir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LookPath", reflect.TypeOf((*MockWorkspace)(nil).LookPath), ctx, name, dir)
+}
+
 // Open mocks base method.
 func (m *MockWorkspace) Open(arg0 string) (workspaceapi.File, error) {
 	m.ctrl.T.Helper()

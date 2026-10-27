@@ -18,6 +18,7 @@ package exoeditor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -316,6 +317,10 @@ func (e *recordingSignalExecutor) Signal(
 	e.pid = pid
 	e.signals = append(e.signals, sig)
 	return nil
+}
+
+func (*recordingSignalExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
 }
 
 func (e *recordingSignalExecutor) Close() error { return nil }

@@ -76,3 +76,7 @@ func (w *trackedWorkspace) Signal(
 ) error {
 	return w.exec.Signal(pid, sig)
 }
+
+func (w *trackedWorkspace) LookPath(ctx context.Context, name, dir string) (string, error) {
+	return w.exec.LookPath(ctx, name, dir)
+}

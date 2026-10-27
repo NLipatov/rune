@@ -183,6 +183,10 @@ func (w *testLoader) InstallDataDir(context.Context) (string, error) {
 	return "", errors.ErrUnsupported
 }
 
+func (w *testLoader) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
+
 func (w *testLoader) PathCaseSensitive() bool {
 	return true
 }

@@ -482,3 +482,7 @@ func TestFuzzyFinderHandlerPointerLeaves(t *testing.T) {
 		require.NoError(t, rh.Close())
 	}
 }
+
+func (*instantExitExecutor) LookPath(context.Context, string, string) (string, error) {
+	return "", errors.ErrUnsupported
+}
