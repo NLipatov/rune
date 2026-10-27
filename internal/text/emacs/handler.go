@@ -336,7 +336,15 @@ func (h *emacsHandler) copyRegion() bool {
 // on point's line otherwise. A region ending at the start of a line leaves
 // that line alone, as comment-region does.
 func (h *emacsHandler) commentDWIM() bool {
-	if _, selected := h.cursor.SelectionMode(); selected || !h.markActive {
+	if _, selected := h.cursor.SelectionMode(); selected {
+		// A buffer change deactivates the region in GNU Emacs.
+		handled := h.cursor.ToggleLineComment()
+		if handled {
+			h.cursor.Unselect()
+		}
+		return handled
+	}
+	if !h.markActive {
 		return h.cursor.ToggleLineComment()
 	}
 	loc, ok := h.markLocation()

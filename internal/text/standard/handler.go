@@ -618,6 +618,8 @@ func (h *standardHandler) Handle(ev term.Event) (exit, handled bool) {
 				handled = h.cursor.Conflate()
 			case '/':
 				handled = h.cursor.ToggleLineComment()
+				// the toggle carries the selection along with the caret
+				return
 			case ']':
 				if _, ok := h.cursor.SelectionMode(); ok {
 					h.cursor.ShiftSelectionRight(h.cfg.indentRune, h.cfg.indentTabspaces)
@@ -876,6 +878,8 @@ func (h *standardHandler) Handle(ev term.Event) (exit, handled bool) {
 			handled = h.cursor.Redo()
 		case '/':
 			handled = h.cursor.ToggleLineComment()
+			// see the macOS toggle above
+			return
 		case '[':
 			if _, ok := h.cursor.SelectionMode(); ok {
 				handled = h.cursor.ShiftSelectionLeft(h.cfg.indentRune, h.cfg.indentTabspaces)

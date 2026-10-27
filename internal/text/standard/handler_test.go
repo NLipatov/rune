@@ -2387,7 +2387,7 @@ func TestStandardMultiLineEditsUndoInOneStep(t *testing.T) {
 		{"line comment of a selection within one line", plain, KeymapLinux,
 			"<down><s-right><c-/>", "a\n\t// b\n\tc\nd", at(1, 4)},
 		{"line comment of a backward selection", plain, KeymapLinux,
-			"<down><down><s-up><s-up><c-/>", "// a\n// \tb\n\tc\nd", at(0, 3)},
+			"<down><down><s-up><s-up><c-/>", "// a\n// \tb\n\tc\nd", at(0, 0)},
 		{"line comment of select all through a trailing newline", "a\n\tb\n", KeymapLinux,
 			"<c-a><c-/>", "// a\n// \tb\n", nil},
 		{"line comment of an expanded line selection", plain, KeymapLinux,
@@ -2482,14 +2482,93 @@ func TestStandardMultiLineEditsUndoInOneStep(t *testing.T) {
 			WithComments(text.CommentConfig{"go": {Line: []string{"//"}}}))
 		h.Resize(40, 10)
 
-		feedKeys(t, h, "<down><c-/><c-/><c-/>")
-		require.Equal(t, "a\n\t// b\n\tc\nd", buf.String())
-		for _, want := range []string{plain, "a\n\t// b\n\tc\nd", plain} {
+		feedKeys(t, h, "<s-down><s-down><c-/><c-/><c-/>")
+		require.Equal(t, "// a\n// \tb\n\tc\nd", buf.String())
+		for _, want := range []string{plain, "// a\n// \tb\n\tc\nd", plain} {
 			feedKeys(t, h, "<ctrl-z>")
 			assert.Equal(t, want, buf.String())
 		}
 		assert.Equal(t, 0, buf.Version(), "every toggle was one step")
 	})
+}
+
+func TestStandardLineCommentKeepsSelection(t *testing.T) {
+	const plain = "a\n\tb\n\tc\nd"
+	tests := []struct {
+		name    string
+		content string
+		keymap  Keymap
+		keys    string
+		want    string
+		wantSel string
+		wantAt  term.Coordinates
+		// wantSelAgain is the selection once a second toggle restored content.
+		wantSelAgain string
+	}{
+		{"forward whole lines", plain, KeymapLinux, "<s-down><s-down>",
+			"// a\n// \tb\n\tc\nd", "// a\n// \tb\n", term.Coordinates{Y: 2}, "a\n\tb\n"},
+		{"forward whole lines with cmd", plain, KeymapMacOS, "<s-down><s-down>",
+			"// a\n// \tb\n\tc\nd", "// a\n// \tb\n", term.Coordinates{Y: 2}, "a\n\tb\n"},
+		{"backward whole lines", plain, KeymapLinux, "<down><down><s-up><s-up>",
+			"// a\n// \tb\n\tc\nd", "// a\n// \tb\n", term.Coordinates{}, "a\n\tb\n"},
+		{"inside the lines", "abc\ndef", KeymapLinux, "<right><s-down>",
+			"// abc\n// def", "bc\n// d", term.Coordinates{Y: 1, X: 4}, "bc\nd"},
+		{"backward inside the lines", "abc\ndef", KeymapLinux, "<down><right><s-up>",
+			"// abc\n// def", "bc\n// d", term.Coordinates{X: 4}, "bc\nd"},
+		{"indentation within one line", plain, KeymapLinux, "<down><s-right>",
+			"a\n\t// b\n\tc\nd", "\t// ", term.Coordinates{Y: 1, X: 4}, "\t"},
+		{"prefix aligned past the anchor", "  a\n    b", KeymapLinux, "<right><s-down><s-right>",
+			"  // a\n  //   b", " // a\n  // ", term.Coordinates{Y: 1, X: 5}, " a\n  "},
+		{"tab indented lines", "\ta\n\t\tb\nc", KeymapLinux, "<s-down><s-down>",
+			"\t// a\n\t// \tb\nc", "\t// a\n\t// \tb\n", term.Coordinates{Y: 2}, "\ta\n\t\tb\n"},
+		{"wide runes and emoji", "界\n  👨‍👧‍👦\nx", KeymapLinux, "<s-down><s-down>",
+			"// 界\n//   👨‍👧‍👦\nx", "// 界\n//   👨‍👧‍👦\n", term.Coordinates{Y: 2}, "界\n  👨‍👧‍👦\n"},
+		{"after an emoji", "a\n👍🏽b", KeymapLinux, "<s-down><s-right>",
+			"// a\n// 👍🏽b", "// a\n// 👍🏽", term.Coordinates{Y: 1, X: 4}, "a\n👍🏽"},
+		{"select all", "a\n\tb", KeymapLinux, "<c-a>",
+			"// a\n// \tb", "// a\n// \tb", term.Coordinates{Y: 1, X: 5}, "a\n\tb"},
+		{"expanded line selection", plain, KeymapLinux, "<c-l><c-l>",
+			"// a\n// \tb\n\tc\nd", "// a\n// \tb\n", term.Coordinates{Y: 2}, "a\n\tb\n"},
+		{"uncomment with the anchor inside a prefix", "// a\n// b", KeymapLinux,
+			"<right><s-down><s-right><s-right><s-right>",
+			"a\nb", "a\nb", term.Coordinates{Y: 1, X: 1}, "// a\n// b"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			uri, err := workspaceapi.ParseURI("memory:///select.go")
+			require.NoError(t, err)
+			buf := cell.NewBuffer()
+			_, err = buf.ReadFrom(strings.NewReader(tc.content))
+			require.NoError(t, err)
+			buf.WithView(testCommentService{view: buf.View(), line: []string{"//"}})
+			h := NewHandler(buf, uri, text.IndentRuneTab, 0, WithKeymap(tc.keymap),
+				WithComments(text.CommentConfig{"go": {Line: []string{"//"}}}))
+			h.Resize(40, 10)
+			toggle, undo := "<c-/>", "<ctrl-z>"
+			if tc.keymap == KeymapMacOS {
+				toggle, undo = "<m-/>", "<meta-z>"
+			}
+
+			feedKeys(t, h, tc.keys+toggle)
+			require.Equal(t, tc.want, buf.String())
+			sel, ok := h.Selection()
+			require.True(t, ok, "the toggle keeps the selection")
+			assert.Equal(t, tc.wantSel, sel)
+			assert.Equal(t, tc.wantAt, h.CursorAtScroll())
+
+			feedKeys(t, h, toggle)
+			assert.Equal(t, tc.content, buf.String(), "a second toggle reverts the first")
+			sel, ok = h.Selection()
+			require.True(t, ok)
+			assert.Equal(t, tc.wantSelAgain, sel)
+
+			for _, want := range []string{tc.want, tc.content} {
+				feedKeys(t, h, undo)
+				assert.Equal(t, want, buf.String())
+			}
+			assert.Zero(t, buf.Version(), "every toggle was one step")
+		})
+	}
 }
 
 func TestStandardRobustnessDegenerateBuffers(t *testing.T) {

@@ -8463,7 +8463,7 @@ func TestCursorToggleLineComment(t *testing.T) {
 		{
 			name:    "a backward exclusive selection anchored at a line start skips that line",
 			content: "a\nb\nc", at: at(2, 0), exclusive: true, selectFn: selectTo(at(0, 0)),
-			spec: goSpec, wantHandled: true, wantContent: "// a\n// b\nc", wantCursor: at(0, 3),
+			spec: goSpec, wantHandled: true, wantContent: "// a\n// b\nc", wantCursor: at(0, 0),
 		},
 		{
 			name: "a selection of only a line break comments the line it starts on", content: "a\nb",
@@ -8554,6 +8554,108 @@ func TestCursorToggleLineComment(t *testing.T) {
 			}
 			assert.False(t, c.Undo())
 			assert.Equal(t, tc.content, c.buffer().String())
+		})
+	}
+}
+
+func TestCursorToggleLineCommentSelection(t *testing.T) {
+	t.Parallel()
+
+	at := func(y, x int) term.Coordinates { return term.Coordinates{Y: y, X: x} }
+	selectTo := func(selectFn func(*Cursor) bool, to term.Coordinates) func(*Cursor) {
+		return func(c *Cursor) {
+			require.True(t, selectFn(c))
+			c.MoveToScroll(to)
+		}
+	}
+	tests := []struct {
+		name          string
+		content       string
+		at            term.Coordinates
+		inclusive     bool
+		selectFn      func(*Cursor)
+		wantContent   string
+		wantSelection string
+		wantCursor    term.Coordinates
+	}{
+		{
+			name: "a forward selection grows over the prefix at its start", content: "a\nb\nc",
+			selectFn: selectTo((*Cursor).Select, at(2, 0)), wantContent: "// a\n// b\nc",
+			wantSelection: "// a\n// b\n", wantCursor: at(2, 0),
+		},
+		{
+			name: "a backward selection grows over the prefix at its start", content: "a\nb\nc",
+			at: at(2, 0), selectFn: selectTo((*Cursor).Select, at(0, 0)), wantContent: "// a\n// b\nc",
+			wantSelection: "// a\n// b\n", wantCursor: at(0, 0),
+		},
+		{
+			name: "ends inside the text follow it", content: "abc\ndef", at: at(0, 1),
+			selectFn: selectTo((*Cursor).Select, at(1, 1)), wantContent: "// abc\n// def",
+			wantSelection: "bc\n// d", wantCursor: at(1, 4),
+		},
+		{
+			name: "only the far end moves past a prefix inserted where both ends sit", content: "\ta\n\tb",
+			at: at(0, 1), selectFn: selectTo((*Cursor).Select, at(1, 1)), wantContent: "\t// a\n\t// b",
+			wantSelection: "// a\n\t// ", wantCursor: at(1, 4),
+		},
+		{
+			name: "uncommenting pulls an end inside a prefix to its start", content: "// a\n// b",
+			at: at(0, 1), selectFn: selectTo((*Cursor).Select, at(1, 4)), wantContent: "a\nb",
+			wantSelection: "a\nb", wantCursor: at(1, 1),
+		},
+		{
+			name: "uncommenting wide runes and emoji", content: "// 界\n// 👨‍👧‍👦x",
+			at: at(0, 4), selectFn: selectTo((*Cursor).Select, at(1, 4)), wantContent: "界\n👨‍👧‍👦x",
+			wantSelection: "\n👨‍👧‍👦", wantCursor: at(1, 1),
+		},
+		{
+			name: "an explicit range keeps both ends", content: "a\nb\nc",
+			selectFn:    func(c *Cursor) { require.True(t, c.SelectRange(at(0, 0), at(2, 0))) },
+			wantContent: "// a\n// b\nc", wantSelection: "// a\n// b\n", wantCursor: at(0, 0),
+		},
+		{
+			name: "an inclusive editor's explicit range moves with its cells", content: "a\nb\nc",
+			inclusive:   true,
+			selectFn:    func(c *Cursor) { require.True(t, c.SelectRange(at(0, 0), at(2, 0))) },
+			wantContent: "// a\n// b\nc", wantSelection: "a\n// b\n", wantCursor: at(0, 3),
+		},
+		{
+			name: "a line selection keeps its lines", content: "a\nb\nc",
+			selectFn: selectTo((*Cursor).SelectLine, at(1, 0)), wantContent: "// a\n// b\nc",
+			wantSelection: "// a\n// b\n", wantCursor: at(1, 3),
+		},
+		{
+			name: "an inclusive selection's ends move with their cells", content: "a\nb", inclusive: true,
+			selectFn: selectTo((*Cursor).Select, at(1, 0)), wantContent: "// a\n// b",
+			wantSelection: "a\n// b", wantCursor: at(1, 3),
+		},
+		{
+			name: "a backward inclusive selection's caret moves with its cell", content: "a\nb",
+			inclusive: true, at: at(1, 0), selectFn: selectTo((*Cursor).Select, at(0, 0)),
+			wantContent: "// a\n// b", wantSelection: "a\n// b", wantCursor: at(0, 3),
+		},
+		{
+			name: "a caret leaves no selection", content: "a", wantContent: "// a",
+			wantCursor: at(0, 3),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := setupCursorContent(t, 80, 10, tc.content, false)
+			c.RightInclusiveSemantics = tc.inclusive
+			attachCommentTestView(c, CommentSpec{Line: []string{"//"}})
+			setCursorAtOrFail(t, c, tc.at)
+			if tc.selectFn != nil {
+				tc.selectFn(c)
+			}
+
+			require.True(t, c.ToggleLineComment())
+			require.Equal(t, tc.wantContent, c.buffer().String())
+			assert.Equal(t, tc.wantSelection, c.Selection())
+			assert.Equal(t, tc.wantCursor, c.CursorAtScroll())
+
+			require.True(t, c.ToggleLineComment())
+			assert.Equal(t, tc.content, c.buffer().String(), "toggling again acts on the same lines")
 		})
 	}
 }

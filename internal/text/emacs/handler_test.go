@@ -4518,6 +4518,16 @@ func TestEmacsCommentToggle(t *testing.T) {
 		}
 	})
 
+	for _, keys := range []string{"<s-down><s-right><a-;>", "<s-down><s-down><a-;>"} {
+		t.Run("M-; deactivates a shift-selection "+keys, func(t *testing.T) {
+			h, buf := newCommentHandler(t, "a\nb\nc")
+			feedKeys(t, h, keys)
+			require.Equal(t, "// a\n// b\nc", buf.String())
+			_, selected := h.Selection()
+			assert.False(t, selected)
+		})
+	}
+
 	t.Run("mark-defun activates the region", func(t *testing.T) {
 		h, buf := newCommentHandler(t, "f {\n\tx\n}\ny")
 		require.True(t, h.SetCursorAtScroll(term.Coordinates{Y: 1, X: 1}))

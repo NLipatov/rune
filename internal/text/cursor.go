@@ -3624,7 +3624,9 @@ func (c *Cursor) ToggleCase() (ok bool) {
 // of a line leaves that line alone. Commenting aligns every prefix at the
 // shallowest visible indentation among the non-blank lines and skips blank
 // ones; uncommenting removes each line's prefix where it is. The edits undo in
-// a single step.
+// a single step. A selection survives the toggle on the same text, so
+// toggling again restores the lines; a right-exclusive one also grows over a
+// prefix inserted at its start.
 func (c *Cursor) ToggleLineComment() bool {
 	if !c.commentSpec.HasLine() {
 		return false
@@ -3641,7 +3643,28 @@ func (c *Cursor) ToggleLineComment() bool {
 		return false
 	}
 	cur := c.cursorAtScroll()
-	onCursorLine := cur.Y >= fromY && cur.Y <= toY
+	sel := c.currentSelectionSnapshot()
+	selected := sel.mode != NoSelection
+	far := cur
+	if sel.explicit {
+		far = sel.scrollTo
+	}
+	start, _ := term.CoordinatesSort(sel.scrollFrom, far)
+	keepsBefore := func(pos term.Coordinates) bool {
+		// A right-exclusive editor's selection ends are boundaries, and the
+		// start one stays before a prefix inserted there, as in VS Code. A
+		// right-inclusive editor's are cells, which move with their text.
+		return selected && !c.RightInclusiveSemantics && sel.scrollFrom != far && pos == start
+	}
+	// The edits drop the selection, so it is put back carried through them.
+	restore := func(track func(term.Coordinates) term.Coordinates) {
+		c.setCursorAfterUpdate(track(cur))
+		if !selected {
+			return
+		}
+		sel.scrollFrom, sel.scrollTo, sel.cursor = track(sel.scrollFrom), track(sel.scrollTo), track(sel.cursor)
+		c.restoreSelectionSnapshot(sel)
+	}
 	commented := c.lineCommentedRanges(prefix, fromY, toY)
 	if len(commented) == toY-fromY+1 {
 		c.buffer().GroupEdits(func() {
@@ -3652,16 +3675,19 @@ func (c *Cursor) ToggleLineComment() bool {
 				c.buffer().Delete(commented[i].Start, commented[i].End)
 			}
 		})
-		if onCursorLine {
-			removed := commented[cur.Y-fromY]
-			switch {
-			case cur.X >= removed.End.X:
-				cur.X -= removed.End.X - removed.Start.X
-			case cur.X > removed.Start.X:
-				cur.X = removed.Start.X
+		restore(func(pos term.Coordinates) term.Coordinates {
+			if pos.Y < fromY || pos.Y > toY {
+				return pos
 			}
-		}
-		c.setCursorAfterUpdate(cur)
+			removed := commented[pos.Y-fromY]
+			switch {
+			case pos.X >= removed.End.X:
+				pos.X -= removed.End.X - removed.Start.X
+			case pos.X > removed.Start.X:
+				pos.X = removed.Start.X
+			}
+			return pos
+		})
 		return true
 	}
 	tabspaces := c.resolveTabspaces(0)
@@ -3677,25 +3703,29 @@ func (c *Cursor) ToggleLineComment() bool {
 		}
 	}
 	comment := prefix + " "
-	insertedAt := -1
+	insertedAt := make([]int, toY-fromY+1)
 	c.buffer().GroupEdits(func() {
 		for y := toY; y >= fromY; y-- {
 			line := c.lineString(y)
 			indent := leadingIndent(line)
 			if len(indent) == len(line) {
+				insertedAt[y-fromY] = -1
 				continue
 			}
 			at := term.Coordinates{Y: y, X: indentOffsetAtWidth(indent, col, tabspaces)}
-			if y == cur.Y {
-				insertedAt = at.X
-			}
+			insertedAt[y-fromY] = at.X
 			c.buffer().InsertString(at, comment)
 		}
 	})
-	if insertedAt >= 0 && cur.X >= insertedAt {
-		cur.X += cellCount(comment)
-	}
-	c.setCursorAfterUpdate(cur)
+	restore(func(pos term.Coordinates) term.Coordinates {
+		if pos.Y < fromY || pos.Y > toY {
+			return pos
+		}
+		if at := insertedAt[pos.Y-fromY]; at >= 0 && (pos.X > at || pos.X == at && !keepsBefore(pos)) {
+			pos.X += cellCount(comment)
+		}
+		return pos
+	})
 	return true
 }
 
