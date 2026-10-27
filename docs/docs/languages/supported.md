@@ -39,22 +39,6 @@ Working in a repository with several projects side by side? See the
 [Monorepos](./monorepo.md) guide for how Rune discovers each project and
 keeps search fast at scale.
 
-## Tier 2 languages
-
-| Language | Package |
-| --- | --- |
-| JavaScript and JSX (`.js`, `.mjs`, `.cjs`, `.jsx`) | `javascript` |
-| TSX (`.tsx`) | `tsx` |
-
-These packages ship Rune's own syntax queries, and Rune's
-[symbol index](./symbol-index.md) resolves their modules, imports, classes,
-and methods across files. Without a language server, the `lsp` command
-answers definitions, references, and document symbols from that syntax and
-index.
-
-The `typescript` package installs both and adds the TypeScript 7 language
-server, which makes them [Tier 1](./typescript.md).
-
 ## Tier 3 language packages
 
 Rune offers Tier 3 support for over 300 additional languages through
