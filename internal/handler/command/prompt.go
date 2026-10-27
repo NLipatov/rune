@@ -467,6 +467,7 @@ func (h *Prompt) dispatchCommand() (
 		}
 		// trim empty args (i.e. client added more spaces than required between args)
 		h.commandAndArgs = h.trimmedCommandAndArgs(h.commandAndArgs[0], h.commandAndArgs[1:]...)
+		man, _ := h.getManualForCommand(h.commandAndArgs[0])
 		// A trailing separator marks an argument the completer left in
 		// progress, so it is not part of the value. History keeps the
 		// canonical form, which is what makes an entry recorded before
@@ -475,19 +476,28 @@ func (h *Prompt) dispatchCommand() (
 		historyArgs := make([]string, len(h.commandAndArgs))
 		historyArgs[0] = h.commandAndArgs[0]
 		for i, a := range h.commandAndArgs[1:] {
-			historyArgs[i+1] = ShellQuote(
-				TrimPartialCandidateSuffix(UnquoteToken(a)))
+			if man.RawArgs {
+				historyArgs[i+1] = a
+			} else {
+				historyArgs[i+1] = ShellQuote(
+					TrimPartialCandidateSuffix(UnquoteToken(a)))
+			}
 		}
 		commandAndArgsString = strings.Join(historyArgs, " ")
 
 		h.log(log.TraceLevel, "dispatching command and args %#v", h.commandAndArgs)
 		// Strip shell-style quoting/escaping from each argument before
 		// handing them to the dispatcher so subscribers receive the
-		// unescaped literal value (e.g. ~/Unstable\ Build → ~/Unstable Build).
+		// unescaped literal value (e.g. ~/Unstable\ Build → ~/Unstable Build),
+		// unless the command parses the typed line itself.
 		// The command itself is dispatched verbatim.
 		dispatchArgs := make([]string, len(h.commandAndArgs)-1)
 		for i, a := range h.commandAndArgs[1:] {
-			dispatchArgs[i] = UnquoteToken(a)
+			if man.RawArgs {
+				dispatchArgs[i] = a
+			} else {
+				dispatchArgs[i] = UnquoteToken(a)
+			}
 		}
 		h.dispatcher.Dispatch(h.commandAndArgs[0], dispatchArgs...)
 	} else {

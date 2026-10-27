@@ -38,6 +38,10 @@ type commandAll struct {
 	handler   func(*ex, context.Context, ...string) error
 	completer func(e *ex, ctx context.Context, cmd textapi.Command,
 	) (iterator.Iterator[string], string, error)
+	// rawArgs marks a command that parses the line its args join
+	// into, so the prompt must keep their quotes; see
+	// command.Manual.RawArgs.
+	rawArgs bool
 }
 
 var (
@@ -397,6 +401,7 @@ var (
 				Synopsis: "[<shell>]",
 			},
 			handler: (*ex).terminalnewtab,
+			rawArgs: true,
 		},
 		"console": {
 			man: textapi.CommandManual{
@@ -410,6 +415,7 @@ var (
 			) (iterator.Iterator[string], string, error) {
 				return e.completeConsole(ctx, cmd)
 			},
+			rawArgs: true,
 		},
 		"terminalnew": {
 			man: textapi.CommandManual{
@@ -424,6 +430,7 @@ var (
 				Synopsis: "[<shell>]",
 			},
 			handler: (*ex).terminalnew,
+			rawArgs: true,
 		},
 		"terminalneworsplit": {
 			man: textapi.CommandManual{
@@ -440,6 +447,7 @@ var (
 				Synopsis: "[<shell>]",
 			},
 			handler: (*ex).terminalneworsplit,
+			rawArgs: true,
 		},
 		"terminalsave": {
 			man: textapi.CommandManual{
@@ -544,6 +552,7 @@ var (
 				Synopsis: "[<executable> [<args>]]",
 			},
 			handler: (*ex).executePlugin,
+			rawArgs: true,
 		},
 		"!!": {
 			man: textapi.CommandManual{
@@ -553,6 +562,7 @@ var (
 				Synopsis: "[<executable> [<args>]]",
 			},
 			handler: (*ex).executePluginWait,
+			rawArgs: true,
 		},
 		"clipboardcopy": {
 			man: textapi.CommandManual{

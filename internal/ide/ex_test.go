@@ -1541,6 +1541,13 @@ func TestShellCommandPastesArgument(t *testing.T) {
 	))
 	assert.Equal(t, "help help", doc.Items[len(doc.Items)-1])
 
+	// Typed at the prompt, the console receives the line as written.
+	handleTaskInputSequence(b, ":console help 'a b'>")
+	require.NoError(t, svc.Get(
+		context.Background(), shellHistoryDocumentID, &doc,
+	))
+	assert.Equal(t, "help 'a b'", doc.Items[len(doc.Items)-1])
+
 	// Calling without arguments must not submit anything new.
 	prev := len(doc.Items)
 	require.NoError(t, b.consolenewtab(context.Background()))
@@ -5155,10 +5162,10 @@ func TestIntegrationEphemeralTerminal(t *testing.T) {
 │                                      │
 └──────────────────────────────────────┘`,
 		},
-		{":noticloseall>:! sh -c 'sleep 20 && echo $FILE'>",
+		{":noticloseall>:! sh -c 'sleep 20 && echo FILE'>",
 			`┌──────────────────────────────────────┐
 │                                      │
-├──█●█ sh -c 'sh -c sleep 20 && echo█──┤
+├──█●█ sh -c "sh -c 'sleep 20 && ech█──┤
 │  │ ▀                            0s│  │
 │  │▐                               │  │
 │  │                                │  │
@@ -5167,10 +5174,10 @@ func TestIntegrationEphemeralTerminal(t *testing.T) {
 │  │                                │  │
 └──└────────────────────────────────┘──┘`,
 		},
-		{":windowclose>:windowclose>:edit a>:! sh -c 'sleep 20 && echo $FILE'>",
+		{":windowclose>:windowclose>:edit a>:! sh -c 'sleep 20 && echo FILE'>",
 			`┌──────────────────────────────────────┐
 │o a                                   │
-├──█●█ sh -c 'sh -c sleep 20 && echo█──┤
+├──█●█ sh -c "sh -c 'sleep 20 && ech█──┤
 │  │ ▀                            0s│  │
 │  │▐                               │  │
 │  │                                │  │
@@ -7101,6 +7108,53 @@ func TestPluginArgsReachShellAsData(t *testing.T) {
 			argv, err := shell.Fields(line[0], nil)
 			require.NoError(t, err, "the value must reach the shell as data: %s", line[0])
 			assert.Equal(t, tc.want, argv)
+		})
+	}
+}
+
+func TestPromptHandsShellLinesOverAsTyped(t *testing.T) {
+	const line = "sh -c 'echo a && echo b'"
+	t.Run("!", func(t *testing.T) {
+		b := newExForAliasRun(t, nil)
+		defer b.Close()
+		b.Resize(100, 100)
+		var got [][]string
+		b.ex.newPluginHandler = func(_ int, args ...string) (pluginHandler, error) {
+			got = append(got, append([]string(nil), args...))
+			return newTestVte(), nil
+		}
+
+		handleTaskInputSequence(b, ":! "+line+">")
+		b.ex.waitAsyncVTELoads()
+		b.flushScheduled()
+		require.NoError(t, b.ex.openCommandHistoryPrompt(context.Background()))
+		handleTaskInputSequence(b, ">")
+		b.ex.waitAsyncVTELoads()
+		b.flushScheduled()
+
+		require.Len(t, got, 2, "typed, then re-run from the history prompt")
+		for _, args := range got {
+			argv, err := shell.Fields(strings.Join(args, " "), nil)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"sh", "-c", line}, argv)
+		}
+	})
+	for _, cmd := range []string{"terminalnew", "terminalnewtab", "terminalneworsplit"} {
+		t.Run(cmd, func(t *testing.T) {
+			b := newExForAliasRun(t, nil)
+			defer b.Close()
+			b.Resize(100, 100)
+			var got []string
+			b.ex.newEmulatorHandler = func(args []string) (vtereservoir.VTE, error) {
+				got = append([]string(nil), args...)
+				return newTestVte(), nil
+			}
+
+			handleTaskInputSequence(b, ":"+cmd+" "+line+">")
+
+			argv, err := shell.Fields(strings.Join(got, " "), nil)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"sh", "-c", "echo a && echo b"}, argv)
 		})
 	}
 }

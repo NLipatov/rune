@@ -130,8 +130,11 @@ type ex struct {
 	clip           clipboard.Register
 	ed             text.Editor
 	editorObserver *commandRegisterObserver
-	parser         syntaxapi.Parser
-	svc            vctrl.Service
+	// rawArgsCommands holds the subscribed commands whose args the
+	// prompt dispatches as typed; see commandAll.rawArgs.
+	rawArgsCommands map[string]bool
+	parser          syntaxapi.Parser
+	svc             vctrl.Service
 	// gitshowSeq keeps a second :gitshow popup for the same file from
 	// colliding with one the user has not closed yet.
 	gitshowSeq int
@@ -463,8 +466,12 @@ func (e *ex) init(
 
 func (e *ex) subscribeCommands() error {
 	var ret error
+	e.rawArgsCommands = make(map[string]bool)
 	subscribe := func(name string, man commandAll) {
 		man.man.Name = name
+		if man.rawArgs {
+			e.rawArgsCommands[name] = true
+		}
 		err := e.editorObserver.SubscribeCommand(man.man, text.FuncCommandHandler(
 			func(ctx context.Context, cmd textapi.Command) error {
 				return man.handler(e, ctx, cmd.Args...)
@@ -3064,6 +3071,9 @@ func (e *ex) resetCommandList(cmd *command.Prompt) {
 	// commands can be registered dynamicall via Editor.Register:
 	// compile a new list every time we switch to command mode
 	commands := e.comp.Commands()
+	for i, c := range commands {
+		commands[i].RawArgs = e.rawArgsCommands[c.Name]
+	}
 	commands = append(commands, e.aliasExpander.Aliases()...)
 	sort.Slice(commands, func(i, j int) bool {
 		return commands[i].Name < commands[j].Name
@@ -3079,6 +3089,9 @@ func (e *ex) openCommandPrompt() {
 
 func (e *ex) openCommandHistoryPrompt(_ context.Context, _ ...string) error {
 	e.newCommandPrompt(func(cmd *command.Prompt) {
+		// The entries dispatch against the manuals, which say which
+		// commands take their args as typed.
+		e.resetCommandList(cmd)
 		cmd.ResetHistory()
 	})
 	return nil

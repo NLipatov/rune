@@ -1876,6 +1876,70 @@ func TestPromptDispatchesPastedScript(t *testing.T) {
 	}
 }
 
+func TestPromptDispatchesRawArgsAsTyped(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantArgs    []string
+		wantHistory string
+	}{
+		{
+			name:        "quotes that group words",
+			input:       "! git commit -m 'fix the bug'",
+			wantArgs:    []string{"git", "commit", "-m", "'fix the bug'"},
+			wantHistory: "! git commit -m 'fix the bug'",
+		},
+		{
+			name:        "quotes and escapes the line gives meaning to",
+			input:       `! echo "$HOME" a\ b`,
+			wantArgs:    []string{"echo", `"$HOME"`, `a\ b`},
+			wantHistory: `! echo "$HOME" a\ b`,
+		},
+		{
+			name:        "other commands get the unquoted values",
+			input:       "edit 'my file'",
+			wantArgs:    []string{"my file"},
+			wantHistory: "edit 'my file'",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testDefaultConfig()
+			cfg.ShowManual = false
+			cfg.Sync = true
+
+			var dispatched []string
+			dispatch := func(cmd string, args ...string) bool {
+				dispatched = append([]string{cmd}, args...)
+				return true
+			}
+			completeFn, cleanupComplete := nopComplete()
+			defer cleanupComplete(t)
+
+			b := NewPrompt(
+				storagestub.NewInMemoryService(),
+				FuncCompleter(completeFn),
+				FuncDispatcher(dispatch),
+				term.NopInterrupter(),
+				[]Manual{{Name: "!", RawArgs: true}, {Name: "edit"}},
+				cfg,
+			)
+			defer b.Close()
+
+			for _, ev := range typedEvents(tc.input) {
+				b.Handle(ev)
+			}
+			b.Wait()
+			b.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+
+			require.NotEmpty(t, dispatched)
+			assert.Equal(t, tc.wantArgs, dispatched[1:])
+			assert.Equal(t, []string{tc.wantHistory}, b.history.Slice())
+		})
+	}
+}
+
 func TestPromptHistoryCycleKeyAfterLeadingLF(t *testing.T) {
 	cfg := testDefaultConfig()
 	cfg.ShowManual = false
