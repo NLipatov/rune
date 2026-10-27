@@ -115,54 +115,7 @@ func (w *blockWalker) parseInlineContent(n ast.Node) textRun {
 
 func (w *blockWalker) walkInline(n ast.Node, style inlineStyle, run *textRun) {
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		switch node := child.(type) {
-		case *ast.Text:
-			text := string(node.Segment.Value(w.source))
-			if node.SoftLineBreak() || node.HardLineBreak() {
-				text += " "
-			}
-			*run = append(*run, span{text: text, style: style})
-
-		case *ast.String:
-			*run = append(*run, span{text: string(node.Value), style: style})
-
-		case *ast.Emphasis:
-			newStyle := style
-			if node.Level == 1 {
-				newStyle |= styleItalic
-			} else {
-				newStyle |= styleBold
-			}
-			w.walkInline(node, newStyle, run)
-
-		case *ast.CodeSpan:
-			*run = append(*run, span{
-				text:  w.extractCodeSpanText(node),
-				style: style | styleCode,
-			})
-
-		case *ast.Link:
-			linkRun := textRun{}
-			w.walkInline(node, style|styleLink, &linkRun)
-			for i := range linkRun {
-				linkRun[i].url = string(node.Destination)
-			}
-			*run = append(*run, linkRun...)
-
-		case *ast.AutoLink:
-			url := string(node.URL(w.source))
-			*run = append(*run, span{
-				text:  url,
-				style: style | styleLink,
-				url:   url,
-			})
-
-		case *extast.Strikethrough:
-			w.walkInline(node, style|styleStrikethrough, run)
-
-		default:
-			w.walkInline(child, style, run)
-		}
+		w.walkInlineSingle(child, style, run)
 	}
 }
 
