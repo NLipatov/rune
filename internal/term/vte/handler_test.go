@@ -681,6 +681,7 @@ func newHandleTestHandler(master workspaceapi.File) *Handler {
 	handler := &Handler{
 		comp: &Component{
 			pty:           workspaceapi.Pty{Master: master},
+			ptyIn:         master,
 			parserHandler: ph,
 			keyboard:      ph.keyboard,
 		},

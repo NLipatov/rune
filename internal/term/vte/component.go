@@ -19,6 +19,7 @@ package vte
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -44,12 +45,15 @@ import (
 
 // Component implements a vte terminal emulator tui.Component.
 type Component struct {
-	mu                sync.Mutex
-	terminal          schemeapi.Terminal
-	executor          schemeapi.Executor
-	clipboard         clipboard.Register
-	cfg               Config
-	pty               workspaceapi.Pty
+	mu        sync.Mutex
+	terminal  schemeapi.Terminal
+	executor  schemeapi.Executor
+	clipboard clipboard.Register
+	cfg       Config
+	pty       workspaceapi.Pty
+	// ptyIn is where input to the program goes: the write stage for a
+	// local master, the master itself otherwise.
+	ptyIn             io.Writer
 	watcher           workspaceapi.ProcessWatcher
 	tm                browser.TabManager
 	scroll            component.Scroll
@@ -123,13 +127,17 @@ func (t *Component) Init(
 	if err != nil {
 		return err
 	}
+	t.ptyIn = t.pty.Master
+	if q, ok := newPtyWriteQueue(t.ctx, t.pty.Master); ok {
+		t.ptyIn = q
+	}
 
 	if cfg.ScheduleNextTick == nil || cfg.RingBell == nil {
 		panic("nil schedule/bell function(s)")
 	}
 
 	t.parserHandler = newParserHandler(
-		&t.mu, t.pty, t, tm, t.clipboard, cfg.scheduleBell, t.uri,
+		&t.mu, t.ptyIn, t, tm, t.clipboard, cfg.scheduleBell, t.uri,
 		cfg.NeedsAttentionAttributes, cfg.DynamicTabName, cfg.MaxLines, cfg.MinWidth,
 		cfg.CellPixelSize, cfg.FileSystem, cfg.TempDir)
 	t.keyboard = t.parserHandler.keyboard
@@ -234,7 +242,7 @@ func (t *Component) URI() workspaceapi.URI {
 
 // WriteToPty writes the given data to the underlying pty master.
 func (t *Component) WriteToPty(data []byte) error {
-	_, err := t.pty.Master.Write(data)
+	_, err := t.ptyIn.Write(data)
 	if err != nil {
 		return err
 	}

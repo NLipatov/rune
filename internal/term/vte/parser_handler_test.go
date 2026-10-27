@@ -771,8 +771,7 @@ func TestIntegrationParserHandler(t *testing.T) {
 			mockPtyFile := workspacetest.File{}
 			tm := mockTabManager{}
 			attrs := DefaultConfig().NeedsAttentionAttributes
-			pty := workspaceapi.Pty{Master: &mockPtyFile, Slave: &mockPtyFile}
-			ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
+			ph := newParserHandler(new(sync.Mutex), &mockPtyFile, testParserHost{}, &tm,
 				clipboard.NewInMemory(), tm.bell, testURI, attrs, false, 10000, 0, nil, nil, "")
 			ph.sync.primBuf.SetDefaultChar(' ')
 			ph.sync.altBuf.SetDefaultChar(' ')
@@ -908,8 +907,7 @@ func newInputParserHandlerPty(t *testing.T, alt bool) (*parserHandler, *workspac
 	mockPtyFile := &workspacetest.File{}
 	tm := mockTabManager{}
 	attrs := DefaultConfig().NeedsAttentionAttributes
-	pty := workspaceapi.Pty{Master: mockPtyFile, Slave: mockPtyFile}
-	ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
+	ph := newParserHandler(new(sync.Mutex), mockPtyFile, testParserHost{}, &tm,
 		clipboard.NewInMemory(), tm.bell, testURI, attrs, false, 10000, 0, nil, nil, "")
 	ph.sync.primBuf.SetDefaultChar(' ')
 	ph.sync.altBuf.SetDefaultChar(' ')
@@ -1071,8 +1069,7 @@ func TestBellReleasesLockBeforeInvokingCallback(t *testing.T) {
 	mockPtyFile := workspacetest.File{}
 	tm := mockTabManager{}
 	attrs := DefaultConfig().NeedsAttentionAttributes
-	pty := workspaceapi.Pty{Master: &mockPtyFile, Slave: &mockPtyFile}
-	ph := newParserHandler(new(sync.Mutex), pty, testParserHost{}, &tm,
+	ph := newParserHandler(new(sync.Mutex), &mockPtyFile, testParserHost{}, &tm,
 		clipboard.NewInMemory(), bellFn, testURI, attrs, false, 10000, 0, nil, nil, "")
 
 	go ph.Bell()
@@ -2281,7 +2278,7 @@ func TestClipboardOSC52(t *testing.T) {
 			}
 			pty := &workspacetest.File{}
 			lock := new(lockCounter)
-			ph := newParserHandler(lock, workspaceapi.Pty{Master: pty, Slave: pty},
+			ph := newParserHandler(lock, pty,
 				testParserHost{access: ClipboardAccess{Write: true, Read: true}},
 				&mockTabManager{}, &registerClipboard{registers: registers, err: tc.err},
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
@@ -2364,7 +2361,7 @@ func TestClipboardOSC52Access(t *testing.T) {
 			require.NoError(t, err)
 			registers := map[string]string{clip: "secret"}
 			pty := &workspacetest.File{}
-			ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
+			ph := newParserHandler(new(lockCounter), pty,
 				testParserHost{access: tc.access}, &mockTabManager{},
 				&registerClipboard{registers: registers},
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
@@ -2421,7 +2418,7 @@ func TestRequestTermcapAdvertisesOSC52(t *testing.T) {
 			uri, err := workspaceapi.ParseURI("memory:///xtgettcap")
 			require.NoError(t, err)
 			pty := &workspacetest.File{}
-			ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
+			ph := newParserHandler(new(lockCounter), pty,
 				testParserHost{access: tc.access}, &mockTabManager{}, clipboard.NewInMemory(),
 				func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")
 
@@ -2437,7 +2434,7 @@ func TestRequestTermcapMsReadsAsOSC52ToNeovim(t *testing.T) {
 	uri, err := workspaceapi.ParseURI("memory:///xtgettcap")
 	require.NoError(t, err)
 	pty := &workspacetest.File{}
-	ph := newParserHandler(new(lockCounter), workspaceapi.Pty{Master: pty, Slave: pty},
+	ph := newParserHandler(new(lockCounter), pty,
 		testParserHost{access: ClipboardAccess{Write: true}}, &mockTabManager{},
 		clipboard.NewInMemory(),
 		func() {}, uri, term.Attributes{}, false, 100, 0, nil, nil, "")

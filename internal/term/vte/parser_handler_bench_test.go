@@ -257,10 +257,9 @@ func newBenchParserHandler(width, height int) *parserHandler {
 	}
 	mockPty := &workspacetest.File{}
 	tm := &mockTabManager{}
-	pty := workspaceapi.Pty{Master: mockPty, Slave: mockPty}
 	cfg := DefaultConfig()
 	ph := newParserHandler(
-		new(sync.Mutex), pty, testParserHost{}, tm,
+		new(sync.Mutex), mockPty, testParserHost{}, tm,
 		clipboard.NewInMemory(), tm.bell, uri,
 		cfg.NeedsAttentionAttributes, false, cfg.MaxLines, cfg.MinWidth, nil, nil, "")
 	ph.sync.primBuf.SetDefaultChar(' ')

@@ -388,7 +388,7 @@ func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 		return
 	}
 
-	_, err := e.comp.pty.Master.Write(raw)
+	err := e.comp.WriteToPty(raw)
 	if err != nil {
 		e.log(log.ErrorLevel, "write to pty: %s", err)
 		e.notify(browserapi.LevelError, "write to pty: %v", err)

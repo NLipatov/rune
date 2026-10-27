@@ -54,9 +54,8 @@ func Replay(width, height int, data []byte) (*cell.Buffer, term.Coordinates, err
 		return nil, term.Coordinates{}, fmt.Errorf("vte.Replay: parse uri: %w", err)
 	}
 
-	pty := workspaceapi.Pty{Master: replayFile{}, Slave: replayFile{}}
 	ph := newParserHandler(
-		new(sync.Mutex), pty, replayHost{}, replayTabManager{}, clipboard.NewInMemory(),
+		new(sync.Mutex), replayFile{}, replayHost{}, replayTabManager{}, clipboard.NewInMemory(),
 		func() {}, uri, term.Attributes{},
 		false, // useTitleAsTabname=false: SetTitle becomes a no-op
 		0,     // maxScrollLength: caller controls history via screen size
