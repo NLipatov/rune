@@ -49,3 +49,23 @@ func TestTaskPointerLeaves(t *testing.T) {
 		assert.Equal(t, before.WindowMinimized, after.WindowMinimized)
 	}
 }
+
+func TestTaskCloseLeavesItsWindow(t *testing.T) {
+	b := newFakeBrowser()
+	m := newTestManager(b, newFakeScheme())
+	require.NoError(t, m.RunTask(Task{Name: "build", Cmd: "make"}))
+	taskIfc, ok := m.tasks.Load("build")
+	require.True(t, ok)
+	task := taskIfc.(*Task)
+	task.WaitInflight()
+
+	require.NoError(t, task.Close())
+
+	wins := b.Created()
+	require.Len(t, wins, 1)
+	assert.False(t, wins[0].Closed(), "the window may already show other content")
+	assert.Empty(t, m.ListTasks())
+	handlers := b.CreatedHandlers()
+	require.Len(t, handlers, 1)
+	assert.Error(t, handlers[0].Close(), "the run must be stopped")
+}

@@ -448,6 +448,37 @@ func TestRenameHandlerSuccess(t *testing.T) {
 	assert.Equal(t, 5, floatingCfg.Offset.Y)
 }
 
+func TestRenameCloseLeavesItsWindow(t *testing.T) {
+	t.Parallel()
+	lsp := &mockLSP{
+		prepareRenameFn: func(
+			_ context.Context, _ semanticapi.PrepareRenameParams,
+		) (*semanticapi.PrepareRenameResult, error) {
+			return &semanticapi.PrepareRenameResult{Placeholder: "oldName"}, nil
+		},
+	}
+	var floatingH browserapi.Floating
+	wm := &mockWindowManager{
+		floatingFn: func(
+			h browserapi.Floating, _ browserapi.FloatingConfig,
+		) (browserapi.Window, error) {
+			floatingH = h
+			return &mockWindow{id: 1}, nil
+		},
+	}
+	uri := testURI(t, "file:///test.go")
+	h := RenameHandler(lsp, &mockEditor{}, wm, nil, nil)
+	require.NoError(t, h.HandleCommand(context.Background(), textapi.Command{
+		Name: "rename", URI: uri, Resource: &mockHandler{uri: uri},
+	}))
+	require.NotNil(t, floatingH)
+
+	require.NoError(t, floatingH.Close())
+
+	assert.Zero(t, wm.closeWindowCalls,
+		"the window may already show other content when the rename box is released")
+}
+
 func TestApplyWorkspaceEditDocumentChanges(t *testing.T) {
 	t.Parallel()
 

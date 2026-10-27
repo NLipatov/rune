@@ -48,7 +48,7 @@ func TestSignatureHelpFloatingHandle(t *testing.T) {
 		{Label: "foo(a int, b string)"},
 		{Label: "foo(a int)"},
 	}, 0, 0)
-	f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig(), &mockWindowManager{})
+	f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig())
 
 	// Esc dismisses.
 	exit, handled := f.Handle(term.Event{Type: term.EventKey, Key: term.KeyEsc})
@@ -130,7 +130,7 @@ func TestSignatureHelpFloatingDimensions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := testSignatureHelp(test.sigs, test.aSig, test.aPar)
-			f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig(), &mockWindowManager{})
+			f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig())
 			w, h := f.Dimensions()
 			assert.Equal(t, test.wantW, w, "width")
 			assert.Equal(t, test.wantH, h, "height")
@@ -149,7 +149,7 @@ func TestSignatureHelpFloatingDraw(t *testing.T) {
 		},
 	}
 	result := testSignatureHelp([]semanticapi.SignatureInformation{sig}, 0, 1)
-	f := newSignatureHelpFloating(result, cfg, &mockWindowManager{})
+	f := newSignatureHelpFloating(result, cfg)
 	w, h := f.Dimensions()
 	f.Resize(w, h)
 
@@ -185,7 +185,7 @@ func TestSignatureHelpFloatingOverloadCycling(t *testing.T) {
 		{Label: "foo(a int, b string, c bool)"},
 	}
 	result := testSignatureHelp(sigs, 0, 0)
-	f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig(), &mockWindowManager{})
+	f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig())
 	assert.Equal(t, 0, f.activeIdx)
 
 	moves := []struct {
@@ -333,6 +333,35 @@ func TestSignatureHelpHandlerCommand(t *testing.T) {
 	err := h.HandleCommand(context.Background(), cmd)
 	require.NoError(t, err)
 	assert.True(t, floatingCalled, "should open floating window")
+}
+
+func TestSignatureHelpCloseLeavesItsWindow(t *testing.T) {
+	t.Parallel()
+	sig := semanticapi.SignatureInformation{Label: "foo(a int)"}
+	lsp := &mockLSP{
+		signatureHelpFn: func(
+			_ context.Context, _ semanticapi.SignatureHelpParams,
+		) (*semanticapi.SignatureHelp, error) {
+			return testSignatureHelp([]semanticapi.SignatureInformation{sig}, 0, 0), nil
+		},
+	}
+	var floated browserapi.Floating
+	wm := &mockWindowManager{
+		floatingFn: func(
+			f browserapi.Floating, _ browserapi.FloatingConfig,
+		) (browserapi.Window, error) {
+			floated = f
+			return &mockWindow{id: 1}, nil
+		},
+	}
+	h := SignatureHelpHandler(lsp, &mockEditor{}, wm, nil, DefaultSignatureHelpConfig(), nil)
+	require.NoError(t, h.HandleCommand(context.Background(), textapi.Command{Resource: &mockHandler{}}))
+	require.NotNil(t, floated)
+
+	require.NoError(t, floated.Close())
+
+	assert.Zero(t, wm.closeWindowCalls,
+		"the window may already show other content when the signature help is released")
 }
 
 func TestSignatureHelpHandlerNilResult(t *testing.T) {
@@ -1005,7 +1034,7 @@ func TestSignatureHelpFloatingPointerLeaves(t *testing.T) {
 		{Label: "func Open(name string) (*File, error)"},
 	}, 0, 1)
 	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
-		f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig(), &mockWindowManager{})
+		f := newSignatureHelpFloating(result, DefaultSignatureHelpConfig())
 		f.activeIdx = 1
 		runehandlertest.RunPointerLeaves(t, f, size.w, size.h)
 		assert.Equal(t, 1, f.activeIdx, "the pointer must not change the signature")

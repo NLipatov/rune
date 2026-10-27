@@ -1676,7 +1676,7 @@ func TestCommandProgramStatusDrawsEveryProgramOverItsWorkspace(t *testing.T) {
 	}
 	cmd := mustURI(t, "file:///dev/ttys080")
 	ph := &pluginAdapter{pluginHandler: &statusTestPluginHandler{testVte: newTestVteWithConfig([]string{"make"}), uri: cmd}}
-	ph.win = b.Floating(ph, browserapi.FloatingConfig{Alignment: component.AlignmentCentered})
+	b.Floating(ph, browserapi.FloatingConfig{Alignment: component.AlignmentCentered})
 	report(here, cmd, "command")
 	prompt := mustURI(t, "ideauthorizer:///prompt/1")
 	focused.setStatusWindow(prompt, focused.comp.Prompt("Allow make?", []string{"Yes", "No"}, nil,
@@ -1931,7 +1931,6 @@ func TestCommandProgramStatusPreviewsDetachedPrograms(t *testing.T) {
 	ph := &pluginAdapter{pluginHandler: program}
 	win, err := e.comp.Floating(ph, browserapi.FloatingConfig{Alignment: component.AlignmentCentered})
 	require.NoError(t, err)
-	ph.win = win
 	report(cmd)
 	preview, ok := statusWorkspaces{m.workspaceManagerHandler}.Preview(w.uri, cmd)
 	require.True(t, ok, "a floating command is previewed in its window")

@@ -511,7 +511,6 @@ func TestFloatingButtonPointerAndIdempotentClose(t *testing.T) {
 
 	require.NoError(t, f.Close())
 	require.NoError(t, f.Close())
-	assert.Equal(t, 1, wm.closed)
 	assert.Equal(t, 1, ctrl.finished)
 	assert.False(t, box.Active())
 }
@@ -527,6 +526,21 @@ func TestFloatingCtrlCActsLikeEscape(t *testing.T) {
 	assert.True(t, exit, "ctrl-c must exit the box, exactly like <esc>")
 	assert.True(t, handled)
 	assert.Equal(t, 0, ctrl.finished, "the caller, not the box itself, closes on exit")
+}
+
+func TestFloatingCloseLeavesItsWindow(t *testing.T) {
+	wm := &testWindowManager{}
+	box, ctrl := newReplaceBox(t, wm)
+	openMode(t, box, searchbox.ModeFind)
+	f := box.Floating()
+	require.NotNil(t, f)
+
+	require.NoError(t, f.Close())
+
+	assert.Zero(t, wm.closed,
+		"the window may already show other content when the box is released")
+	assert.Equal(t, 1, ctrl.finished)
+	assert.False(t, box.Active())
 }
 
 func TestBoxCloseClosesFloatingWindowOnce(t *testing.T) {

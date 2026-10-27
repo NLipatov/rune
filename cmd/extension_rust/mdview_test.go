@@ -91,6 +91,21 @@ func TestShowMarkdownHighlightsFencedCode(t *testing.T) {
 	requireHighlightRequested(t, parser, ".rs")
 }
 
+func TestShowMarkdownCloseLeavesItsWindow(t *testing.T) {
+	wm := &fakeWM{}
+	require.NoError(t, showMarkdown(wm, nil, nil, "# Title"))
+	wm.mu.Lock()
+	view := wm.floating
+	wm.mu.Unlock()
+
+	require.NoError(t, view.Close())
+
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	assert.Zero(t, wm.closeWindowCalls,
+		"the window may already show other content when the view is released")
+}
+
 // testMarkdownSource is rust-analyzer style output long enough to scroll
 // a 15-row view, mixing prose, a link, lists and fenced code.
 const testMarkdownSource = "# Expanded macro `vec!`\n\n" +

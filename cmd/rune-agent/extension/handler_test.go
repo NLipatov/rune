@@ -57,6 +57,34 @@ import (
 	"unstable.build/rune/internal/debug"
 )
 
+func TestQueryFloatingCloseLeavesItsWindow(t *testing.T) {
+	model := llmapi.ModelEntry{Provider: "test", Name: "test-model", ContextWindow: 128_000}
+	svc := llmtest.New([]llmapi.ModelEntry{model},
+		llmtest.Response{Chunks: []string{"done"}, FinishReason: llmapi.FinishReasonStop})
+	skillReg := skills.NewRegistry(nopFileSystem{}, dirURI(""), nil, nil)
+	store := newMemDialogueStore()
+	wm := &previewWindowManager{open: make(map[uint64]browserapi.Floating)}
+	h := &aiEditorHandler{
+		ctx:           t.Context(),
+		p:             term.NopInterrupter(),
+		wm:            wm,
+		n:             stubNotifications{},
+		llmSvc:        svc,
+		dialogueStore: store,
+		skillRegistry: skillReg,
+		agentsConfig:  &agent.Cfg{},
+		queryAgent: agent.NewAgent(svc, agent.NewRegistry(), skillReg, store,
+			agent.NoMemory(), agent.Config{SystemPrompt: "test", Model: model}),
+	}
+	require.NoError(t, h.handleQuery(textapi.Command{Args: []string{"hello"}}))
+	require.Equal(t, []uint64{1}, wm.openIDs())
+
+	require.NoError(t, wm.open[1].Close())
+
+	assert.Equal(t, []uint64{1}, wm.openIDs(),
+		"the window may already show other content when the query is released")
+}
+
 func TestProviderContentSearch(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "literal.txt"), []byte("other\nneedle configuration value\n"), 0o644))

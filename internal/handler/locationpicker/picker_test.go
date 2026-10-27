@@ -35,7 +35,6 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/handler/handlertest"
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
-	"github.com/unstablebuild/rune-go-sdk/tui"
 	rhandlertest "unstable.build/rune/internal/handler/handlertest"
 )
 
@@ -180,7 +179,7 @@ func TestPickerDrawPreviewClampsTargetLine(t *testing.T) {
 
 func TestPickerDimensions(t *testing.T) {
 	entries := []Entry{{Display: "a.go:1"}}
-	p := New(entries, stubWindowManager{}, &stubFS{}, syncTick, nil, Config{}, nil)
+	p := New(entries, &stubFS{}, syncTick, nil, Config{}, nil)
 	w, ht := p.Dimensions()
 	assert.Equal(t, minPreviewWidth+spanHPad, w)
 	assert.Equal(t, 1+previewContextLines+separatorHeight+spanVPad, ht)
@@ -189,7 +188,7 @@ func TestPickerDimensions(t *testing.T) {
 func TestPickerDimensionsWideEntries(t *testing.T) {
 	long := strings.Repeat("x", minPreviewWidth+20)
 	entries := []Entry{{Display: long}}
-	p := New(entries, stubWindowManager{}, &stubFS{}, syncTick, nil, Config{}, nil)
+	p := New(entries, &stubFS{}, syncTick, nil, Config{}, nil)
 	w, ht := p.Dimensions()
 	assert.Equal(t, utf8.RuneCountInString(long)+spanHPad, w)
 	assert.Equal(t, 1+previewContextLines+separatorHeight+spanVPad, ht)
@@ -197,7 +196,7 @@ func TestPickerDimensionsWideEntries(t *testing.T) {
 
 func TestPickerResize(t *testing.T) {
 	entries := []Entry{{Display: "a.go:1"}}
-	p := New(entries, stubWindowManager{}, &stubFS{}, syncTick, nil, Config{}, nil)
+	p := New(entries, &stubFS{}, syncTick, nil, Config{}, nil)
 
 	w, ht := p.Dimensions()
 	assert.Equal(t, minPreviewWidth+spanHPad, w)
@@ -434,24 +433,6 @@ var _ browserapi.Floating = (*Picker)(nil)
 
 type fileContent map[string]string
 
-type stubWindowManager struct{}
-
-func (stubWindowManager) Focus() (browserapi.Window, error) { return nil, nil }
-func (stubWindowManager) Split(browserapi.Orientation, browserapi.Window, browserapi.Handler) (browserapi.Window, error) {
-	return nil, nil
-}
-func (stubWindowManager) Floating(browserapi.Floating, browserapi.FloatingConfig) (browserapi.Window, error) {
-	return nil, nil
-}
-func (stubWindowManager) Bar(browserapi.BarConfig, tui.Handler) error { return nil }
-func (stubWindowManager) Tab(workspaceapi.URI, rune, string, browserapi.Handler) (browserapi.Handler, error) {
-	return nil, nil
-}
-func (stubWindowManager) SetWindowContent(browserapi.Window, browserapi.Handler) error { return nil }
-func (stubWindowManager) CloseWindow(browserapi.Window) error                          { return nil }
-
-func (stubWindowManager) SetTabStatus(workspaceapi.URI, browserapi.TabStatus) error { return nil }
-
 type stubFS struct {
 	openFileFn func(string, int, os.FileMode) (workspaceapi.File, error)
 }
@@ -538,7 +519,7 @@ func parseURI(t *testing.T, raw string) workspaceapi.URI {
 
 func testPicker(entries []Entry, fc fileContent) *Picker {
 	cfg := Config{PreviewAttr: term.Attributes{Bg: term.ColorYellow}}
-	return New(entries, stubWindowManager{}, testFS(fc), syncTick, nil, cfg, nil)
+	return New(entries, testFS(fc), syncTick, nil, cfg, nil)
 }
 
 func renderPicker(t *testing.T, p *Picker, w, ht int) *term.StringWriter {

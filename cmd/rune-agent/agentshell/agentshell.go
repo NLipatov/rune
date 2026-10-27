@@ -748,13 +748,8 @@ func (s *shell) showHistory(
 	}
 	mdh := mdhandler.New(md)
 
-	var win browserapi.Window
-	bhandler := browserapi.FuncHandler(mdh, func() error {
-		return s.wm.CloseWindow(win)
-	})
-	floating := browserapi.FuncFloating(bhandler, mdh.Dimensions)
-
-	win, err = s.wm.Floating(floating, browserapi.FloatingConfig{
+	floating := browserapi.FuncFloating(browserapi.FuncHandler(mdh, mdh.Close), mdh.Dimensions)
+	_, err = s.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {
@@ -849,13 +844,8 @@ func (s *shell) showAudit(
 	}
 	mdh := mdhandler.New(md)
 
-	var win browserapi.Window
-	bhandler := browserapi.FuncHandler(mdh, func() error {
-		return s.wm.CloseWindow(win)
-	})
-	floating := browserapi.FuncFloating(bhandler, mdh.Dimensions)
-
-	win, err = s.wm.Floating(floating, browserapi.FloatingConfig{
+	floating := browserapi.FuncFloating(browserapi.FuncHandler(mdh, mdh.Close), mdh.Dimensions)
+	_, err = s.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {
@@ -1276,13 +1266,8 @@ func (s *shell) showSkill(name string) (iterator.Iterator[component.Responsive],
 	}
 	mdh := mdhandler.New(md)
 
-	var win browserapi.Window
-	bhandler := browserapi.FuncHandler(mdh, func() error {
-		return s.wm.CloseWindow(win)
-	})
-	floating := browserapi.FuncFloating(bhandler, mdh.Dimensions)
-
-	win, err = s.wm.Floating(floating, browserapi.FloatingConfig{
+	floating := browserapi.FuncFloating(browserapi.FuncHandler(mdh, mdh.Close), mdh.Dimensions)
+	_, err = s.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {

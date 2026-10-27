@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ernestrc/go-multierror"
 	"github.com/ernestrc/logd-go/logging"
 	log "github.com/sirupsen/logrus"
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
@@ -292,7 +291,8 @@ func (e *Task) SeekUp() bool {
 	return e.currentHandler().SeekUp()
 }
 
-// Close satisfies browserapi.Handler.
+// Close satisfies browserapi.Handler. It stops the task but leaves its
+// window, which may already show other content.
 func (t *Task) Close() error {
 	t.closeHook()
 	return t.doClose()
@@ -316,17 +316,23 @@ func (t *Task) doClose() (ret error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.tab == nil && !t.win.Closed() {
-		ret = t.win.Close()
-	}
 	t.cancelCtx()
 
 	if t.handler != nil {
-		if err := t.handler.Close(); err != nil {
-			ret = multierror.Append(ret, err)
-		}
+		ret = t.handler.Close()
 	}
 	return
+}
+
+// closeView removes the window or tab that shows t.
+func (t *Task) closeView() error {
+	if t.tab != nil {
+		return t.b.RemoveTab(t.tab)
+	}
+	if !t.win.Closed() {
+		return t.win.Close()
+	}
+	return nil
 }
 
 func (t *Task) init(

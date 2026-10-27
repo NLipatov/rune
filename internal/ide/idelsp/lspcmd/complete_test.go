@@ -644,6 +644,33 @@ func TestCompleteHandlerCommandAsync(t *testing.T) {
 	require.NoError(t, gotFloating.Close())
 }
 
+func TestCompletionCloseLeavesItsWindow(t *testing.T) {
+	lsp := &mockLSP{
+		completionFn: func(
+			_ context.Context, _ semanticapi.CompletionParams,
+		) (semanticapi.CompletionResult, error) {
+			return semanticapi.CompletionResult{Items: testItems("alpha")}, nil
+		},
+	}
+	var gotFloating browserapi.Floating
+	wm := &mockWindowManager{
+		floatingFn: func(
+			h browserapi.Floating, _ browserapi.FloatingConfig,
+		) (browserapi.Window, error) {
+			gotFloating = h
+			return &mockWindow{id: 1}, nil
+		},
+	}
+	h := CompleteHandler(lsp, &mockEditor{}, wm, DefaultCompleteConfig(), term.NopInterrupter(), nil)
+	require.NoError(t, h.HandleCommand(context.Background(), textapi.Command{Resource: &mockHandler{}}))
+	require.NotNil(t, gotFloating)
+
+	require.NoError(t, gotFloating.Close())
+
+	assert.Zero(t, wm.closeWindowCalls,
+		"the window may already show other content when the completion is released")
+}
+
 func TestCompleteHandlerFetchOutlivesRequestContext(t *testing.T) {
 	release := make(chan struct{})
 	lsp := &mockLSP{

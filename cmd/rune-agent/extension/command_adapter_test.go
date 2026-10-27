@@ -32,10 +32,35 @@ import (
 	"unstable.build/rune/cmd/rune-agent/agent"
 	"unstable.build/rune/cmd/rune-agent/agent/skills"
 	"unstable.build/rune/cmd/rune-agent/llm/llmtest"
+	"unstable.build/rune/internal/component/markdown"
 	"unstable.build/rune/internal/llm/anthropic"
 	"unstable.build/rune/internal/llm/codex"
 	"unstable.build/rune/internal/llm/gemini"
 )
+
+func TestCommandFloatingCloseLeavesItsWindow(t *testing.T) {
+	md, err := markdown.New("# hello")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		items []component.Responsive
+	}{
+		{"markdown", []component.Responsive{md}},
+		{"list", []component.Responsive{component.NewResponsiveString("a", component.StringResponsiveConfig{}), md}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wm := &reviewWindowManager{}
+			a := &commandAdapter{wm: wm}
+			a.openCommandFloating(tc.items)
+			require.Len(t, wm.floatings, 1)
+
+			require.NoError(t, wm.floatings[0].Close())
+
+			assert.Zero(t, wm.closes,
+				"the window may already show other content when the output is released")
+		})
+	}
+}
 
 // newMaxTokensAdapter builds a commandAdapter whose agent is bound to a
 // concrete model so handleMaxTokens can validate against its documented

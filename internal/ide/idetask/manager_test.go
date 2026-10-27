@@ -2250,6 +2250,9 @@ func TestManagerLifecycleEdgeCases(t *testing.T) {
 		}, time.Second, 10*time.Millisecond,
 			"Close should stop every task watch")
 		assert.Empty(t, m.ListTasks())
+		for _, w := range wm.Created() {
+			assert.True(t, w.Closed(), "Close should close every task window")
+		}
 	})
 
 	t.Run("SetMaxWidthHeight concurrent with task runs does not race or panic", func(t *testing.T) {

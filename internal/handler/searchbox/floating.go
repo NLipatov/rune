@@ -625,13 +625,14 @@ func (f *floating) handleMouse(ev term.Event) (bool, bool) {
 	return false, true
 }
 
-// Close satisfies tui.Component.
+// Close satisfies tui.Component. It ends the search but leaves the window
+// to whoever owns it, since the window may already show other content.
 func (f *floating) Close() error {
 	if f.closed {
 		return nil
 	}
 	f.closed = true
-	return f.owner.Finish(true)
+	return f.owner.Finish(false)
 }
 
 // SeekUp satisfies component.Scrollable.

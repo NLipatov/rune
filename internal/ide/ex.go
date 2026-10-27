@@ -846,7 +846,12 @@ func (e *ex) closeWindowContent(win browser.Window) error {
 	if err != nil {
 		return fmt.Errorf("get window content: %w", err)
 	}
-	if tab, ok := content.(*browser.Tab); ok && e.tabIsDirty(tab) {
+	tab, isTab := content.(*browser.Tab)
+	if !isTab && win.IsFloating() {
+		// Its content only lives in this window, so no tab may take its place.
+		return win.Close()
+	}
+	if isTab && e.tabIsDirty(tab) {
 		e.openCloseDirtyTabsPrompt(
 			fmt.Sprintf("File '%s' has changes pending to be written. "+
 				"Close and discard changes?", tab.URI().Name()),
@@ -1934,19 +1939,13 @@ func (e *ex) executePlugin(_ context.Context, args ...string) error {
 		Alignment: component.AlignmentCentered,
 		Title:     h.Title(),
 	}
-	// there can be multiple floating windows open
-	// so instead of matching windows on tabclose,
-	// we set a handler that closes the window if the handler
-	// is closed.
 	ph := &pluginAdapter{pluginHandler: h}
 	// mimic same behavior as tab
 	ph.OnFocusChange(false)
-	win, err := e.comp.Floating(ph, cfg)
-	if err != nil {
+	if _, err := e.comp.Floating(ph, cfg); err != nil {
 		_ = h.Close()
 		return err
 	}
-	ph.win = win
 	return nil
 }
 
@@ -2456,6 +2455,13 @@ func (e *ex) editExitedTerminal(av *asyncVTE, exitErr error) (text.Handler, erro
 }
 
 func (e *ex) consolenewtab(_ context.Context, args ...string) error {
+	if e.companionConsole != nil {
+		// The console is closed along with its tab, but merely hidden
+		// while its tab is out of every window.
+		if _, open := e.comp.Browser().Tab(e.companionConsoleURI); !open {
+			e.companionConsole = nil
+		}
+	}
 	if e.companionConsole == nil {
 		workspaceURI, err := e.workspace.URI(".")
 		if err != nil {
@@ -2527,30 +2533,66 @@ func (e *ex) consolenewtab(_ context.Context, args ...string) error {
 
 	tab := t.(*browser.Tab)
 
-	win := e.invokeWindow()
+	win, err := e.consoleWindow()
+	if err != nil {
+		return err
+	}
 	if err := win.SetContent(tab); err != nil {
 		content, cerr := win.Content()
 		if cerr == nil {
 			if curr, ok := content.(*browser.Tab); ok && curr == tab {
-				if line := strings.TrimSpace(strings.Join(args, " ")); line != "" {
-					e.companionConsole.Submit(line)
-				}
-				return nil
+				return e.submitToConsole(args)
 			}
 		}
 		return err
 	}
-	tab.Subscribe((*tabSubscriber)(e))
-	if line := strings.TrimSpace(strings.Join(args, " ")); line != "" {
-		// Content that closes its own window on Close, such as the
-		// workspace notice, closes the console's window as SetContent
-		// replaces it, and Subscribe then frees the console.
-		if e.companionConsole == nil {
-			return fmt.Errorf("console closed before %q could run", line)
-		}
-		e.companionConsole.Submit(line)
+	if _, err := e.comp.SetFocus(win); err != nil {
+		return fmt.Errorf("focus console: %w", err)
 	}
+	tab.Subscribe((*tabSubscriber)(e))
+	return e.submitToConsole(args)
+}
+
+// submitToConsole submits args as one line, if any, to the console. It
+// fails rather than panics when callbacks run while showing the console
+// dropped it.
+func (e *ex) submitToConsole(args []string) error {
+	line := strings.TrimSpace(strings.Join(args, " "))
+	if line == "" {
+		return nil
+	}
+	if e.companionConsole == nil {
+		return errors.New("console was closed before the command could run")
+	}
+	e.companionConsole.Submit(line)
 	return nil
+}
+
+// consoleWindow returns the window the console takes over: the focused
+// one, or the first tile when the focused one floats with content that
+// lives only there.
+func (e *ex) consoleWindow() (browser.Window, error) {
+	win := e.invokeWindow()
+	if !win.IsFloating() {
+		return win, nil
+	}
+	content, err := win.Content()
+	if err != nil {
+		return nil, fmt.Errorf("get window content: %w", err)
+	}
+	if _, isTab := content.(*browser.Tab); isTab {
+		return win, nil
+	}
+	var tile browser.Window
+	e.comp.Browser().IterateWindows(func(w browser.Window) {
+		if tile == nil && !w.IsFloating() && !sameWindow(w, e.fileExplorerWin) {
+			tile = w
+		}
+	})
+	if tile == nil {
+		return nil, errors.New("no tiled window to open the console in")
+	}
+	return tile, nil
 }
 
 // scheduledTabStatus reports statuses made through the SDK from any
@@ -3409,7 +3451,6 @@ func (e *ex) focusHandler() tui.Handler {
 
 type pluginAdapter struct {
 	pluginHandler
-	win browser.Window
 }
 
 // statusReporter is content showing a program that reports its
@@ -3452,10 +3493,6 @@ func (a workspaceExecutorAdapter) Close() error {
 }
 
 func (h *pluginAdapter) Close() error {
-	if !h.win.Closed() {
-		_ = h.win.Close()
-	}
-
 	// ephemeral handlers are closed when focus changes
 	// in component. So adding the following line here
 	// should handle all cases
@@ -3471,10 +3508,6 @@ func (e *tabSubscriber) OnFocus(t *browser.Tab) {
 }
 
 func (e *tabSubscriber) OnFree(t *browser.Tab) {
-	if e.companionConsole != nil && t.URI().String() == e.companionConsoleURI.String() {
-		e.companionConsole = nil
-		e.companionConsoleURI = workspaceapi.URI{}
-	}
 	onFocusChangeTab(t, false)
 }
 
@@ -3683,13 +3716,9 @@ func (e *ex) openMarkdownFloating(md, title string, width int) error {
 		ContentAlignment: component.AlignmentCentered,
 	})
 
-	var win browser.Window
 	view := markdownFloating{Floating: span, md: mdh, width: width}
-	h := browser.FuncScrollableFloatingHandler(view, func() error {
-		defer win.Close() //nolint:errcheck
-		return mdh.Close()
-	})
-	win, err = e.comp.Floating(h, browserapi.FloatingConfig{
+	h := browser.FuncScrollableFloatingHandler(view, mdh.Close)
+	_, err = e.comp.Floating(h, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 		Title:     title,
 	})
@@ -3828,13 +3857,9 @@ func (e *ex) openGitshow(ctx context.Context) (text.Handler, error) {
 		Y: anchors[gitshowSeek(hunks, h.CursorAtScroll().Y+1)].Row,
 	})
 
-	var win browser.Window
 	bhandler := browser.FuncHandler(
-		gitshowKeyHandler(edh, e.editorModeModal), func() error {
-			defer win.Close() //nolint:errcheck
-			return edh.Close()
-		})
-	win, err = e.comp.Floating(
+		gitshowKeyHandler(edh, e.editorModeModal), edh.Close)
+	_, err = e.comp.Floating(
 		browser.FuncFloating(bhandler, func() (int, int) {
 			w, height := edh.Dimensions()
 			// dimensions does not account for the row the editors

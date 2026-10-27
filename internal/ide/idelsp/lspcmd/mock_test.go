@@ -190,6 +190,7 @@ type mockWindowManager struct {
 	focusFn            func() (browserapi.Window, error)
 	floatingFn         func(browserapi.Floating, browserapi.FloatingConfig) (browserapi.Window, error)
 	setWindowContentFn func(browserapi.Window, browserapi.Handler) error
+	closeWindowCalls   int
 }
 
 func (m *mockWindowManager) Focus() (browserapi.Window, error) {
@@ -228,6 +229,7 @@ func (m *mockWindowManager) SetWindowContent(w browserapi.Window, h browserapi.H
 }
 
 func (m *mockWindowManager) CloseWindow(_ browserapi.Window) error {
+	m.closeWindowCalls++
 	return nil
 }
 

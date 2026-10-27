@@ -161,7 +161,7 @@ func (h *completeHandler) HandleCommand(ctx context.Context, cmd textapi.Command
 		floating.drainLoop(ch)
 	})
 
-	win, err := h.wm.Floating(floating, browserapi.FloatingConfig{
+	_, err := h.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentLeft | component.AlignmentTop,
 		Offset:    term.Coordinates{X: cmd.Cursor.Window.X + 1, Y: cmd.Cursor.Window.Y + 2},
 	})
@@ -170,8 +170,6 @@ func (h *completeHandler) HandleCommand(ctx context.Context, cmd textapi.Command
 		fetchDoneCancel()
 		return err
 	}
-	floating.wm = h.wm
-	floating.win = win
 
 	go debug.CapturePanicReport(func() {
 		defer fetchDoneCancel()
@@ -218,10 +216,6 @@ type completionHandler struct {
 	cancel    context.CancelFunc
 	fetchDone context.Context
 	drainDone context.Context
-
-	// Window lifecycle.
-	wm  browserapi.WindowManager
-	win browserapi.Window
 
 	// Completion items (protected by itemsMu).
 	itemsMu  sync.Mutex
@@ -424,9 +418,6 @@ func (c *completionHandler) Close() error {
 	}
 	if c.drainDone != nil {
 		<-c.drainDone.Done()
-	}
-	if c.win != nil {
-		return c.wm.CloseWindow(c.win)
 	}
 	return nil
 }

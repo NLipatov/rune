@@ -20,11 +20,90 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
+	"github.com/unstablebuild/rune-go-sdk/api/llmapi"
+	"github.com/unstablebuild/rune-go-sdk/api/storageapi/storagestub"
+	"github.com/unstablebuild/rune-go-sdk/component"
+	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/cmd/rune-agent/agent/audit"
+	"unstable.build/rune/cmd/rune-agent/agent/skills"
+	"unstable.build/rune/cmd/rune-agent/dialogue/dialoguemanager"
 	"unstable.build/rune/internal/handler/handlertest"
 )
+
+func TestShellFloatCloseLeavesItsWindow(t *testing.T) {
+	t.Parallel()
+	const id = "rolling-fox"
+	storage := storagestub.NewInMemoryService()
+	auditStore := audit.NewStore(storage)
+	auditStore.Append(context.Background(), id, audit.Entry{
+		StartedAt: time.Now(),
+		Messages:  []llmapi.Message{{Role: llmapi.RoleUser, Content: "question"}},
+	})
+	for _, tc := range []struct {
+		name string
+		show func(s *shell) (iterator.Iterator[component.Responsive], error)
+	}{
+		{"history", func(s *shell) (iterator.Iterator[component.Responsive], error) {
+			return s.showHistory(context.Background(), id)
+		}},
+		{"audit", func(s *shell) (iterator.Iterator[component.Responsive], error) {
+			return s.showAudit(context.Background(), id)
+		}},
+		{"skill", func(s *shell) (iterator.Iterator[component.Responsive], error) {
+			return s.showSkill("explore")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			wm := &floatingWindowManager{}
+			s := &shell{
+				wm:         wm,
+				auditStore: auditStore,
+				store: &compactDialogueStore{dialogue: dialoguemanager.Dialogue{
+					ID: id,
+					Messages: []llmapi.Message{
+						{Role: llmapi.RoleUser, Content: "question"},
+					},
+				}},
+				skillRegistry: skills.NewRegistry(osFS{}, dirURI(t.TempDir()), nil, nil),
+			}
+			_, err := tc.show(s)
+			require.NoError(t, err)
+			require.NotNil(t, wm.floated)
+
+			require.NoError(t, wm.floated.Close())
+
+			assert.Zero(t, wm.closeWindowCalls,
+				"the window may already show other content when the view is released")
+		})
+	}
+}
+
+// floatingWindowManager records the last floating window opened and
+// every CloseWindow call.
+type floatingWindowManager struct {
+	stubWindowManager
+	floated          browserapi.Floating
+	closeWindowCalls int
+}
+
+func (m *floatingWindowManager) Floating(
+	f browserapi.Floating, _ browserapi.FloatingConfig,
+) (browserapi.Window, error) {
+	m.floated = f
+	return nil, nil
+}
+
+func (m *floatingWindowManager) CloseWindow(browserapi.Window) error {
+	m.closeWindowCalls++
+	return nil
+}
 
 type forkPickerCalls struct{ selected, closed int }
 

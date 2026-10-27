@@ -434,10 +434,11 @@ const (
 // production: while a floating window is up, it holds the focus, so a
 // jump that resolves its target window too late lands in the float.
 type fakeWM struct {
-	mu       sync.Mutex
-	floating browserapi.Floating
-	winSet   browserapi.Window
-	content  browserapi.Handler
+	mu               sync.Mutex
+	floating         browserapi.Floating
+	winSet           browserapi.Window
+	content          browserapi.Handler
+	closeWindowCalls int
 }
 
 var _ browserapi.WindowManager = (*fakeWM)(nil)
@@ -491,7 +492,12 @@ func (m *fakeWM) Bar(browserapi.BarConfig, tui.Handler) error {
 	return errors.New("not implemented")
 }
 
-func (m *fakeWM) CloseWindow(browserapi.Window) error { return nil }
+func (m *fakeWM) CloseWindow(browserapi.Window) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closeWindowCalls++
+	return nil
+}
 
 func (m *fakeWM) SetTabStatus(workspaceapi.URI, browserapi.TabStatus) error { return nil }
 

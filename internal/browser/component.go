@@ -136,6 +136,7 @@ func NewComponent(config Config) *Component {
 func (c *Component) Init(config Config) {
 	c.config = config
 	c.config.WindowManagerConfig.FloatingBar = c
+	c.config.WindowManagerConfig.WindowClose = (*wmSubscriber)(c)
 	c.windows = make(map[uint64]*browserWindow)
 	c.inFocus = true
 
@@ -1981,12 +1982,6 @@ func (c *Component) closeWindow(win *browserWindow) error {
 	if err != nil {
 		return err
 	}
-
-	delete(c.windows, win.WindowID())
-
-	// ensure that if handler calls Closed to ensure that
-	// window is closed, the answer will be correct.
-	win.parent = nil
 	c.releaseHandler(content)
 	return nil
 }
@@ -2267,6 +2262,20 @@ func (s *wmSubscriber) OnFocus(prev, focus thandler.Window) {
 	c.focusWindow = focus
 	c.dirtyTabs = true
 	c.ackInSight()
+}
+
+// OnWindowClose satisfies handler.WindowCloseHandler. The content is
+// left alone: closeWindow releases it, and content that exited has
+// already been closed by browserContent.Handle.
+func (s *wmSubscriber) OnWindowClose(win thandler.Window) {
+	c := (*Component)(s)
+	bw, ok := c.windows[win.ID()]
+	if !ok {
+		return
+	}
+	delete(c.windows, win.ID())
+	// Holders of the closed window must not be able to fill or close it.
+	bw.parent = nil
 }
 
 // OnBarClose routes window-bar close icon clicks through closeWindow so

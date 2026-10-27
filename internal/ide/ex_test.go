@@ -1545,6 +1545,184 @@ func TestShellCommandPastesArgument(t *testing.T) {
 	assert.Equal(t, prev, len(doc.Items))
 }
 
+func TestConsoleCommandLeavesFocusedFloat(t *testing.T) {
+	for _, explorer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("explorer=%t", explorer), func(t *testing.T) {
+			uri, err := workspaceapi.ParseURI("memory:///")
+			require.NoError(t, err)
+			scheme, err := workspace.NewMemoryScheme(context.Background(), config.NopConfig(), uri)
+			require.NoError(t, err)
+			cfg := vte.DefaultConfig()
+			scheduler := newQueuedScheduler()
+			cfg.ScheduleNextTick = scheduler.ScheduleNextTick
+			svc := storagestub.NewInMemoryService()
+			b := newExForTestingWithStorage(t, workspace.NewSchemeWorkspace(uri, scheme, inlineSchedule),
+				svc, texttest.NopEditor(), cfg, nopPublishEvent, clipboard.NewInMemory(),
+				text.WithCommandKey(testCommandKey),
+			)
+			b.mu = &sync.Mutex{}
+			b.scheduler = scheduler
+			defer b.Close()
+			b.Resize(80, 24)
+			if explorer {
+				require.NoError(t, b.fexplorer(context.Background()))
+			}
+			float := browser.StaticFloating(browser.NopHandler(handler.NewTestHandler()), 10, 4)
+			floatWin, err := b.comp.Floating(float, browserapi.FloatingConfig{})
+			require.NoError(t, err)
+			require.True(t, b.invokeWindow().IsFloating())
+
+			require.NoError(t, b.consolenewtab(context.Background(), "help"))
+
+			require.False(t, floatWin.Closed())
+			content, err := floatWin.Content()
+			require.NoError(t, err)
+			assert.Equal(t, float, content, "the float's content lives only there")
+			tab, ok := b.comp.Browser().Tab(b.ex.companionConsoleURI)
+			require.True(t, ok)
+			consoleWin, shown := tab.Window()
+			require.True(t, shown)
+			assert.False(t, consoleWin.IsFloating())
+			assert.False(t, sameWindow(consoleWin, b.fileExplorerWin))
+			assert.True(t, sameWindow(b.invokeWindow(), consoleWin), "the console takes focus")
+			var doc struct{ Items []string }
+			require.NoError(t, svc.Get(context.Background(), shellHistoryDocumentID, &doc))
+			require.NotEmpty(t, doc.Items)
+			assert.Equal(t, "help", doc.Items[len(doc.Items)-1])
+		})
+	}
+}
+
+func TestConsoleCommandAfterConsoleLeavesWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		leave func(t *testing.T, b testEx, console *browser.Tab)
+		reuse bool
+	}{
+		{
+			name: "hidden",
+			leave: func(t *testing.T, b testEx, _ *browser.Tab) {
+				otherURI, err := workspaceapi.ParseURI("memory:///other")
+				require.NoError(t, err)
+				other, err := b.comp.Tab(otherURI, 'o', "other",
+					browser.NopHandler(handler.NewTestHandler()))
+				require.NoError(t, err)
+				require.NoError(t, b.invokeWindow().SetContent(other))
+			},
+			reuse: true,
+		},
+		{
+			name: "closed",
+			leave: func(t *testing.T, b testEx, console *browser.Tab) {
+				require.True(t, b.comp.Browser().RemoveTab(console))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspaceURI, err := workspaceapi.ParseURI("file:///tmp/console-leaves")
+			require.NoError(t, err)
+			w := testWorkspaceWithURI{testLoader: &testLoader{}, uri: workspaceURI}
+			cfg := vte.DefaultConfig()
+			scheduler := newQueuedScheduler()
+			cfg.ScheduleNextTick = scheduler.ScheduleNextTick
+			b := newExForTestingWithStorage(t, w, storagestub.NewInMemoryService(),
+				texttest.NopEditor(), cfg, nopPublishEvent, clipboard.NewInMemory(),
+				text.WithCommandKey(testCommandKey),
+			)
+			b.mu = &sync.Mutex{}
+			b.scheduler = scheduler
+			defer b.Close()
+			require.NoError(t, b.consolenewtab(context.Background()))
+			console, ok := b.comp.Browser().Tab(b.ex.companionConsoleURI)
+			require.True(t, ok)
+			first := console.Handler()
+			tc.leave(t, b, console)
+			_, shown := console.Window()
+			require.False(t, shown)
+
+			require.NoError(t, b.consolenewtab(context.Background(), "help"))
+
+			console, ok = b.comp.Browser().Tab(b.ex.companionConsoleURI)
+			require.True(t, ok)
+			_, shown = console.Window()
+			require.True(t, shown)
+			assert.Same(t, console.Handler(), b.ex.companionConsole,
+				"the line must go to the console on screen")
+			if tc.reuse {
+				assert.Same(t, first, console.Handler())
+			} else {
+				assert.NotSame(t, first, console.Handler(), "a closed console is not reused")
+			}
+		})
+	}
+}
+
+func TestConsoleCommandWhenConsoleDroppedWhileShown(t *testing.T) {
+	workspaceURI, err := workspaceapi.ParseURI("file:///tmp/console-dropped")
+	require.NoError(t, err)
+	w := testWorkspaceWithURI{testLoader: &testLoader{}, uri: workspaceURI}
+	cfg := vte.DefaultConfig()
+	scheduler := newQueuedScheduler()
+	cfg.ScheduleNextTick = scheduler.ScheduleNextTick
+	b := newExForTestingWithStorage(t, w, storagestub.NewInMemoryService(),
+		texttest.NopEditor(), cfg, nopPublishEvent, clipboard.NewInMemory(),
+		text.WithCommandKey(testCommandKey),
+	)
+	b.mu = &sync.Mutex{}
+	b.scheduler = scheduler
+	defer b.Close()
+	// Replacing this content when the console is shown drops the console,
+	// the way the idenotice float once did.
+	dropper := browser.FuncHandler(handler.NewTestHandler(), func() error {
+		b.ex.companionConsole = nil
+		return nil
+	})
+	require.NoError(t, b.invokeWindow().SetContent(dropper))
+
+	assert.NotPanics(t, func() {
+		assert.Error(t, b.consolenewtab(context.Background(), "help"))
+	})
+}
+
+func TestInstallPromptOverNoticeSubmitsToConsole(t *testing.T) {
+	workspaceURI, err := workspaceapi.ParseURI("docs:///")
+	require.NoError(t, err)
+	w := testWorkspaceWithURI{
+		testLoader: &testLoader{exitStartedCommands: true},
+		uri:        workspaceURI,
+	}
+	cfg := vte.DefaultConfig()
+	scheduler := newQueuedScheduler()
+	cfg.ScheduleNextTick = scheduler.ScheduleNextTick
+	svc := storagestub.NewInMemoryService()
+	b := newExForTestingWithStorage(t, w, svc, texttest.NopEditor(),
+		cfg, nopPublishEvent, clipboard.NewInMemory(),
+		text.WithCommandKey(testCommandKey),
+	)
+	b.mu = &sync.Mutex{}
+	b.scheduler = scheduler
+	defer b.Close()
+	notice := idenotice.New(nil, newBrowserAdapter(b.Browser()), nil,
+		scheduler.ScheduleNextTick, b.onLinkClick, idenotice.Config{
+			Literal:      "# Welcome to Rune",
+			Show:         idenotice.ShowAlways,
+			Storage:      svc,
+			WorkspaceURI: workspaceURI,
+		})
+	require.NoError(t, notice.Show(context.Background()))
+	b.ShowFallbackPrompt(context.Background(), "agent")
+
+	require.NotPanics(t, func() {
+		b.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	})
+
+	var doc struct{ Items []string }
+	require.NoError(t, svc.Get(context.Background(), shellHistoryDocumentID, &doc))
+	require.NotEmpty(t, doc.Items)
+	assert.Equal(t, "pkg install rune-agent", doc.Items[len(doc.Items)-1])
+	assert.Equal(t, 1, b.comp.Browser().FloatingWindows(), "the notice stays open")
+}
+
 func TestConsoleCommandReportsTabStatus(t *testing.T) {
 	workspaceURI, err := workspaceapi.ParseURI("file:///tmp/console-status")
 	require.NoError(t, err)
@@ -6671,6 +6849,64 @@ func TestExecutePluginShellInterpretsOperators(t *testing.T) {
 	}
 }
 
+func TestExecutePluginWindow(t *testing.T) {
+	next := browserapi.NopHandler(handler.NewTestHandler())
+	cases := []struct {
+		name       string
+		act        func(t *testing.T, e *ex, win browser.Window)
+		wantClosed bool
+	}{
+		{
+			name: "replacing the command leaves its window",
+			act: func(t *testing.T, _ *ex, win browser.Window) {
+				require.NoError(t, win.SetContent(next))
+			},
+		},
+		{
+			name: "tabclose closes its window",
+			act: func(t *testing.T, e *ex, _ browser.Window) {
+				require.NoError(t, e.tabclose(context.Background()))
+			},
+			wantClosed: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uri, err := workspaceapi.ParseURI("memory:///")
+			require.NoError(t, err)
+			scheme, _ := workspace.NewMemoryScheme(
+				context.Background(), config.NopConfig(), uri)
+			e := newExForTestingWithWorkspace(t,
+				workspace.NewSchemeWorkspace(uri, scheme, inlineSchedule),
+				texttest.NopEditor(), vte.DefaultConfig(),
+				nopPublishEvent, clipboard.NewInMemory())
+			tvte := newTestVte()
+			e.newPluginHandler = func(int, ...string) (pluginHandler, error) {
+				return tvte, nil
+			}
+			t.Cleanup(func() { _ = e.Close() })
+			e.Resize(100, 100)
+			require.NoError(t, e.editFiles(context.Background(), "a", "b"))
+			require.NoError(t, e.executePlugin(context.Background(), "make"))
+			e.waitAsyncVTELoads()
+			e.flushScheduled()
+			win, err := e.Browser().Focus()
+			require.NoError(t, err)
+			require.True(t, win.IsFloating())
+
+			tc.act(t, e.ex, win)
+
+			assert.Equal(t, tc.wantClosed, win.Closed())
+			assert.True(t, tvte.calledClose, "the command must be released")
+			if !tc.wantClosed {
+				got, err := win.Content()
+				require.NoError(t, err)
+				assert.Same(t, next, got)
+			}
+		})
+	}
+}
+
 func TestOpenURL(t *testing.T) {
 	t.Setenv("RUNE_TEST_SECRET", "leaked")
 	const raw = "https://example.com/p?a=1&b=$(touch%20x)&c=$RUNE_TEST_SECRET;d"
@@ -9427,4 +9663,22 @@ func TestOpenMarkdownFloatingScrollBar(t *testing.T) {
 			assert.Equal(t, tc.want, gitshowFrame(t, b, 30, 12))
 		})
 	}
+}
+
+func TestOpenMarkdownFloatingReleaseLeavesItsWindow(t *testing.T) {
+	e := newExForTesting(t, texttest.NopEditor())
+	t.Cleanup(func() { _ = e.Close() })
+	e.Resize(80, 24)
+	require.NoError(t, e.openMarkdownFloating("- one\n", "Doc", 16))
+	win, err := e.Browser().Focus()
+	require.NoError(t, err)
+	require.True(t, win.IsFloating())
+
+	next := browserapi.NopHandler(handler.NewTestHandler())
+	require.NoError(t, win.SetContent(next))
+
+	require.False(t, win.Closed(), "replacing the markdown must not close its window")
+	got, err := win.Content()
+	require.NoError(t, err)
+	assert.Same(t, next, got)
 }

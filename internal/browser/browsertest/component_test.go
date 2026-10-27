@@ -124,7 +124,8 @@ func TestComponentCloseWindow(t *testing.T) {
 
 			assert.Equal(t, 0, len(c.Tabs()))
 			assert.Equal(t, 1, c.Tiles())
-			require.Error(t, win.Close())
+			assert.True(t, win.Closed())
+			require.NoError(t, win.Close(), "closing a closed window is a no-op")
 			assert.Equal(t, 1, c.Tiles())
 		})
 

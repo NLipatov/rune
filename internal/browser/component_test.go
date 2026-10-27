@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"weak"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1154,6 +1156,48 @@ func TestWindowClosedOnClose(t *testing.T) {
 		return h.Close()
 	}), browserapi.FloatingConfig{})
 	assert.NoError(t, win.Close())
+}
+
+func TestWindowManagerCloseDropsWindow(t *testing.T) {
+	esc := term.Event{Type: term.EventKey, Key: term.KeyEsc}
+	tests := []struct {
+		name string
+		open func(t *testing.T, b *Component) Window
+	}{
+		{"floating content exits", func(t *testing.T, b *Component) Window {
+			h := newTestHandler()
+			h.Exit = true
+			return b.Floating(h, browserapi.FloatingConfig{})
+		}},
+		{"tiled content exits", func(t *testing.T, b *Component) Window {
+			h := newTestHandler()
+			h.Exit = true
+			win, ok := b.Split(browserapi.OrientationLeft, b.Focus(), h)
+			require.True(t, ok)
+			return win
+		}},
+		{"prompt is dismissed", func(t *testing.T, b *Component) Window {
+			return b.Prompt("Proceed?", []string{"Yes", "No"}, nil, handler.NopPromptHandler())
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewComponent(DefaultConfig())
+			b.Resize(60, 20)
+			windows := len(b.windows)
+			ref := weak.Make(tt.open(t, b).(*browserWindow))
+			require.Equal(t, ref.Value(), b.Focus(), "the new window must take the focus")
+
+			b.Handle(esc)
+
+			assert.Len(t, b.windows, windows,
+				"a window the window manager closed must leave the browser's bookkeeping")
+			runtime.GC()
+			runtime.GC()
+			assert.Nil(t, ref.Value(), "a closed window must not stay reachable")
+			runtime.KeepAlive(b)
+		})
+	}
 }
 
 func TestBrowserScrollable(t *testing.T) {

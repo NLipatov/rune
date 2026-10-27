@@ -279,7 +279,8 @@ func (h *aiEditorHandler) openFileAttachment(path string) error {
 // openMarkdownPreview floats markdown content, such as a symbol's
 // definition, references and documentation, rendered by the markdown
 // handler to keep links, folds and code highlighting. onClose, if not nil,
-// is called with the returned window once it closes, however it is closed.
+// is called with the returned window once the preview is released, which
+// does not close the window: it may already show other content.
 func (h *aiEditorHandler) openMarkdownPreview(
 	content string, onClose func(browserapi.Window),
 ) (browserapi.Window, error) {
@@ -298,7 +299,7 @@ func (h *aiEditorHandler) openMarkdownPreview(
 		if onClose != nil {
 			onClose(win)
 		}
-		return h.wm.CloseWindow(win)
+		return mdh.Close()
 	})
 	floating := browserapi.FuncFloating(bhandler, func() (int, int) {
 		return floatingWidth, min(padded.Height(floatingWidth), floatingHeight)

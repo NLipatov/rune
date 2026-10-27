@@ -81,7 +81,7 @@ func TestPickerViewTickInterrupts(t *testing.T) {
 // list, returning the channel its pick or cancel is reported on.
 func newTestPickerView(t *testing.T) (*pickerView, chan int) {
 	t.Helper()
-	cmd, wm, _, _, _ := newTestPickCmd(nil)
+	cmd, _, _, _, _ := newTestPickCmd(nil)
 	entries := []pickEntry{
 		pickEntryAt("main.rs", 1),
 		pickEntryAt("lib.rs", 7),
@@ -92,7 +92,7 @@ func newTestPickerView(t *testing.T) (*pickerView, chan int) {
 	ch := make(chan int, 1)
 	view := &pickerView{ch: ch, interrupt: term.NopInterrupter()}
 	view.Picker = locationpicker.New(
-		cmd.pickerEntries(newTestURI(t), entries), wm, cmd.fs, view.tick, nil,
+		cmd.pickerEntries(newTestURI(t), entries), cmd.fs, view.tick, nil,
 		locationpicker.DefaultConfig(), nil)
 	view.SetOnSelect(func(idx int) { ch <- idx })
 	return view, ch

@@ -2353,6 +2353,70 @@ func TestWindowBarCloseClick(t *testing.T) {
 	})
 }
 
+func TestWindowCloseNotifiesOwner(t *testing.T) {
+	key := term.Event{Type: term.EventKey, Key: term.KeyEnter}
+	tests := []struct {
+		name string
+		// close returns the window it closed, or the zero Window when the
+		// close must fail.
+		close func(t *testing.T, wm *WindowManager) Window
+	}{
+		{"floating content exits", func(t *testing.T, wm *WindowManager) Window {
+			win := wm.FloatingWindow(handler.StaticFloating(&handler.TestHandler{Exit: true}, 6, 3),
+				component.FloatingConfig{})
+			wm.SetFocus(win)
+			wm.Handle(key)
+			return win
+		}},
+		{"tiled content exits", func(t *testing.T, wm *WindowManager) Window {
+			win, ok := wm.SplitVertical(wm.Focus(), &handler.TestHandler{Exit: true})
+			require.True(t, ok)
+			wm.SetFocus(win)
+			wm.Handle(key)
+			return win
+		}},
+		{"bar close falls back to the manager", func(t *testing.T, wm *WindowManager) Window {
+			win := wm.FloatingWindow(handler.StaticFloating(handler.NewTestHandler(), 6, 3),
+				component.FloatingConfig{})
+			wm.SetFocus(win)
+			require.Equal(t, term.Coordinates{}, win.Position())
+			wm.Handle(mouseEv(term.MouseLeft, component.WindowBarCloseIconX, 0))
+			return win
+		}},
+		{"explicit close", func(t *testing.T, wm *WindowManager) Window {
+			win, ok := wm.SplitVertical(wm.Focus(), handler.NewTestHandler())
+			require.True(t, ok)
+			require.NoError(t, win.Close())
+			return win
+		}},
+		{"closing the last tile fails", func(t *testing.T, wm *WindowManager) Window {
+			require.Error(t, wm.Focus().Close())
+			return Window{}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &windowCloseRecorder{}
+			cfg := DefaultWindowManagerConfig()
+			cfg.FloatingBar = &testFloatingBar{}
+			cfg.WindowClose = rec
+			wm := NewWindowManager(handler.NewTestHandler(), cfg)
+			wm.Resize(30, 12)
+
+			win := tt.close(t, wm)
+
+			if win == (Window{}) {
+				assert.Empty(t, *rec, "a failed close must not notify")
+				return
+			}
+			require.True(t, win.Closed())
+			require.Len(t, *rec, 1)
+			assert.Equal(t, win.ID(), (*rec)[0].ID())
+			assert.True(t, (*rec)[0].Closed(), "the window must be out of the layout")
+		})
+	}
+}
+
 func TestWindowBarMoveDrag(t *testing.T) {
 	wm, root, float, _, floatWin := prepareWindowBarTest(t)
 	var contentEvents, rootEvents int
@@ -3541,4 +3605,10 @@ func TestWindowManagerPointerLeavesBattery(t *testing.T) {
 			handlertest.RunPointerLeaves(t, wm, size[0], size[1])
 		}
 	}
+}
+
+type windowCloseRecorder []Window
+
+func (r *windowCloseRecorder) OnWindowClose(win Window) {
+	*r = append(*r, win)
 }

@@ -1768,13 +1768,8 @@ func (h *aiEditorHandler) handleQuery(cmd textapi.Command) error {
 			h.queryAgent, spawner, childEvents, h.skillRegistry, queryID, syncComp, nil, h.dialogueStore)
 	})
 
-	var err error
-	var win browserapi.Window
 	bhandler := browserapi.FuncHandler(handler, func() error {
 		cancel()
-		if win != nil {
-			return h.wm.CloseWindow(win)
-		}
 		return nil
 	})
 	floating := browserapi.FuncFloating(bhandler, func() (int, int) {
@@ -1786,8 +1781,7 @@ func (h *aiEditorHandler) handleQuery(cmd textapi.Command) error {
 	floatingConfig := browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	}
-	win, err = h.wm.Floating(floating, floatingConfig)
-	if err != nil {
+	if _, err := h.wm.Floating(floating, floatingConfig); err != nil {
 		return fmt.Errorf("floating window: %v", err)
 	}
 	return nil

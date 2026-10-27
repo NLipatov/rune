@@ -140,6 +140,22 @@ func TestToolCallPreviewerOpensOneWindowPerToolCall(t *testing.T) {
 	assert.Equal(t, []uint64{4, 5}, wm.openIDs())
 }
 
+func TestMarkdownPreviewCloseLeavesItsWindow(t *testing.T) {
+	wm := &previewWindowManager{open: make(map[uint64]browserapi.Floating)}
+	h := &aiEditorHandler{wm: wm, n: stubNotifications{}}
+	var closed browserapi.Window
+	win, err := h.openMarkdownPreview("hello", func(w browserapi.Window) { closed = w })
+	require.NoError(t, err)
+	preview := wm.open[win.WindowID()]
+	require.NotNil(t, preview)
+
+	require.NoError(t, preview.Close())
+
+	assert.Equal(t, win, closed, "the owner still learns of the close")
+	assert.Equal(t, []uint64{win.WindowID()}, wm.openIDs(),
+		"the window may already show other content when the preview is released")
+}
+
 func TestToolCallPreviewMarkdown(t *testing.T) {
 	block := func(language, text string) string {
 		return "````" + language + "\n" + text + "\n````\n\n"

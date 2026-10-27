@@ -41,6 +41,18 @@ type WindowManagerConfig struct {
 	// FloatingBar receives the interactions produced by floating
 	// window bars. It may be nil.
 	FloatingBar FloatingBarHandler
+	// WindowClose is notified of every window that leaves the layout,
+	// including those the window manager closes itself when their
+	// content exits. It may be nil.
+	WindowClose WindowCloseHandler
+}
+
+// WindowCloseHandler lets the owner of a WindowManager's content drop
+// what it keeps for a window, whoever closed the window.
+type WindowCloseHandler interface {
+	// OnWindowClose is invoked once win has left the layout. The window
+	// manager never closes win's content.
+	OnWindowClose(win Window)
 }
 
 // FloatingBarHandler groups the interactions produced by a floating

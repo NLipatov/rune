@@ -106,8 +106,6 @@ type Handler struct {
 	// horizontal margin, and so the rightmost cell of the search
 	// bar row is free for the scan-progress animation.
 	innerSpan *sdkhandler.Span
-	wm        browserapi.WindowManager
-	win       browserapi.Window
 	fs        workspaceapi.FileSystem
 	parser    syntaxapi.Parser
 	schedule  func(func()) bool
@@ -171,7 +169,6 @@ func New(
 	}
 
 	h := &Handler{
-		wm:       clients.WindowManager,
 		fs:       clients.FileSystem,
 		parser:   parser,
 		schedule: scheduleNextTick,
@@ -207,10 +204,6 @@ func New(
 	h.startScanSpinner(clients.Interrupter)
 	return h, nil
 }
-
-// SetWindow records the floating window handle that hosts this
-// handler. If set, Close uses it to dismiss the floating window.
-func (h *Handler) SetWindow(win browserapi.Window) { h.win = win }
 
 // Resize positions the preview pane and forwards the residual list
 // area to the inner fuzzy-search handler.
@@ -275,17 +268,11 @@ func (h *Handler) Cursor() (term.Coordinates, term.CursorStyle, bool) {
 // Selection returns the currently focused list entry.
 func (h *Handler) Selection() (string, bool) { return h.innerSpan.Selection() }
 
-// Close releases the inner finder and closes the floating window if
-// one was registered via SetWindow.
+// Close releases the inner finder. The window is left to its owner,
+// since it may already show other content.
 func (h *Handler) Close() error {
 	h.stopScanSpinner()
-	err := h.inner.Close()
-	if h.win != nil && h.wm != nil {
-		if cerr := h.wm.CloseWindow(h.win); cerr != nil && err == nil {
-			err = cerr
-		}
-	}
-	return err
+	return h.inner.Close()
 }
 
 // Dimensions returns the preferred floating-window size.

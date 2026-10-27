@@ -358,10 +358,7 @@ func (m *Manager) StopTask(name string) (err error) {
 	t := info.(*Task)
 	t.doClose()
 	<-info.(*Task).doneWaitCh
-	if t.tab != nil {
-		err = t.b.RemoveTab(t.tab)
-	}
-	return err
+	return t.closeView()
 }
 
 // ReplaceTask updates an existing task's command, args, and filter in
@@ -428,10 +425,8 @@ func (m *Manager) Close() error {
 		t := v.(*Task)
 		t.doClose()
 		<-t.doneWaitCh
-		if t.tab != nil {
-			if err := t.b.RemoveTab(t.tab); err != nil {
-				ret = multierror.Append(ret, err)
-			}
+		if err := t.closeView(); err != nil {
+			ret = multierror.Append(ret, err)
 		}
 		return true
 	})

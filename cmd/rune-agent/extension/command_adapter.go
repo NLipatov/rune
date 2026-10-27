@@ -672,10 +672,7 @@ func (a *commandAdapter) openReview(
 			fmt.Errorf("open review editor: %w", err)
 	}
 
-	var (
-		win  browserapi.Window
-		once sync.Once
-	)
+	var once sync.Once
 	bhandler := browserapi.FuncHandler(
 		a.reviewChangesKeyHandler(edh),
 		func() (err error) {
@@ -688,13 +685,13 @@ func (a *commandAdapter) openReview(
 						Content: edited,
 					})
 				}
-				err = errors.Join(edh.Close(), a.wm.CloseWindow(win))
+				err = edh.Close()
 			})
 			return err
 		})
 	floating := browserapi.FuncFloating(bhandler, edh.Dimensions)
 
-	win, err = a.wm.Floating(floating, browserapi.FloatingConfig{
+	_, err = a.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {
@@ -765,16 +762,11 @@ func (a *commandAdapter) openCommandFloating(items []component.Responsive) {
 		return
 	})
 
-	var win browserapi.Window
-	bhandler := browserapi.FuncHandler(scrollHandler, func() error {
-		return a.wm.CloseWindow(win)
-	})
-	floating := browserapi.FuncFloating(bhandler, func() (int, int) {
+	floating := browserapi.FuncFloating(browserapi.NopHandler(scrollHandler), func() (int, int) {
 		h := list.Height(floatingWidth)
 		return floatingWidth, min(h, floatingHeight)
 	})
-	var err error
-	win, err = a.wm.Floating(floating, browserapi.FloatingConfig{
+	_, err := a.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {
@@ -784,14 +776,8 @@ func (a *commandAdapter) openCommandFloating(items []component.Responsive) {
 
 func (a *commandAdapter) openMarkdownFloating(md *markdown.Component) {
 	mdh := mdhandler.New(md)
-
-	var win browserapi.Window
-	bhandler := browserapi.FuncHandler(mdh, func() error {
-		return a.wm.CloseWindow(win)
-	})
-	floating := browserapi.FuncFloating(bhandler, mdh.Dimensions)
-	var err error
-	win, err = a.wm.Floating(floating, browserapi.FloatingConfig{
+	floating := browserapi.FuncFloating(browserapi.FuncHandler(mdh, mdh.Close), mdh.Dimensions)
+	_, err := a.wm.Floating(floating, browserapi.FloatingConfig{
 		Alignment: component.AlignmentCentered,
 	})
 	if err != nil {

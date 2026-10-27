@@ -37,7 +37,7 @@ import (
 
 func TestHoverFloatingHandle(t *testing.T) {
 	t.Parallel()
-	f := newHoverFloating(component.NewString("test content"), &mockWindowManager{})
+	f := newHoverFloating(component.NewString("test content"))
 
 	exit, handled := f.Handle(term.Event{Type: term.EventKey})
 	assert.True(t, exit, "key event should exit")
@@ -119,6 +119,39 @@ func TestHoverHandlerSymbolName(t *testing.T) {
 	assert.Equal(t, semanticapi.Position{Line: 7, Character: 11}, hoveredPos)
 }
 
+func TestHoverCloseLeavesItsWindow(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []semanticapi.MarkupKind{
+		semanticapi.MarkupKindPlainText, semanticapi.MarkupKindMarkdown,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			lsp := &hoverMockLSP{mockLSP: &mockLSP{}, hoverFn: func(
+				context.Context, semanticapi.HoverParams,
+			) (*semanticapi.Hover, error) {
+				return &semanticapi.Hover{Contents: semanticapi.MarkupContent{
+					Kind: kind, Value: "type MyType struct{}",
+				}}, nil
+			}}
+			var floated browserapi.Floating
+			wm := &mockWindowManager{
+				floatingFn: func(f browserapi.Floating, _ browserapi.FloatingConfig) (browserapi.Window, error) {
+					floated = f
+					return &mockWindow{id: 1}, nil
+				},
+			}
+			h := HoverHandler(lsp, wm, &mockNotifications{}, &mockFileSystem{},
+				workspaceapi.URI{}, syncTick, &mockParser{}, DefaultHoverConfig()).(*hoverHandler)
+			require.NoError(t, h.execute(context.Background(), testURI(t, "file:///a.go"), semanticapi.Position{}))
+			require.NotNil(t, floated)
+
+			require.NoError(t, floated.Close())
+
+			assert.Zero(t, wm.closeWindowCalls,
+				"the window may already show other content when the hover is released")
+		})
+	}
+}
+
 // hoverMockLSP wraps mockLSP and overrides Hover.
 type hoverMockLSP struct {
 	*mockLSP
@@ -136,7 +169,7 @@ func TestHoverFloatingPointerLeaves(t *testing.T) {
 	t.Parallel()
 	long := strings.Repeat("func (c *Client) Do(req *Request) (*Response, error) — sends an HTTP request. ", 20)
 	for _, size := range []struct{ w, h int }{{60, 15}, {1, 1}} {
-		f := newHoverFloating(component.NewString(long), &mockWindowManager{})
+		f := newHoverFloating(component.NewString(long))
 		runehandlertest.RunPointerLeaves(t, f, size.w, size.h)
 	}
 }

@@ -130,6 +130,8 @@ func (h *searchSequenceHarness) Handle(ev term.Event) (bool, bool) {
 	f := h.floating
 	exit, handled := f.Handle(ev)
 	if exit {
+		// Like a window manager, drop the window whose content exited.
+		h.floating = nil
 		h.closeErr = errors.Join(h.closeErr, f.Close())
 	}
 	return false, handled
