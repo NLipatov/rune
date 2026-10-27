@@ -18,6 +18,7 @@ package texttest
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -740,6 +741,34 @@ func BenchmarkAuxBarAbsoluteMoveCursorLarge(b *testing.B) {
 
 func BenchmarkAuxBarRelativeMoveCursorSmall(b *testing.B) {
 	benchmarkAuxBar(b, 10, 10, false, true)
+}
+
+// Adding or removing a line rebuilds every absolute line number, so the cost of
+// an edit must grow linearly with the file's rows.
+func BenchmarkAuxBarAbsoluteRebuildOnNewLine(b *testing.B) {
+	for _, rows := range []int{1_000, 2_000, 4_000, 8_000, 16_000} {
+		b.Run(fmt.Sprintf("rows=%d", rows), func(b *testing.B) {
+			buf := cell.NewBuffer()
+			buf.WriteString(strings.Repeat("line\n", rows))
+			scroll := component.NewScroll(buf)
+			bar := text.WithAuxBar(newTestHandler(scroll), buf, scroll, text.AuxBarConfig{
+				LinesEnabled:     true,
+				AbsoluteLines:    true,
+				ScheduleNextTick: func(fn func()) bool { fn(); return true },
+			})
+			bar.Resize(80, 50)
+
+			newLine := false
+			for b.Loop() {
+				if newLine {
+					buf.Edit(context.Background(), term.Coordinates{}, term.Coordinates{Y: 1}, "")
+				} else {
+					buf.InsertString(term.Coordinates{}, "\n")
+				}
+				newLine = !newLine
+			}
+		})
+	}
 }
 
 func BenchmarkAuxBarRelativeMoveCursorMedium(b *testing.B) {
