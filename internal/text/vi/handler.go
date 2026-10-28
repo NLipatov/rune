@@ -913,12 +913,7 @@ func (vi *viHandlerImpl) handleNormal(ev term.Event) (quit, handled bool) {
 			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
 				break
 			}
-			for range max(1, scroll.SizeHeight()-pagePadding) {
-				if !scroll.SeekDown() {
-					break
-				}
-				handled = true
-			}
+			handled = scroll.SeekRows(max(1, scroll.SizeHeight()-pagePadding))
 			if handled {
 				vi.cursor.MoveToWindowTop()
 			} else {
@@ -929,12 +924,7 @@ func (vi *viHandlerImpl) handleNormal(ev term.Event) (quit, handled bool) {
 			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
 				break
 			}
-			for range max(1, scroll.SizeHeight()-pagePadding) {
-				if !scroll.SeekUp() {
-					break
-				}
-				handled = true
-			}
+			handled = scroll.SeekRows(-max(1, scroll.SizeHeight()-pagePadding))
 			if handled {
 				vi.cursor.MoveToWindowBottom()
 			} else {

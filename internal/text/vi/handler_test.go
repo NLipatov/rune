@@ -12785,6 +12785,7 @@ func TestNormalPageScrollsViewport(t *testing.T) {
 		key        rune
 		wrap       bool
 		fold       bool
+		invert     bool
 		wantOffset int
 		wantCursor term.Coordinates
 	}{
@@ -12816,12 +12817,21 @@ func TestNormalPageScrollsViewport(t *testing.T) {
 			wantOffset: 4, wantCursor: term.Coordinates{Y: 12}},
 		{name: "backward folded lines", width: 80, height: 6, offset: 4, key: 'b', fold: true,
 			wantOffset: 0, wantCursor: term.Coordinates{Y: 13}},
+		{name: "forward inverted offset", width: 80, height: 46, offset: 54, key: 'f', invert: true,
+			wantOffset: 10, wantCursor: term.Coordinates{Y: 44}},
+		{name: "backward inverted offset", width: 80, height: 46, offset: 10, key: 'b', invert: true,
+			wantOffset: 54, wantCursor: term.Coordinates{Y: 45}},
+		{name: "forward inverted near end", width: 80, height: 46, offset: 10, key: 'f', invert: true,
+			wantOffset: 0, wantCursor: term.Coordinates{Y: 54}},
+		{name: "backward inverted near start", width: 80, height: 46, offset: 44, key: 'b', invert: true,
+			wantOffset: 54, wantCursor: term.Coordinates{Y: 45}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, row := range []int{0, tc.height / 2, max(0, tc.height-2), tc.height - 1} {
 				t.Run(fmt.Sprintf("cursor row %d", row+1), func(t *testing.T) {
 					vi := setupVi(t, content, 2, WithWrap(tc.wrap))
 					vi.Resize(tc.width, tc.height)
+					vi.less.Scroll().InvertOffset = tc.invert
 					if tc.fold {
 						require.True(t, vi.less.Scroll().MarkHidden(1, 9))
 					}
@@ -12831,6 +12841,10 @@ func TestNormalPageScrollsViewport(t *testing.T) {
 					require.Equal(t, tc.offset, vi.less.Scroll().SeekOffset())
 					require.Equal(t, row, vi.cursor.Coordinates().Y)
 
+					var seeks [][2]term.Coordinates
+					vi.less.Scroll().Subscribe(component.FuncScrollSubscriber(func(from, to term.Coordinates) {
+						seeks = append(seeks, [2]term.Coordinates{from, to})
+					}))
 					before := vi.cursorAtScroll()
 					_, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: tc.key})
 					if tc.offset != tc.wantOffset || before != tc.wantCursor {
@@ -12838,6 +12852,11 @@ func TestNormalPageScrollsViewport(t *testing.T) {
 					}
 					assert.Equal(t, tc.wantOffset, vi.less.Scroll().SeekOffset())
 					assert.Equal(t, tc.wantCursor, vi.cursorAtScroll())
+					if tc.offset == tc.wantOffset {
+						assert.Empty(t, seeks)
+					} else {
+						assert.Equal(t, [][2]term.Coordinates{{{Y: tc.offset}, {Y: tc.wantOffset}}}, seeks)
+					}
 				})
 			}
 		})
