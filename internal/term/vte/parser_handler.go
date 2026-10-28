@@ -819,14 +819,12 @@ func (t *parserHandler) Bell() {
 	}
 	t.sync.mu.Unlock()
 
-	// bell is caller-supplied (Config.scheduleBell in production,
-	// which forwards to ScheduleNextTick) and must run without
-	// holding the lock: callers commonly implement ScheduleNextTick
-	// as a synchronous call under their own lock to model a
-	// single-threaded event loop, and calling back into that lock
-	// while still holding t.sync.mu would invert lock order against
-	// any other parserHandler method invoked while the caller's lock
-	// is held (e.g. Draw/SetTitle).
+	// bell is caller-supplied and must run without holding the lock:
+	// a sound player may synchronize on the caller's own lock (tests
+	// commonly do, to model a single-threaded event loop), and calling
+	// back into that lock while still holding t.sync.mu would invert
+	// lock order against any other parserHandler method invoked while
+	// the caller's lock is held (e.g. Draw/SetTitle).
 	t.bell()
 }
 

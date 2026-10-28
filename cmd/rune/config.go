@@ -222,6 +222,26 @@ func getGUIColorThemes(browser browser.Browser, cfg config.Config) (
 	return
 }
 
+// getGUISoundVolume reads 'gui.sound_volume', from 0 (mute) to 1.
+func getGUISoundVolume(browser browser.Browser, cfg config.Config) (ret float64) {
+	ret = 1
+	volume, err := cfg.GetFloat("sound_volume")
+	if err != nil {
+		if err != config.ErrNotFound {
+			_, _ = browser.Notify(browserapi.LevelError,
+				"Could not load 'gui.sound_volume' from config: %v", err)
+		}
+		return
+	}
+	if volume < 0 || volume > 1 {
+		_, _ = browser.Notify(browserapi.LevelWarn,
+			"'gui.sound_volume' must be between 0 and 1, got %v", volume)
+		volume = max(0, min(volume, 1))
+	}
+	ret = volume
+	return
+}
+
 func getGUILigatures(browser browser.Browser, cfg config.Config) (ret bool) {
 	ret = false
 	ligatures, err := cfg.GetBool("ligatures")

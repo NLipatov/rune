@@ -25,6 +25,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/llm"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/text"
 )
 
@@ -62,7 +63,65 @@ func validateConfigOn(cfg map[string]any, goos string) (err error) {
 	if err = validateNotice(cfg); err != nil {
 		return
 	}
-	return
+	return validateSounds(cfg)
+}
+
+// validateSounds drops invalid `sounds` entries and resets a
+// terminal.bell that names no known sound to the default, so a typo
+// costs one sound rather than the whole config.
+func validateSounds(cfg map[string]any) error {
+	var errs []error
+	entries := make(map[string]string)
+	if raw, ok := cfg[keySounds]; ok {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			errs = append(errs, fmt.Errorf("'%s' must map sound names to "+
+				"file paths or other sound names", keySounds))
+			m = map[string]any{}
+		}
+		for name, v := range m {
+			value, ok := v.(string)
+			if !ok {
+				errs = append(errs, fmt.Errorf("'%s.%s' must be a file path, "+
+					"a sound name or \"\", got %T", keySounds, name, v))
+				continue
+			}
+			entries[name] = value
+		}
+		valid, err := sounds.Validate(entries)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("'%s' is invalid: %w", keySounds, err))
+		}
+		kept := make(map[string]any, len(valid))
+		for name, value := range valid {
+			kept[name] = value
+		}
+		cfg[keySounds] = kept
+		entries = valid
+	}
+
+	terminal, ok := cfg[keyTerminal].(map[string]any)
+	if !ok {
+		return errors.Join(errs...)
+	}
+	raw, ok := terminal[keyTerminalBell]
+	if !ok {
+		return errors.Join(errs...)
+	}
+	bell, ok := raw.(string)
+	_, configured := entries[bell]
+	switch {
+	case !ok:
+		errs = append(errs, fmt.Errorf("'%s.%s' must be a sound name or \"\", got %T",
+			keyTerminal, keyTerminalBell, raw))
+	case bell != "" && !configured && !sounds.IsReserved(bell):
+		errs = append(errs, fmt.Errorf("'%s.%s' names unknown sound %q",
+			keyTerminal, keyTerminalBell, bell))
+	default:
+		return errors.Join(errs...)
+	}
+	terminal[keyTerminalBell] = sounds.Warning
+	return errors.Join(errs...)
 }
 
 func validateAliases(c *ideConfig, cfg map[string]any) (err error) {

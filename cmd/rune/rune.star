@@ -393,6 +393,9 @@ config = {
         "window_blur_radius":   100,
         # Enable or disable font ligatures for sequences like => and ->.
         "ligatures":            False,
+        # Volume of the GUI's sounds, from 0 (mute) to 1. The guivolume
+        # command changes it for the current session.
+        "sound_volume":         1,
         # Themes available to `default_theme` and the `guitheme` command.
         "themes":               GUI_THEMES,
         # Remap physical keys before they reach the editor (GUI only). Both
@@ -773,6 +776,17 @@ config = {
     # list of `step(...)` entries. Empty by default — extensions and
     # user overlays add their own.
     "tutorials": {},
+    # Named sounds, referenced by name from other settings such as
+    # terminal.bell. Each entry maps a name to a WAV, MP3 or Ogg Vorbis
+    # file, to another sound's name, or to "" to silence it. The built-in
+    # "error", "warning", "info" and "success" sounds can be overridden the
+    # same way. Paths may reference environment variables. Run
+    # `guisound <name>` to hear a sound.
+    "sounds": {
+    #     "ding":    "$HOME/sounds/ding.wav",
+    #     "warning": "ding",
+    #     "info":    "",
+    },
     # Configuration for the command prompt.
     "command": {
         # Key that opens the command prompt.
@@ -1036,6 +1050,10 @@ config = {
         "initial_reservoir":  0,
         "attr":               attr(fg = "default", bg = "default"),
         "selection_attr":     attr(flags = "reverse"),
+        # The sound a program ringing the bell plays: a name from `sounds`,
+        # or "" for none. With `rune --tui` any sound rings the host
+        # terminal's bell instead.
+        "bell":               "warning",
         # Tab attributes used when a bell arrives while the window is unfocused.
         "needs_attention_attr": attr(fg = "red", flags = "blink"),
         # What a program running in the terminal may do with the clipboard

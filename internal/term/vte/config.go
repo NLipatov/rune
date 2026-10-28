@@ -25,6 +25,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/handler/searchbox"
+	"unstable.build/rune/internal/sounds"
 )
 
 // DefaultConfig returns a sane default Config.
@@ -34,7 +35,8 @@ func DefaultConfig() Config {
 		ClipboardRegister:        clipboard.DefaultRegisterID,
 		ClipboardAccess:          ClipboardAccess{Write: true},
 		ScheduleNextTick:         func(cb func()) bool { cb(); return true },
-		RingBell:                 func() {},
+		Sounds:                   sounds.Silent,
+		BellSound:                sounds.Warning,
 		SelectionAttributes:      term.Attributes{Attrs: term.AttrReverse},
 		NeedsAttentionAttributes: term.Attributes{Attrs: term.AttrBlink},
 		DynamicTabName:           false,
@@ -61,10 +63,14 @@ type Config struct {
 	// Use the VTE's title as the tab name.
 	DynamicTabName bool
 
-	// RingBell writes to the raw pty directly, bypassing the event loop.
-	// This should only be used when called from the an event loop goroutine.
-	RingBell func()
-	Watcher  workspaceapi.ProcessWatcher
+	// Sounds plays BellSound when the program rings the bell and
+	// sounds.Error when a vi-mode edit is refused, possibly from the pty
+	// goroutine.
+	Sounds sounds.Player
+	// BellSound is the sound the program ringing the bell plays; "" plays
+	// none. The tab is marked as needing attention either way.
+	BellSound string
+	Watcher   workspaceapi.ProcessWatcher
 
 	Attributes               term.Attributes
 	SelectionAttributes      term.Attributes
@@ -162,8 +168,4 @@ type SearchConfig struct {
 // the event-loop goroutine so they may block.
 type CommandExpander interface {
 	ExpandCommand(ctx context.Context, line string) (string, error)
-}
-
-func (c Config) scheduleBell() {
-	c.ScheduleNextTick(c.RingBell)
 }

@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,16 +45,18 @@ const (
 	cmdSetOpacity        = "guiopacity"
 	cmdSetBackgroundBlur = "guibackgroundblur"
 	cmdSetTheme          = "guitheme"
+	cmdPlaySound         = "guisound"
+	cmdSetVolume         = "guivolume"
 )
 
 var fullscreen bool
 
 func subscribeCommands(
-	g *gui.GUI, c *apiclient.Client,
+	g *gui.GUI, soundOutput *gui.Sounds, c *apiclient.Client,
 	i *ide.IDE, transparentEnabled bool, configPath string,
 	launchCmd []string,
 ) (ret error) {
-	if err := subscribeGUICommands(g, i, transparentEnabled, launchCmd); err != nil {
+	if err := subscribeGUICommands(g, soundOutput, i, transparentEnabled, launchCmd); err != nil {
 		ret = multierror.Append(ret, err)
 	}
 	if err := subscribeOtherCommands(i, c, configPath); err != nil {
@@ -108,7 +111,7 @@ func subscribeOtherCommands(
 }
 
 func subscribeGUICommands(
-	g *gui.GUI, i *ide.IDE, transparentEnabled bool,
+	g *gui.GUI, soundOutput *gui.Sounds, i *ide.IDE, transparentEnabled bool,
 	launchCmd []string,
 ) (ret error) {
 	var commands = []struct {
@@ -322,6 +325,62 @@ func subscribeGUICommands(
 				themes := g.Themes()
 				sort.Strings(themes)
 				return iterator.FromSlice(themes), "", nil
+			},
+		},
+		{
+			cmd: textapi.CommandManual{
+				Name:     cmdPlaySound,
+				Synopsis: "<name>",
+				Summary: "Plays the named sound: one of the built-in sounds " +
+					"(error, warning, info, success) or a sound defined under " +
+					"`sounds` in your configuration.",
+			},
+			handleCommand: func(ctx context.Context, cmd textapi.Command) error {
+				if len(cmd.Args) != 1 {
+					return errors.New("expected exactly one argument with the sound name")
+				}
+				if !slices.Contains(i.SoundNames(), cmd.Args[0]) {
+					return fmt.Errorf("unknown sound '%s'", cmd.Args[0])
+				}
+				i.Sounds().Play(cmd.Args[0])
+				return nil
+			},
+			completer: func(ctx context.Context, cmd textapi.Command) (
+				iterator.Iterator[string], string, error,
+			) {
+				return iterator.FromSlice(i.SoundNames()), "", nil
+			},
+		},
+		{
+			cmd: textapi.CommandManual{
+				Name:     cmdSetVolume,
+				Synopsis: "increase|decrease|mute",
+				Summary: "Raises or lowers the sound volume by 10%, which also unmutes " +
+					"sounds, or toggles mute. To make the volume permanent, set " +
+					"`gui.sound_volume` in your configuration.",
+			},
+			handleCommand: func(ctx context.Context, cmd textapi.Command) error {
+				if len(cmd.Args) != 1 {
+					return errors.New("expected exactly one argument with " +
+						"'increase', 'decrease' or 'mute'")
+				}
+				switch cmd.Args[0] {
+				case "increase":
+					soundOutput.IncreaseVolume()
+				case "decrease":
+					soundOutput.DecreaseVolume()
+				case "mute":
+					soundOutput.SetMuted(!soundOutput.Muted())
+				default:
+					return errors.New("expected exactly one argument with " +
+						"'increase', 'decrease' or 'mute'")
+				}
+				return nil
+			},
+			completer: func(ctx context.Context, cmd textapi.Command) (
+				iterator.Iterator[string], string, error,
+			) {
+				return iterator.FromSlice([]string{"increase", "decrease", "mute"}), "", nil
 			},
 		},
 		{

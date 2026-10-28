@@ -72,6 +72,7 @@ import (
 	"unstable.build/rune/internal/ide/syntax"
 	"unstable.build/rune/internal/ide/vctrl"
 	"unstable.build/rune/internal/llm"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/text"
@@ -112,6 +113,10 @@ const (
 
 	keyGUI       = "gui"
 	keyQuickMenu = "quick_menu"
+
+	keySounds       = "sounds"
+	keyTerminal     = "terminal"
+	keyTerminalBell = "bell"
 
 	// maxQuickMenuButtons caps the reserved column so a runaway config
 	// cannot produce more buttons than the window can display.
@@ -276,10 +281,12 @@ type ideConfig struct {
 	// wallpaper. Nil when the IDE was given none.
 	logo *Logo
 
-	configPath       string
-	cfg              map[string]any
-	errors           map[string]error
-	ringBell         func()
+	configPath string
+	cfg        map[string]any
+	errors     map[string]error
+	// sounds plays the IDE's sounds by name. The IDE resolves the names
+	// from the user config only, so a workspace config cannot add sounds.
+	sounds           sounds.Player
 	scheduleNextTick func(func()) bool
 	cellPixelSize    func() (int, int)
 	clip             clipboard.Register
@@ -320,12 +327,12 @@ func overrideConfig(ideConfig, cfg map[string]any) {
 
 func initConfig(
 	c *ideConfig, cfg map[string]any, logo *Logo,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	c.cfg = cfg
 	c.configPath = configPath
-	c.ringBell = ringBell
+	c.sounds = player
 	c.scheduleNextTick = scheduleNextTick
 	c.logo = logo
 	c.errors = make(map[string]error)
@@ -333,11 +340,11 @@ func initConfig(
 
 func initDefaultConfig(
 	c *ideConfig, logo *Logo,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	cfg := make(map[string]any)
-	initConfig(c, cfg, logo, ringBell,
+	initConfig(c, cfg, logo, player,
 		scheduleNextTick, configPath)
 }
 
@@ -4798,6 +4805,56 @@ func (c ideConfig) terminalBellTrigger() (ret []byte) {
 	return
 }
 
+// terminalBellSound reads terminal.bell, the name of the sound a
+// program ringing the bell plays; "" plays none.
+func (c ideConfig) terminalBellSound() string {
+	ret := vte.DefaultConfig().BellSound
+	cfg, ok := c.terminal()
+	if !ok {
+		return ret
+	}
+	bell, err := cfg.GetString("bell")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors["terminal.bell"] = err
+		}
+		return ret
+	}
+	return bell
+}
+
+// soundEntries reads the top-level `sounds` map. In file paths,
+// /Users/ernestrc/.rune names dataDir, other variables come from the process
+// environment, and a file:// URI is reduced to its path.
+func (c ideConfig) soundEntries(dataDir string) map[string]string {
+	raw, ok := c.cfg[keySounds].(map[string]any)
+	if !ok {
+		return nil
+	}
+	ret := make(map[string]string, len(raw))
+	for name, v := range raw {
+		value, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(value, "/") {
+			value = os.ExpandEnv(hostenv.ExpandDataDir(value, dataDir))
+			if u, err := url.Parse(value); err == nil && u.Scheme == "file" {
+				value = u.Path
+			}
+		}
+		ret[name] = value
+	}
+	return ret
+}
+
+// applySounds replaces the entries of r with this config's sounds.
+func (c ideConfig) applySounds(r *sounds.Registry, dataDir string) {
+	if err := r.Set(c.soundEntries(dataDir)); err != nil {
+		c.errors[keySounds] = err
+	}
+}
+
 func (c ideConfig) initialTerminalCapacity() (ret int) {
 	ret = 1
 	cfg, ok := c.terminal()
@@ -4919,7 +4976,8 @@ func (c ideConfig) terminalConfig() vte.Config {
 	ret.Clipboard = c.clipboard()
 	ret.ClipboardAccess = c.terminalClipboardAccess()
 	ret.ScheduleNextTick = c.scheduleNextTick
-	ret.RingBell = c.ringBell
+	ret.Sounds = c.sounds
+	ret.BellSound = c.terminalBellSound()
 	ret.CellPixelSize = c.cellPixelSize
 	ret.MinWidth = defaultMinWidth
 	ret.Search = c.terminalSearchConfig()
@@ -5538,10 +5596,10 @@ func decodeOverlayConfigFile(
 func reloadConfig(
 	configFilePath string, logo *Logo,
 	defaultConfig DefaultConfig,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 ) (ret ideConfig, err error) {
 	err = loadConfig(&ret, configFilePath,
-		logo, defaultConfig, ringBell,
+		logo, defaultConfig, player,
 		scheduleNextTick)
 	return
 }
@@ -5610,9 +5668,9 @@ func loadConfig(
 	c *ideConfig, configPath string,
 	logo *Logo,
 	defaultConfig DefaultConfig,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 ) (err error) {
-	initDefaultConfig(c, logo, ringBell, scheduleNextTick,
+	initDefaultConfig(c, logo, player, scheduleNextTick,
 		configPath)
 
 	cfg, err := decodeDefaultConfig(defaultConfig)
@@ -5620,7 +5678,7 @@ func loadConfig(
 		panic(err)
 	}
 
-	initConfig(c, cfg, logo, ringBell,
+	initConfig(c, cfg, logo, player,
 		scheduleNextTick, configPath)
 
 	if err := loadFileConfig(c, configPath); err != nil {

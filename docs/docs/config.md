@@ -87,6 +87,7 @@ surface:
 - `command.*`: prompt key, aliases, key bindings, history key, overlay
 - `syntax.*`, icons, frame and tab attributes, wallpaper
 - `terminal.*`, including the plugin bar and `terminal.clipboard`
+- `sounds`
 - `extensions`: every extension process is stopped and started again
 - `debugger.*` adapters and language-server settings
 - `workspace.symbol_db` and extension auto-authorize settings
@@ -101,7 +102,7 @@ Everything that belongs to the process or to the GUI window is built once at
 startup and needs a restart:
 
 - all `gui.*` settings: fonts, themes, ligatures, opacity, blur,
-  scroll multiplier, key mapping, quick menu, `gui.env`. Themes and
+  scroll multiplier, sound volume, key mapping, quick menu, `gui.env`. Themes and
   `gui.env` variables added by a package install are available right away
   (see below).
 - `log.output_path` and `log.level`
@@ -110,9 +111,9 @@ startup and needs a restart:
 - the configuration of the home screen shown when no workspace is open
 
 Some `gui.*` values can be changed for the current session with commands such
-as `guitheme`, `guifont`, `guifontsize` and `guiopacity`. Those changes are
-transient: write the corresponding key to your config file to make them
-permanent.
+as `guitheme`, `guifont`, `guifontsize`, `guiopacity` and `guivolume`. Those
+changes are transient: write the corresponding key to your config file to make
+them permanent.
 
 You do not have to quit to try a `gui.*` change, though: `guiwindownew` spawns
 a second Rune process in its own OS window, and that process reads the config
@@ -122,9 +123,9 @@ fonts, themes and window settings. Everything else in the restart list is
 per-process too, so the new window picks those up as well.
 
 Installing a package is the one case where config is applied without a reload:
-`gui.env` variables, `gui.themes`, newly added extensions and newly added
-tutorials take effect live. When the install finishes, the notification lists
-which keys are in effect now and which need a restart.
+`gui.env` variables, `gui.themes`, `sounds`, newly added extensions and newly
+added tutorials take effect live. When the install finishes, the notification
+lists which keys are in effect now and which need a restart.
 
 ## Editor Modes
 
@@ -353,6 +354,18 @@ available:
 
 - `gui.default_theme` / `gui.themes`: the active color theme and the catalog
   of available themes. See [Themes](./learn/themes.md).
+- `gui.sound_volume`: the volume of the GUI's [sounds](./learn/sounds.md),
+  from `0` (mute) to `1` (the default). Values outside that range are clamped.
+
+  ```yaml tab
+  gui:
+    sound_volume: 0.5
+  ```
+
+  ```python tab
+  config["gui"]["sound_volume"] = 0.5
+  ```
+
 - `gui.key_mapping`: remap physical keys before they reach the editor (GUI
   only). Both sides use the [key combination syntax](./learn/key-syntax.md).
   This is the reliable way to make CapsLock act as Escape, and the only way to

@@ -35,6 +35,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/component"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vtescreen"
 	"unstable.build/rune/internal/term/vte/vtetest"
@@ -1064,10 +1065,10 @@ func TestViEditUnit(t *testing.T) {
 		comp := newTestParentComponent("$ stale ", term.Coordinates{X: 2})
 		var vi viHandler
 		cfg := DefaultConfig()
-		var actualBellsRung int
-		cfg.RingBell = func() {
-			actualBellsRung++
-		}
+		var played []string
+		cfg.Sounds = sounds.PlayerFunc(func(name string) {
+			played = append(played, name)
+		})
 		vi.doInit(comp, cfg)
 		vi.remote = newTestRemote(comp.scroll, 18, comp.cursor)
 		vi.Resize(18, 18)
@@ -1088,7 +1089,7 @@ func TestViEditUnit(t *testing.T) {
 		assert.Equal(t, term.Coordinates{X: 11}, from)
 		assert.Equal(t, term.Coordinates{X: 12}, to)
 		assert.Equal(t, "", old)
-		assert.Equal(t, 0, actualBellsRung)
+		assert.Empty(t, played)
 	})
 
 	// Pins the invariant that bulk-replacing a cell.Buffer's contents
@@ -1204,21 +1205,21 @@ func TestViEditUnit(t *testing.T) {
 		end         term.Coordinates
 		str         string
 
-		expectedRingBell bool
-		expectedContent  string
-		expectedFrom     term.Coordinates
-		expectedTo       term.Coordinates
-		expectedOld      string
+		expectedError   bool
+		expectedContent string
+		expectedFrom    term.Coordinates
+		expectedTo      term.Coordinates
+		expectedOld     string
 	}{
 		{
-			description:      "(invalid) zero Edit",
-			initialContent:   "",
-			promptStart:      term.Coordinates{},
-			start:            term.Coordinates{},
-			end:              term.Coordinates{},
-			str:              "",
-			expectedRingBell: true,
-			expectedContent:  "",
+			description:     "(invalid) zero Edit",
+			initialContent:  "",
+			promptStart:     term.Coordinates{},
+			start:           term.Coordinates{},
+			end:             term.Coordinates{},
+			str:             "",
+			expectedError:   true,
+			expectedContent: "",
 		},
 		{
 			description: "insert within last prompt line, exactly after prompt",
@@ -1226,14 +1227,14 @@ func TestViEditUnit(t *testing.T) {
 ~/src/blue master
 $ 
 `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 2},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "echo",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 2},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "echo",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ echo
@@ -1245,14 +1246,14 @@ $ echo
 ~/src/blue master
 $ 
 `,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 2},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "$ echo",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 2},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "$ echo",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ echo
@@ -1264,14 +1265,14 @@ $ echo
 ~/src/blue master
 $ echo
 `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 7},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "echo",
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 7},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "echo",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1283,14 +1284,14 @@ $
 ~/src/blue master
 $ echo
 `,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 2, X: 7},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "echo",
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 2, X: 7},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "echo",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1301,14 +1302,14 @@ $
 			initialContent: `
 ~/src/blue master
 $ echo`,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 3},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "echo",
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 3},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "echo",
 			expectedContent: `
 ~/src/blue master
 $ `,
@@ -1319,14 +1320,14 @@ $ `,
 ~/src/blue master
 $ echo
 `,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 3},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 6},
-			expectedOld:      "echo",
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 3},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 6},
+			expectedOld:   "echo",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1338,13 +1339,13 @@ $
 ~/src/blue master
 $ echo blaaaaaaaaa
 aaaaaaaaa`,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 3, X: 16},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 3, X: 9},
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 3, X: 16},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 3, X: 9},
 			// must guarantee reversibility: since shell wraps lines
 			// automatically, we must remove newlines.
 			// expectedOld:      "echo blaaaaaaaaa\naaaaaaaaa",
@@ -1360,14 +1361,14 @@ $ `,
 $ echo blaaaaaaaaa
 aaaaaaaaa
 `,
-			start:            term.Coordinates{Y: 2},
-			end:              term.Coordinates{Y: 3, X: 16},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 3, X: 9},
-			expectedOld:      "echo blaaaaaaaaaaaaaaaaaa",
+			start:         term.Coordinates{Y: 2},
+			end:           term.Coordinates{Y: 3, X: 16},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 3, X: 9},
+			expectedOld:   "echo blaaaaaaaaaaaaaaaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1379,12 +1380,12 @@ $
 ~/src/blue master
 $ echo 
 `,
-			start:            term.Coordinates{Y: 2, X: 7},
-			end:              term.Coordinates{Y: 2, X: 7},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "aaaaaaaaaaaaaaaaaaaa",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 7},
+			start:         term.Coordinates{Y: 2, X: 7},
+			end:           term.Coordinates{Y: 2, X: 7},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "aaaaaaaaaaaaaaaaaaaa",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 7},
 			// must guarantee reversibility so must be multiline
 			expectedTo:  term.Coordinates{Y: 3, X: 9},
 			expectedOld: "",
@@ -1399,14 +1400,14 @@ aaaaaaaaa
 			initialContent: `
 ~/src/blue master
 $ echo `,
-			start:            term.Coordinates{Y: 2, X: 7},
-			end:              term.Coordinates{Y: 2, X: 7},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "aaaaaaaaaaaaaaaaaaaa",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 7},
-			expectedTo:       term.Coordinates{Y: 3, X: 9},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 2, X: 7},
+			end:           term.Coordinates{Y: 2, X: 7},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "aaaaaaaaaaaaaaaaaaaa",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 7},
+			expectedTo:    term.Coordinates{Y: 3, X: 9},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ echo aaaaaaaaaaa
@@ -1419,13 +1420,13 @@ aaaaaaaaa`,
 $ 
 ~/src/blue master
 $ echo `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 2},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "a",
-			expectedRingBell: true,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 2},
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 2},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "a",
+			expectedError: true,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 2},
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1439,13 +1440,13 @@ $ echo `,
 $ 
 ~/src/blue master
 $ echo `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 3},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "",
-			expectedRingBell: true,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 2},
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 3},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "",
+			expectedError: true,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 2},
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1459,13 +1460,13 @@ $ echo `,
 $ 
 ~/src/blue master
 $ echo `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 4, X: 2},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "",
-			expectedRingBell: true,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 4, X: 2},
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 4, X: 2},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "",
+			expectedError: true,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 4, X: 2},
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1480,14 +1481,14 @@ $
 ~/src/blue master
 $ echo aaaaaaaaaaa
 a`,
-			start:            term.Coordinates{Y: 5, X: 1},
-			end:              term.Coordinates{Y: 5, X: 1},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "xyz",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 5, X: 1},
-			expectedTo:       term.Coordinates{Y: 5, X: 4},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 5, X: 1},
+			end:           term.Coordinates{Y: 5, X: 1},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "xyz",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 5, X: 1},
+			expectedTo:    term.Coordinates{Y: 5, X: 4},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1504,14 +1505,14 @@ $
 $ echo aaaaaaaaaaa
 aaaaaaaaaaaaaaaaaa
 a`,
-			start:            term.Coordinates{Y: 6, X: 1},
-			end:              term.Coordinates{Y: 6, X: 1},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "xyz",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 6, X: 1},
-			expectedTo:       term.Coordinates{Y: 6, X: 4},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 6, X: 1},
+			end:           term.Coordinates{Y: 6, X: 1},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "xyz",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 6, X: 1},
+			expectedTo:    term.Coordinates{Y: 6, X: 4},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1529,14 +1530,14 @@ $
 $ echo aaaaaaaaaaa
 aaaaaaaaaaaaaaaaaa
 a`,
-			start:            term.Coordinates{},
-			end:              term.Coordinates{Y: 7},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 6, X: 1},
-			expectedOld:      "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			start:         term.Coordinates{},
+			end:           term.Coordinates{Y: 7},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 6, X: 1},
+			expectedOld:   "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1552,14 +1553,14 @@ $
 $ echo aaaaaaaaaaa
 aaaaaaaaaaaaaaaaaa
 a`,
-			start:            term.Coordinates{},
-			end:              term.Coordinates{Y: 6, X: 1},
-			promptStart:      term.Coordinates{Y: 4, X: 2},
-			str:              "",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 6, X: 1},
-			expectedOld:      "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			start:         term.Coordinates{},
+			end:           term.Coordinates{Y: 6, X: 1},
+			promptStart:   term.Coordinates{Y: 4, X: 2},
+			str:           "",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 6, X: 1},
+			expectedOld:   "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1583,10 +1584,10 @@ a`,
 % ECHO XXXXXXXXXX
 ~/src/blue master
 $ ECHO AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 6, X: 1},
-			expectedOld:      "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 6, X: 1},
+			expectedOld:   "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1625,10 +1626,10 @@ $ ECHO AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 
 `,
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 19, X: 0},
-			expectedOld:      "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 19, X: 0},
+			expectedOld:   "echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1656,14 +1657,14 @@ A
 ~/src/blue master
 $ 
 `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 2},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "echo bla",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 10},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 2},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "echo bla",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 10},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ echo bla
@@ -1674,14 +1675,14 @@ $ echo bla
 			initialContent: `
 ~/src/blue master
 $ `,
-			start:            term.Coordinates{Y: 2, X: 2},
-			end:              term.Coordinates{Y: 2, X: 2},
-			promptStart:      term.Coordinates{Y: 2, X: 2},
-			str:              "echo bla",
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 2, X: 2},
-			expectedTo:       term.Coordinates{Y: 2, X: 10},
-			expectedOld:      "",
+			start:         term.Coordinates{Y: 2, X: 2},
+			end:           term.Coordinates{Y: 2, X: 2},
+			promptStart:   term.Coordinates{Y: 2, X: 2},
+			str:           "echo bla",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 2, X: 2},
+			expectedTo:    term.Coordinates{Y: 2, X: 10},
+			expectedOld:   "",
 			expectedContent: `
 ~/src/blue master
 $ echo bla`,
@@ -1708,10 +1709,10 @@ aaaaaaaXXaaaa
 % ECHO XXXXXXXXXX
 ~/src/blue master
 $ echo aaaaaaaaaaaaaaaaaaooaaaa`,
-			expectedRingBell: false,
-			expectedFrom:     term.Coordinates{Y: 4, X: 2},
-			expectedTo:       term.Coordinates{Y: 5, X: 13},
-			expectedOld:      "echo aaaaaaaaaaaaaaaaaaXXaaaa",
+			expectedError: false,
+			expectedFrom:  term.Coordinates{Y: 4, X: 2},
+			expectedTo:    term.Coordinates{Y: 5, X: 13},
+			expectedOld:   "echo aaaaaaaaaaaaaaaaaaXXaaaa",
 			expectedContent: `
 ~/src/blue master
 $ 
@@ -1733,10 +1734,10 @@ aaaaaaaooaaaa
 			comp := newTestParentComponent(test.initialContent, test.promptStart)
 			var vi viHandler
 			cfg := DefaultConfig()
-			var actualBellsRung int
-			cfg.RingBell = func() {
-				actualBellsRung++
-			}
+			var played []string
+			cfg.Sounds = sounds.PlayerFunc(func(name string) {
+				played = append(played, name)
+			})
 			vi.doInit(comp, cfg)
 			vi.remote = newTestRemote(comp.scroll, 18, test.promptStart)
 			vi.Resize(18, 18)
@@ -1749,11 +1750,11 @@ aaaaaaaooaaaa
 			assert.Equal(t, test.expectedTo, actualTo, "to")
 			assert.Equal(t, test.expectedOld, actualOld)
 
-			var expectedBellsRung int
-			if test.expectedRingBell {
-				expectedBellsRung = 1
+			var expectedPlayed []string
+			if test.expectedError {
+				expectedPlayed = []string{sounds.Error}
 			}
-			assert.Equal(t, expectedBellsRung, actualBellsRung, "bells rung")
+			assert.Equal(t, expectedPlayed, played, "sounds played")
 		})
 	}
 }

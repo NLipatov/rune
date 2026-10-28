@@ -1512,6 +1512,15 @@ func (h *workspaceManagerHandler) afterPackageConfigMerge(
 		}
 		err = errors.Join(err, tutErr)
 	}
+
+	if event.TouchesPath(keySounds) {
+		// Reloading applies the merged sounds to the shared registry.
+		if _, reloadErr := h.reloadConfig(); reloadErr != nil {
+			err = errors.Join(err, fmt.Errorf("reload config for sounds: %w", reloadErr))
+		} else {
+			result.LivePaths = append(result.LivePaths, []string{keySounds})
+		}
+	}
 	return result, err
 }
 

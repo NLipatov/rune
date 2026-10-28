@@ -80,6 +80,7 @@ import (
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/vctrl/testgit"
 	"unstable.build/rune/internal/localstorage"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/text"
@@ -701,12 +702,15 @@ func TestSetTabNameWithAttrIntegration(t *testing.T) {
 
 	cfg := defaultConfigWithWrap(false)
 	bellRung := make(chan struct{}, 8)
-	cfg.ringBell = func() {
+	cfg.sounds = sounds.PlayerFunc(func(name string) {
+		if name != sounds.Warning {
+			return
+		}
 		select {
 		case bellRung <- struct{}{}:
 		default:
 		}
-	}
+	})
 	mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 	manager := workspace.NewManager(config.NopConfig(), sched)
 	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -2958,7 +2962,7 @@ func assertExoDelegatesMarkdown(t *testing.T, fileName string, readOnly bool) {
 		"command": `vim -Nu NONE -n {file}`,
 		"goto":    "<esc>:{line}<enter>{col}|",
 	}
-	cfg.ringBell = func() {}
+	cfg.sounds = sounds.Silent
 	require.Equal(t, "exo", cfg.editorMode())
 
 	uri, err := workspaceapi.ParseURI("file://" + dir)
@@ -4906,7 +4910,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		})
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -4999,7 +5003,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 	t.Run("tabs opened by workspaceready before the restore stay focusable", func(t *testing.T) {
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -5064,7 +5068,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		})
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -5197,7 +5201,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		m := newTestWorkspaceManagerHandlerWithDir(t, cfg, dir, nopShutdownShaderConfig())
 
 		ex1 := m.exHandler(m.focusHandler())
@@ -5249,7 +5253,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		newCfg := func() ideConfig {
 			cfg := defaultConfigWithWrap(false)
 			cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-			cfg.ringBell = func() {}
+			cfg.sounds = sounds.Silent
 			cfg.scheduleNextTick = sched
 			return cfg
 		}
@@ -11387,7 +11391,7 @@ func swapDirIDEConfig(t *testing.T, enabled bool) ideConfig {
 	var cfg ideConfig
 	require.NoError(t, loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 	return cfg
 }
 
@@ -11457,7 +11461,7 @@ func TestSwapDirectory(t *testing.T) {
 
 func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 	var cfg ideConfig
-	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+	initDefaultConfig(&cfg, nil, sounds.Silent, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
 	require.NoError(t, err)
@@ -11472,7 +11476,7 @@ func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 
 func TestTextOptsEnableMarkdownImages(t *testing.T) {
 	var cfg ideConfig
-	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+	initDefaultConfig(&cfg, nil, sounds.Silent, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
 	require.NoError(t, err)
@@ -11537,7 +11541,7 @@ func newHandlerWithDataDir(
 ) *testWorkspaceManagerHandler {
 	t.Helper()
 	cc := defaultConfigWithWrap(false)
-	cc.ringBell = func() {}
+	cc.sounds = sounds.Silent
 	mu, sched, drain := buildTestSchedulerForCfg(t, &cc)
 	manager := workspace.NewManager(config.NopConfig(), sched)
 	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,

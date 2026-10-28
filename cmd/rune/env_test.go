@@ -37,6 +37,7 @@ import (
 	"unstable.build/rune/internal/ide/idepkg"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
 	"unstable.build/rune/internal/ide/starlarkconfig"
+	"unstable.build/rune/internal/term/gui"
 )
 
 func TestGUIEnvLiveApplyHookAppliesNewlyMergedVar(t *testing.T) {
@@ -198,12 +199,14 @@ func newBootstrapForTest(
 	rootCfg, err := ide.Config(configPath, runeDefaultConfig())
 	require.NoError(t, err)
 
+	soundOutput := gui.NewSounds()
+	soundOutput.SetMuted(true)
 	b, err := newBootstrapHandler(
 		dataDir, configPath, "" /* workspace */, "", /* shellRCDir */
 		hostenv.New(dataDir, ""), nil, /* filenames */
 		nil /* launchCmd */, ide.FuncExtensionsRunner(testE2EExtensionsRunner),
 		mu, publishEvent, nil, /* cellPixelSize */
-		func(*url.URL) error { return nil }, clipboard.NewInMemory(),
+		func(*url.URL) error { return nil }, clipboard.NewInMemory(), soundOutput,
 		installBackupDir, rootCfg, pkgtrust.NewStore(),
 	)
 	require.NoError(t, err)
