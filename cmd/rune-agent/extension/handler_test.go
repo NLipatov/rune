@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1748,25 +1749,26 @@ func TestHandlerWebBrowser(t *testing.T) {
 		want       bool
 	}{
 		{name: "installed", browserDir: dir, want: true},
-		{name: "not installed", browserDir: dir, lookupErr: errors.New("exit status 1")},
+		{name: "not installed", browserDir: dir, lookupErr: fs.ErrNotExist},
 		{name: "no data directory on the workspace host"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			exec := &lookupExec{stdout: "/opt/bin/agent-browser\n", err: tt.lookupErr}
-			fs := &dirRecordingFS{}
+			exec := &lookupExec{bin: "/opt/bin/agent-browser", err: tt.lookupErr}
+			dirs := &dirRecordingFS{}
 			h := &aiEditorHandler{
 				ctx:        context.Background(),
 				executor:   exec,
-				fs:         fs,
+				fs:         dirs,
 				browserDir: tt.browserDir,
 			}
 
 			tool := h.webBrowser("chat-1")
 
 			if tt.browserDir == "" {
-				assert.Empty(t, exec.commands(), "nothing to look up without a directory to run in")
+				assert.Empty(t, exec.lookups(), "nothing to look up without a directory to run in")
 			}
+			assert.Empty(t, exec.commands(), "looking agent-browser up must not run a command")
 			if !tt.want {
 				assert.Nil(t, tool)
 				return
@@ -1780,7 +1782,7 @@ func TestHandlerWebBrowser(t *testing.T) {
 			assert.Equal(t, "/opt/bin/agent-browser", run.Path)
 			assert.Equal(t, dir, run.Dir)
 			assert.Contains(t, run.Env, "AGENT_BROWSER_SOCKET_DIR="+dir+"/sockets")
-			assert.Equal(t, []string{dir}, fs.dirs)
+			assert.Equal(t, []string{dir}, dirs.dirs)
 		})
 	}
 }
