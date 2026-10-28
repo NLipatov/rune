@@ -14,14 +14,12 @@ that make a sound, such as `terminal.bell`, refer to a sound by its name.
 
 | Name | Plays when |
 | --- | --- |
-| `error` | something fails or is refused, such as a vi-mode edit above a terminal's prompt |
-| `warning` | something needs caution; by default, a program in a terminal ringing the bell |
+| `error` | something fails or is refused, such as a program reporting an error or a vi-mode edit above a terminal's prompt |
+| `warning` | something needs caution, such as a program blocked waiting on you or, by default, ringing the bell |
 | `info` | something informational happens |
-| `success` | something you were waiting on succeeded |
+| `success` | something you were waiting on succeeded, such as a program reporting it is done |
 
-Rune currently plays `error` and `warning` for the events above. You can
-configure `info` and `success` now, and they apply as more events start to
-use them.
+Rune plays them for the events above. Nothing plays `info` by default yet.
 
 ## Defining sounds
 
@@ -88,6 +86,13 @@ config["terminal"]["bell"] = "ding"
 
 Like other `terminal.*` settings, a change to `terminal.bell` applies after
 `workspacereload`.
+
+## Program status
+
+Programs that report their status, such as Rune Agent, agent CLIs and
+commands run in the IDE console, play a sound when they finish, fail or wait
+on you. `program_status.sounds` maps each state to a sound; see
+[Program status](./terminal/program-status.md#sounds).
 
 ## Volume
 

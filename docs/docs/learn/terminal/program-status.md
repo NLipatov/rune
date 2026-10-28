@@ -163,6 +163,35 @@ A notification in a workspace you are not looking at stays open until you
 switch to it and adds to the badge on its workspace tab. See [Knowing when a
 worktree needs you](../worktrees.md#knowing-when-a-worktree-needs-you).
 
+### Sounds
+
+Each time a tab or terminal enters a state, Rune plays the
+[sound](../sounds.md) that `program_status.sounds` maps the state to:
+`warning` for `blocked`, `error` for `error` and `success` for `done` by
+default. Unlike notifications, sounds play whether or not you are looking at
+the tab, and are not rate limited. Reporting the same state again, with a new
+message or another `kind`, plays nothing.
+
+Map a state to the name of any sound, or to an empty string for none.
+`working` is also accepted. For example, to keep finished programs quiet and
+tick when one starts working:
+
+```yaml tab
+program_status:
+  sounds:
+    done: ""
+    working: info
+```
+
+```python tab
+config["program_status"]["sounds"]["done"] = ""
+config["program_status"]["sounds"]["working"] = "info"
+```
+
+A state mapped to a sound Rune does not know keeps its default, and Rune
+reports it as a config error. Changes to `program_status.sounds` apply after a
+restart.
+
 ### The status inbox
 
 `programstatus` opens a floating window with a sidebar on the left and a live
@@ -380,7 +409,7 @@ configured under [`program_status`](#configuring-the-inbox).
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `enabled` | `true` | `false` drops the status icons and colors from tabs and the workspace bar, and raises no status notifications. The activity effects have their own `enabled` switch under `animations`. |
+| `enabled` | `true` | `false` drops the status icons and colors from tabs and the workspace bar, and raises no status notifications or [sounds](#sounds). The activity effects have their own `enabled` switch under `animations`. |
 | `icons.permission`, `icons.question`, `icons.auth` | `?`, `?`, `@` | The icon of a blocked tab by `kind`. |
 | `icons.done`, `icons.error` | a check mark, `x` | The icon of a finished or failed tab. |
 | `spinner` | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | The frames a working tab's icon cycles through. |
@@ -484,3 +513,7 @@ terminal, or choose it in the status inbox.
 **Too many notifications.** Remove states from `terminal.status.notify`, or
 raise `terminal.status.notify_interval`. Messages of the same state replace
 one another rather than stack up.
+
+**Too many sounds.** Map the states you do not want to hear to `""` in
+`program_status.sounds`. Every command run in the IDE console reports `done`
+or `error` when it ends, so each plays a sound.

@@ -716,8 +716,9 @@ func (h *workspaceManagerHandler) init(
 	if !cfg.tabStatusEnabled() {
 		notifyStatus = idestatus.NotifyConfig{}
 	}
-	h.status = idestatus.New(statusWorkspaces{h}, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
-		h.scheduleNextTick, h.events.globalInterrupter())
+	h.status = idestatus.New(statusWorkspaces{h}, tabStatusConfigFor(cfg),
+		notifyStatus, cfg.sounds, cfg.statusInboxStyle(), h.scheduleNextTick,
+		h.events.globalInterrupter())
 
 	// Files and workspaces under the home directory share this manager
 	// entry; the reference held here for the IDE's lifetime keeps their

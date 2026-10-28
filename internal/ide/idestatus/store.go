@@ -32,6 +32,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/ide/idehistory"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -91,10 +92,15 @@ type NotifyConfig struct {
 	// Messages notifies every new message a program reports, in sight
 	// or not.
 	Messages bool
+	// Sounds maps a state to the name of the sound a program entering it
+	// plays, in sight or not, each time it enters it. A state it leaves
+	// out, or maps to "", plays none.
+	Sounds map[programstatus.State]string
 }
 
 // DefaultNotifyConfig notifies every message, and the blocked, error and
-// done states at most every two seconds per program.
+// done states at most every two seconds per program. Entering them plays
+// the warning, error and success sounds.
 func DefaultNotifyConfig() NotifyConfig {
 	return NotifyConfig{
 		States: map[programstatus.State]bool{
@@ -104,6 +110,11 @@ func DefaultNotifyConfig() NotifyConfig {
 		},
 		Interval: 2 * time.Second,
 		Messages: true,
+		Sounds: map[programstatus.State]string{
+			programstatus.Blocked: sounds.Warning,
+			programstatus.Error:   sounds.Error,
+			programstatus.Done:    sounds.Success,
+		},
 	}
 }
 
@@ -118,6 +129,7 @@ type Store struct {
 	host        WorkspaceStatus
 	cfg         browser.TabStatusConfig
 	notify      NotifyConfig
+	player      sounds.Player
 	style       InboxStyle
 	interrupter term.Interrupter
 	schedule    func(func()) bool
@@ -132,18 +144,20 @@ type Store struct {
 }
 
 // New returns an empty Store over the workspaces of host. cfg styles the
-// statuses, notify selects what is notified, and style styles the
-// inbox. schedule must run a function on a later tick of the host event
-// loop. interrupter, if not nil, wakes the host to keep open inboxes
-// live; without it, they stand still.
+// statuses, notify selects what is notified, player plays the sounds it
+// names, and style styles the inbox. schedule must run a function on a
+// later tick of the host event loop. interrupter, if not nil, wakes the
+// host to keep open inboxes live; without it, they stand still.
 func New(
-	host WorkspaceStatus, cfg browser.TabStatusConfig, notify NotifyConfig,
+	host WorkspaceStatus, cfg browser.TabStatusConfig,
+	notify NotifyConfig, player sounds.Player,
 	style InboxStyle, schedule func(func()) bool, interrupter term.Interrupter,
 ) *Store {
 	return &Store{
 		host:          host,
 		cfg:           cfg,
 		notify:        notify,
+		player:        player,
 		style:         style,
 		interrupter:   interrupter,
 		schedule:      schedule,
@@ -445,6 +459,9 @@ func (s *Store) update(src *statusSource, status programstatus.Summary) {
 func (s *Store) announce(src *statusSource, prev programstatus.Summary) {
 	key, status := src.key(), src.status
 	s.followWorking(src, prev)
+	if name := s.notify.Sounds[status.State]; name != "" && prev.State != status.State {
+		s.player.Play(name)
+	}
 	announced := false
 	if s.notify.Messages {
 		// In sight or not, as nothing else shows the message.

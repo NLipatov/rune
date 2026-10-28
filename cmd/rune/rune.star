@@ -1146,9 +1146,18 @@ config = {
             "bar_align_bottom":    True,
         },
     },
-    # The :programstatus inbox. Colors left at "default" keep those of what
-    # they are drawn over.
+    # Program status (OSC 7501) reported by terminals, agents and console
+    # commands, and the :programstatus inbox listing it. Colors left at
+    # "default" keep those of what they are drawn over.
     "program_status": {
+        # The sound a program entering blocked, error, done or working plays,
+        # whether or not its tab is in sight: a name from `sounds`, or "" for
+        # none. Turning terminal.status.enabled off turns them off too.
+        "sounds": {
+            "blocked": "warning",
+            "error":   "error",
+            "done":    "success",
+        },
         # The selected program, and the one under the mouse, all of it: their
         # colors win over those of its text, and the selection's over the
         # hover's.

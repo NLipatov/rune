@@ -413,6 +413,10 @@ terminal:
           - blocked
           - error
         notify_interval: 5s
+program_status:
+    sounds:
+        done: ""
+        working: info
 `
 
 func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
@@ -1134,6 +1138,8 @@ func TestValidateSounds(t *testing.T) {
 		cfg        map[string]any
 		wantSounds map[string]any
 		wantBell   any
+		// wantStatus is what is left of program_status.sounds.
+		wantStatus any
 		wantErrs   []string
 	}{
 		{
@@ -1186,6 +1192,35 @@ func TestValidateSounds(t *testing.T) {
 			wantBell: sounds.Warning,
 			wantErrs: []string{`'terminal.bell' must be a sound name or "", got bool`},
 		},
+		{
+			name: "program status sounds name states and known sounds",
+			cfg: map[string]any{
+				"sounds": map[string]any{"chime": "/chime.wav"},
+				"program_status": map[string]any{"sounds": map[string]any{
+					"done": "chime", "error": "", "working": "info",
+				}},
+			},
+			wantSounds: map[string]any{"chime": "/chime.wav"},
+			wantStatus: map[string]any{"done": "chime", "error": "", "working": "info"},
+		},
+		{
+			name: "invalid program status sounds are dropped",
+			cfg: map[string]any{"program_status": map[string]any{"sounds": map[string]any{
+				"done": "chmie", "idle": "info", "blocked": 1, "error": "error",
+			}}},
+			wantStatus: map[string]any{"error": "error"},
+			wantErrs: []string{
+				`'program_status.sounds.done' names unknown sound "chmie"`,
+				`'program_status.sounds.idle': unknown state`,
+				`'program_status.sounds.blocked' must be a sound name or "", got int`,
+			},
+		},
+		{
+			name:       "program status sounds is not a map",
+			cfg:        map[string]any{"program_status": map[string]any{"sounds": "chime"}},
+			wantStatus: nil,
+			wantErrs:   []string{`'program_status.sounds' must map states to sound names`},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateSounds(tc.cfg)
@@ -1202,6 +1237,9 @@ func TestValidateSounds(t *testing.T) {
 			}
 			if terminal, ok := tc.cfg["terminal"].(map[string]any); ok {
 				assert.Equal(t, tc.wantBell, terminal["bell"])
+			}
+			if status, ok := tc.cfg["program_status"].(map[string]any); ok {
+				assert.Equal(t, tc.wantStatus, status["sounds"])
 			}
 		})
 	}
@@ -2005,6 +2043,12 @@ func TestConfigSetting(t *testing.T) {
 		},
 		Interval: 5 * time.Second,
 		Messages: true,
+		Sounds: map[programstatus.State]string{
+			programstatus.Blocked: sounds.Warning,
+			programstatus.Error:   sounds.Error,
+			programstatus.Done:    "",
+			programstatus.Working: sounds.Info,
+		},
 	}, cfg.tabStatusNotifyConfig())
 
 	expectedPrompt := browser.PromptConfig{

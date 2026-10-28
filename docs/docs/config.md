@@ -107,6 +107,7 @@ startup and needs a restart:
   (see below).
 - `log.output_path` and `log.level`
 - `models.*` (the LLM router), `notifications.*`, `telemetry.*`
+- `program_status.*`: the status inbox and the sounds of program status
 - `animations.*`, `workspace.home`, clipboard and macro settings
 - the configuration of the home screen shown when no workspace is open
 

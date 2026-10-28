@@ -1059,6 +1059,21 @@ func TestTabStatusNotifications(t *testing.T) {
 	cfg := defaultConfigWithWrap(false)
 	// idestatus covers the rate limiting.
 	cfg.cfg["terminal"] = map[string]any{"status": map[string]any{"notify_interval": "0s"}}
+	cfg.cfg["program_status"] = map[string]any{"sounds": map[string]any{"working": sounds.Info}}
+	var soundsMu sync.Mutex
+	var played []string
+	cfg.sounds = sounds.PlayerFunc(func(name string) {
+		soundsMu.Lock()
+		defer soundsMu.Unlock()
+		played = append(played, name)
+	})
+	newSounds := func() []string {
+		soundsMu.Lock()
+		defer soundsMu.Unlock()
+		ret := played
+		played = nil
+		return ret
+	}
 	m, slot := newActivityTestManager(t, cfg)
 	chat, err := workspaceapi.ParseURI("rune-agent://model/rolling-fox")
 	require.NoError(t, err)
@@ -1112,6 +1127,7 @@ func TestTabStatusNotifications(t *testing.T) {
 
 	send(chat, report(programstatus.Working, ""))
 	assert.Empty(t, newNotes(), "working without a message is not notified")
+	assert.Equal(t, []string{sounds.Info}, newSounds(), "program_status.sounds adds working")
 
 	send(chat, report(programstatus.Working, "Compiling"))
 	assert.Equal(t, note(browserapi.LevelInfo, "rolling-fox: Compiling"), newNotes(),
@@ -1136,6 +1152,7 @@ func TestTabStatusNotifications(t *testing.T) {
 	assert.Contains(t, newUpdates(),
 		capturedUpdate{msg: "rolling-fox (go): ok ./internal", progress: 0, total: 1, ok: true},
 		"messages of child records come through")
+	assert.Empty(t, newSounds(), "staying working plays nothing")
 
 	send(chat, programstatus.Report{
 		State: programstatus.Blocked, Kind: programstatus.KindPermission,
@@ -1147,18 +1164,21 @@ func TestTabStatusNotifications(t *testing.T) {
 		"leaving working closes the working notification")
 	assert.Equal(t, pendingNotifications{2, browserapi.LevelWarn, warn}, w.notifs,
 		"an unfocused workspace counts every notification")
+	assert.Equal(t, []string{sounds.Warning}, newSounds())
 
 	send(chat, report(programstatus.Done, "ok"), report(programstatus.Error, "boom"))
 	assert.Equal(t, []capturedNote{
 		{level: browserapi.LevelSuccess, msg: "rolling-fox: ok"},
 		{level: browserapi.LevelError, msg: "rolling-fox: boom"},
 	}, newNotes(), "messages are never rate limited")
+	assert.Equal(t, []string{sounds.Success, sounds.Error}, newSounds())
 
 	send(chat, report(programstatus.Done, ""))
 	assert.Equal(t, note(browserapi.LevelSuccess, "rolling-fox: done"), newNotes(),
 		"a transition without a message names the state")
 	send(chat, programstatus.Report{State: programstatus.Clear})
 	assert.Empty(t, newNotes(), "clearing is not notified")
+	assert.Equal(t, []string{sounds.Success}, newSounds(), "clearing plays nothing")
 
 	require.True(t, m.switchToWorkspace(slot))
 	win, err := comp.Focus()
@@ -1173,10 +1193,12 @@ func TestTabStatusNotifications(t *testing.T) {
 
 	send(seen, report(programstatus.Blocked, ""))
 	assert.Empty(t, newNotes(), "a transition in sight is not notified")
+	assert.Equal(t, []string{sounds.Warning}, newSounds(), "but plays its sound")
 
 	send(seen, report(programstatus.Blocked, "approve?"))
 	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve?"), newNotes(),
 		"a message comes through in sight")
+	assert.Empty(t, newSounds(), "a message in the same state plays nothing")
 
 	send(chat, report(programstatus.Error, ""))
 	assert.Equal(t, note(browserapi.LevelError, "rolling-fox: error"), newNotes(),
@@ -7660,6 +7682,7 @@ func defaultCfg() ideConfig {
 		},
 	},
 		configPath: "not-empty",
+		sounds:     sounds.Silent,
 	}
 }
 

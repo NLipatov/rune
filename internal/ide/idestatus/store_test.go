@@ -33,6 +33,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/ide/idehistory"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -67,6 +68,7 @@ type statusStoreTestHost struct {
 	tabs       map[statusKey]*browser.Tab
 	previews   map[statusKey]Preview
 	seen       map[statusKey]bool
+	inSight    bool
 	notified   []string
 	// shownNotes holds the notifications on screen by id, as a
 	// notifications.Container keeps them: the id stands for the message
@@ -112,7 +114,7 @@ func (h *statusStoreTestHost) TabIcon(ws, uri workspaceapi.URI) (rune, bool) {
 	}
 	return 'x', true
 }
-func (h *statusStoreTestHost) InSight(workspaceapi.URI, workspaceapi.URI) bool { return false }
+func (h *statusStoreTestHost) InSight(workspaceapi.URI, workspaceapi.URI) bool { return h.inSight }
 func (h *statusStoreTestHost) Seen(ws, uri workspaceapi.URI) bool {
 	return h.seen[statusKey{ws.String(), uri.String()}]
 }
@@ -221,7 +223,7 @@ func newStatusStoreTestWith(
 		shownNotes: make(map[string]*statusTestNote),
 	}
 	host.addWorkspace(ws, "1 home")
-	return host, New(host, cfg, NotifyConfig{}, statusTestStyle(), host.schedule, interrupter), ws
+	return host, New(host, cfg, NotifyConfig{}, sounds.Silent, statusTestStyle(), host.schedule, interrupter), ws
 }
 
 type statusStoreDetachedTest struct {
@@ -657,6 +659,72 @@ func TestStatusStoreNotifyInterval(t *testing.T) {
 	send(report(programstatus.Error, ""), programstatus.Report{State: programstatus.Clear})
 	waitInterval()
 	assert.Empty(t, newNotes(), "a state gone before its deferred notification is not reported")
+}
+
+func TestStatusStoreSounds(t *testing.T) {
+	host, store, ws := newStatusStoreTest(t)
+	var played []string
+	store.player = sounds.PlayerFunc(func(name string) { played = append(played, name) })
+	store.notify = DefaultNotifyConfig()
+	uri := statusStoreTestURI(t, "file:///dev/ttys001")
+	key := statusKey{ws.String(), uri.String()}
+	report := func(state programstatus.State, msg string) *programstatus.Report {
+		return &programstatus.Report{State: state, Progress: -1, App: "make", Msg: msg}
+	}
+
+	for _, step := range []struct {
+		name   string
+		do     func()
+		report *programstatus.Report
+		want   []string
+	}{{
+		name:   "working plays nothing by default",
+		report: report(programstatus.Working, "building"),
+	}, {
+		name:   "done plays success",
+		report: report(programstatus.Done, ""),
+		want:   []string{sounds.Success},
+	}, {
+		name:   "staying done plays nothing",
+		report: report(programstatus.Done, "shipped"),
+	}, {
+		name: "blocked plays warning, within the notify interval",
+		do:   func() { store.lastNotified[key] = time.Now() },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
+		},
+		want: []string{sounds.Warning},
+	}, {
+		name:   "error plays error, in sight and seen",
+		do:     func() { host.inSight, host.seen[key] = true, true },
+		report: report(programstatus.Error, "boom"),
+		want:   []string{sounds.Error},
+	}, {
+		name: "a state mapped to a sound plays it, one mapped to none plays nothing",
+		do: func() {
+			store.notify.Sounds = map[programstatus.State]string{
+				programstatus.Working: "tick", programstatus.Done: "",
+			}
+		},
+		report: report(programstatus.Working, "again"),
+		want:   []string{"tick"},
+	}, {
+		name:   "unmapped",
+		report: report(programstatus.Done, ""),
+	}, {
+		name: "a disabled status plays nothing",
+		do:   func() { store.notify = NotifyConfig{} },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindQuestion, Progress: -1,
+		},
+	}} {
+		played = nil
+		if step.do != nil {
+			step.do()
+		}
+		require.NoError(t, store.SetTabStatus(ws, nil, uri, *step.report), step.name)
+		assert.Equal(t, step.want, played, step.name)
+	}
 }
 
 func TestStatusStoreRestore(t *testing.T) {

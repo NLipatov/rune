@@ -118,6 +118,9 @@ const (
 	keyTerminal     = "terminal"
 	keyTerminalBell = "bell"
 
+	keyProgramStatus       = "program_status"
+	keyProgramStatusSounds = "sounds"
+
 	// maxQuickMenuButtons caps the reserved column so a runaway config
 	// cannot produce more buttons than the window can display.
 	maxQuickMenuButtons = 24
@@ -281,11 +284,9 @@ type ideConfig struct {
 	// wallpaper. Nil when the IDE was given none.
 	logo *Logo
 
-	configPath string
-	cfg        map[string]any
-	errors     map[string]error
-	// sounds plays the IDE's sounds by name. The IDE resolves the names
-	// from the user config only, so a workspace config cannot add sounds.
+	configPath       string
+	cfg              map[string]any
+	errors           map[string]error
 	sounds           sounds.Player
 	scheduleNextTick func(func()) bool
 	cellPixelSize    func() (int, int)
@@ -4824,7 +4825,7 @@ func (c ideConfig) terminalBellSound() string {
 }
 
 // soundEntries reads the top-level `sounds` map. In file paths,
-// /Users/ernestrc/.rune names dataDir, other variables come from the process
+// $RUNE_DATADIR names dataDir, other variables come from the process
 // environment, and a file:// URI is reduced to its path.
 func (c ideConfig) soundEntries(dataDir string) map[string]string {
 	raw, ok := c.cfg[keySounds].(map[string]any)
@@ -5205,9 +5206,11 @@ func tabStatusConfigFor(cfg ideConfig) browser.TabStatusConfig {
 // tabStatusNotifyConfig reads terminal.status.notify, the states a tab
 // entering raises a notification for when it is out of sight, and
 // terminal.status.notify_interval, the minimum time between two
-// notifications for the same tab.
+// notifications for the same tab, and program_status.sounds, the sound
+// entering each state plays.
 func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 	ret := idestatus.DefaultNotifyConfig()
+	ret.Sounds = c.programStatusSounds(ret.Sounds)
 	cfg, ok := c.terminalStatus()
 	if !ok {
 		return ret
@@ -5215,16 +5218,9 @@ func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 	if names, err := getStringSlice(cfg, "notify"); err == nil {
 		states := make(map[programstatus.State]bool, len(names))
 		for _, name := range names {
-			switch name {
-			case "blocked":
-				states[programstatus.Blocked] = true
-			case "error":
-				states[programstatus.Error] = true
-			case "done":
-				states[programstatus.Done] = true
-			case "working":
-				states[programstatus.Working] = true
-			default:
+			if state, ok := statusStateNamed(name); ok {
+				states[state] = true
+			} else {
 				c.errors["terminal.status.notify"] = fmt.Errorf(
 					"unknown state %q: expected blocked, error, done or working", name)
 			}
@@ -5239,6 +5235,42 @@ func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 		c.errors["terminal.status.notify_interval"] = err
 	}
 	return ret
+}
+
+// programStatusSounds reads program_status.sounds, which maps a state to
+// the name of the sound a program entering it plays, or "" for none,
+// over defaults. It skips what validateProgramStatusSounds reports.
+func (c ideConfig) programStatusSounds(
+	defaults map[programstatus.State]string,
+) map[programstatus.State]string {
+	ret := make(map[programstatus.State]string, len(defaults))
+	maps.Copy(ret, defaults)
+	status, _ := c.cfg[keyProgramStatus].(map[string]any)
+	entries, _ := status[keyProgramStatusSounds].(map[string]any)
+	for key, v := range entries {
+		state, ok := statusStateNamed(key)
+		name, isString := v.(string)
+		if ok && isString {
+			ret[state] = name
+		}
+	}
+	return ret
+}
+
+// statusStateNamed returns the state called name among those a program
+// entering is notified of: blocked, error, done and working.
+func statusStateNamed(name string) (programstatus.State, bool) {
+	switch name {
+	case "blocked":
+		return programstatus.Blocked, true
+	case "error":
+		return programstatus.Error, true
+	case "done":
+		return programstatus.Done, true
+	case "working":
+		return programstatus.Working, true
+	}
+	return programstatus.Idle, false
 }
 
 // terminalSearchConfig derives the terminal's scrollback search from
