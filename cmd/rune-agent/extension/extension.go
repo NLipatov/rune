@@ -24,16 +24,18 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/extensionapi"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"unstable.build/rune/cmd/rune-agent/agentshell"
+	"unstable.build/rune/internal/debug"
 )
 
 // NewExtension returns an extension and its metadata.
 func NewExtension() (extensionapi.WorkspaceExtension, extensionapi.Metadata) {
 	return &workspaceExtension{}, extensionapi.Metadata{
-		DeveloperID:    "Unstable Build",
-		DeveloperEmail: "it@unstable.build",
-		DeveloperKey:   "064D4ABCFA6D9338",
-		ExtensionID:    "rune-agent",
-		ExtensionName:  "Rune Agent",
+		DeveloperID:      "Unstable Build",
+		DeveloperEmail:   "it@unstable.build",
+		DeveloperKey:     "064D4ABCFA6D9338",
+		ExtensionID:      "rune-agent",
+		ExtensionName:    "Rune Agent",
+		ExtensionVersion: debug.Tag,
 		Permissions: extensionapi.NewPermissions(
 			permissions...,
 		),

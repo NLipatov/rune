@@ -74,6 +74,7 @@ import (
 	"unstable.build/rune/internal/ide/syntax/symboldb"
 	"unstable.build/rune/internal/ide/vctrl"
 	"unstable.build/rune/internal/localstorage"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/text"
@@ -518,6 +519,52 @@ func TestSystemClipboardSharedAcrossConfigs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, desc, got.Text, "%s must write to the IDE's system clipboard", desc)
 	}
+}
+
+func TestSoundsFollowTheUserConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "rune.yaml")
+	writeConfig := func(section string) {
+		require.NoError(t, os.WriteFile(configPath, []byte(
+			"workspace:\n  home: "+dir+"\n"+section), 0o644))
+	}
+	writeConfig("sounds:\n  ding: $RUNE_DATADIR/ding.wav\n  warning: ding\n")
+
+	var mu sync.Mutex
+	var played []sounds.Sound
+	i, err := New("", configPath, dir, pkgtrust.NewStore(), newTestStorage(t, dir),
+		WithPublishEvent(nopPublishEvent),
+		WithSoundBackend(sounds.BackendFunc(func(s sounds.Sound) {
+			mu.Lock()
+			defer mu.Unlock()
+			played = append(played, s)
+		})),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = i.Close() })
+	// Workspace builds reload the config in the background; let them
+	// finish so none applies the first config after the rewrite.
+	_ = i.Ready()
+	i.WaitWorkspaces()
+
+	i.Sounds().Play(sounds.Warning)
+	writeConfig("sounds:\n  chime: /chime.wav\n")
+	_, err = i.workspaceHandler.reloadConfig()
+	require.NoError(t, err)
+	i.Sounds().Play(sounds.Warning)
+	i.Sounds().Play("chime")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []sounds.Sound{
+		{Name: sounds.Warning, Path: filepath.Join(dir, "ding.wav"), BuiltIn: sounds.Warning},
+		{Name: sounds.Warning, BuiltIn: sounds.Warning},
+		{Name: "chime", Path: "/chime.wav"},
+	}, played)
+	assert.NotContains(t, i.SoundNames(), "ding", "a reload replaces the sounds")
+	assert.Contains(t, i.SoundNames(), "chime")
 }
 
 func TestTutorialsSeeTheConfiguredConfigPath(t *testing.T) {

@@ -19,6 +19,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,7 +86,7 @@ func TestResolveServer(t *testing.T) {
 	packaged := &langexttest.Installer{Files: []string{"/data/typescript/bin/tsgo"}}
 	hostTsgo := func() *fakeExecutor {
 		return newFakeExecutor().
-			respond("sh -lc command -v tsgo", scriptedCmd{stdout: "/usr/local/bin/tsgo\n"}).
+			onPath("tsgo", "/usr/local/bin/tsgo").
 			respond("/usr/local/bin/tsgo --version", scriptedCmd{stdout: "Version 7.0.2\n"})
 	}
 
@@ -181,7 +182,7 @@ func TestResolveServer(t *testing.T) {
 			fs:   func() *fakeFS { return newFakeFS(ws) },
 			exec: func() *fakeExecutor {
 				return newFakeExecutor().
-					respond("sh -lc command -v tsc", scriptedCmd{stdout: "/usr/bin/tsc\n"}).
+					onPath("tsc", "/usr/bin/tsc").
 					respond("/usr/bin/tsc --version", scriptedCmd{stdout: "Version 7.0.2\n"})
 			},
 			inst:    notInstalled,
@@ -193,7 +194,7 @@ func TestResolveServer(t *testing.T) {
 			fs:   func() *fakeFS { return newFakeFS(ws) },
 			exec: func() *fakeExecutor {
 				return newFakeExecutor().
-					respond("sh -lc command -v tsc", scriptedCmd{stdout: "/usr/bin/tsc\n"}).
+					onPath("tsc", "/usr/bin/tsc").
 					respond("/usr/bin/tsc --version", scriptedCmd{stdout: "Version 5.9.3\n"})
 			},
 			inst:       notInstalled,
@@ -223,9 +224,14 @@ func TestResolveServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			notify := &fakeNotifications{}
-			got := resolveServer(t.Context(), tt.cfg, notify, tt.fs(), tt.exec(),
+			exec := tt.exec()
+			got := resolveServer(t.Context(), tt.cfg, notify, tt.fs(), exec,
 				tsTools(t, tt.inst), ws, tt.rootDir)
 			assert.Equal(t, tt.want, got)
+			for _, call := range exec.calls {
+				assert.True(t, strings.HasSuffix(call, " --version"),
+					"looking the server up must run nothing but its --version: ran %q", call)
+			}
 			if tt.wantNotify == "" {
 				assert.Empty(t, notify.messages())
 				return

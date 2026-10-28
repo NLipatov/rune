@@ -19,8 +19,6 @@ package extension
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"path"
 	"slices"
@@ -278,22 +276,23 @@ func (f *dirRecordingFS) MkdirAll(path string, _ os.FileMode) error {
 	return nil
 }
 
-// lookupExec answers every command with stdout and err, and records the
-// commands it was given.
+// lookupExec answers LookPath with bin and err, runs every command
+// successfully, and records the names it looked up and the commands it
+// was given.
 type lookupExec struct {
-	stdout string
-	err    error
+	bin string
+	err error
 
-	mu   sync.Mutex
-	cmds []workspaceapi.Cmd
+	mu     sync.Mutex
+	cmds   []workspaceapi.Cmd
+	looked []string
 }
 
 func (e *lookupExec) Start(_ context.Context, cmd workspaceapi.Cmd) (workspaceapi.Pid, error) {
 	e.mu.Lock()
 	e.cmds = append(e.cmds, cmd)
 	e.mu.Unlock()
-	_, _ = io.WriteString(cmd.Stdout, e.stdout)
-	cmd.Watcher.WatchProcess() <- e.err
+	cmd.Watcher.WatchProcess() <- nil
 	return 1, nil
 }
 
@@ -304,6 +303,12 @@ func (e *lookupExec) commands() []workspaceapi.Cmd {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return slices.Clone(e.cmds)
+}
+
+func (e *lookupExec) lookups() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.looked)
 }
 
 // fakeInstallRoot resolves paths under the data directory of a workspace
@@ -842,6 +847,9 @@ func maxTokensE2EHandler(t *testing.T, model llmapi.ModelEntry) (tui.Handler, *a
 	}, ag
 }
 
-func (*lookupExec) LookPath(context.Context, string, string) (string, error) {
-	return "", errors.ErrUnsupported
+func (e *lookupExec) LookPath(_ context.Context, name, _ string) (string, error) {
+	e.mu.Lock()
+	e.looked = append(e.looked, name)
+	e.mu.Unlock()
+	return e.bin, e.err
 }

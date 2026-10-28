@@ -34,9 +34,15 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/storageapi/storagestub"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/extension/langext"
 	"unstable.build/rune/internal/extension/langext/langexttest"
 )
+
+func TestNewExtensionVersion(t *testing.T) {
+	_, meta := NewExtension()
+	assert.Equal(t, debug.Tag, meta.ExtensionVersion)
+}
 
 // bringUp is one run of the extension against a scripted executor, so
 // the environment decision is exercised without running real uv.

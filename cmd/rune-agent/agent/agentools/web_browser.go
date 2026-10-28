@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"slices"
@@ -125,30 +126,17 @@ func NewWebBrowser(
 
 // LookupAgentBrowser returns the absolute path agent-browser resolves to
 // on the workspace host's PATH, or an error if it is not installed there.
+// It runs no command, so the user is not asked to approve one.
 func LookupAgentBrowser(ctx context.Context, exec workspaceapi.Executor) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, webBrowserLookupTimeout)
 	defer cancel()
-	var stdout bytes.Buffer
-	watcher := newProcessWatcher()
-	_, err := exec.Start(ctx, workspaceapi.Cmd{
-		Path:    "sh",
-		Args:    []string{"-c", "command -v agent-browser"},
-		Stdout:  &stdout,
-		Stderr:  io.Discard,
-		Watcher: watcher,
-	})
-	if err != nil {
+	bin, err := exec.LookPath(ctx, "agent-browser", "")
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("agent-browser is not on PATH: %w", err)
+	case err != nil:
 		return "", fmt.Errorf("look up agent-browser: %w", err)
 	}
-	select {
-	case err = <-watcher.WatchProcess():
-	case <-ctx.Done():
-		return "", fmt.Errorf("look up agent-browser: %w", ctx.Err())
-	}
-	if err != nil {
-		return "", fmt.Errorf("agent-browser is not on PATH: %w", err)
-	}
-	bin := strings.TrimSpace(stdout.String())
 	if !path.IsAbs(bin) {
 		return "", fmt.Errorf("agent-browser resolved to %q, not an executable path", bin)
 	}

@@ -776,12 +776,13 @@ func runGUI(
 		envErr = multierr.Append(envErr, err)
 	}
 
+	soundOutput := gui.NewSounds()
 	root, err := newBootstrapHandler(
 		*flagDataPath, *flagConfigPath,
 		*flagWorkspace, shellRCDir, host, filenames,
 		launchCmd, runner, mu, publishEvent, cellPixelSize,
 		func(u *url.URL) error { return extbrowser.Browse(u) },
-		text.NewAsyncSystemClipboard(), os.TempDir(), rootCfg, trust,
+		text.NewAsyncSystemClipboard(), soundOutput, os.TempDir(), rootCfg, trust,
 	)
 	if err != nil {
 		fmt.Printf("ide: %s", err)
@@ -809,6 +810,8 @@ func runGUI(
 	if shellRCErr != nil {
 		reportShellRCErr(browser, shellRCErr)
 	}
+
+	soundOutput.SetVolume(getGUISoundVolume(browser, guiCfg))
 
 	options := buildGUIOptions(browser, root.config(), guiCfg, transparentWindow, mu, *flagFPS)
 	options = append(options, gui.WithDragObserver(root.dragObserver))

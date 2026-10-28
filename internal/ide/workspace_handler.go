@@ -716,8 +716,9 @@ func (h *workspaceManagerHandler) init(
 	if !cfg.tabStatusEnabled() {
 		notifyStatus = idestatus.NotifyConfig{}
 	}
-	h.status = idestatus.New(statusWorkspaces{h}, tabStatusConfigFor(cfg), notifyStatus, cfg.statusInboxStyle(),
-		h.scheduleNextTick, h.events.globalInterrupter())
+	h.status = idestatus.New(statusWorkspaces{h}, tabStatusConfigFor(cfg),
+		notifyStatus, cfg.sounds, cfg.statusInboxStyle(), h.scheduleNextTick,
+		h.events.globalInterrupter())
 
 	// Files and workspaces under the home directory share this manager
 	// entry; the reference held here for the IDE's lifetime keeps their
@@ -1511,6 +1512,15 @@ func (h *workspaceManagerHandler) afterPackageConfigMerge(
 			result.LivePaths = append(result.LivePaths, []string{"tutorials", name})
 		}
 		err = errors.Join(err, tutErr)
+	}
+
+	if event.TouchesPath(keySounds) {
+		// Reloading applies the merged sounds to the shared registry.
+		if _, reloadErr := h.reloadConfig(); reloadErr != nil {
+			err = errors.Join(err, fmt.Errorf("reload config for sounds: %w", reloadErr))
+		} else {
+			result.LivePaths = append(result.LivePaths, []string{keySounds})
+		}
 	}
 	return result, err
 }
@@ -2399,6 +2409,7 @@ func (h *workspaceManagerHandler) buildExtensions(
 			OnPromptWindow:                 ex.setStatusWindow,
 			WorkspaceConfigs:               h.workspaceTrust,
 			Notifications:                  notifications,
+			DataDir:                        installDir,
 		})
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("new command authorizer: %w", err)
@@ -3852,7 +3863,16 @@ func (s statusWorkspaces) Seen(ws, uri workspaceapi.URI) bool {
 	if s.h.unfocused || e == nil || s.h.focusEx() != e {
 		return false
 	}
-	seen, ok := statusURIOf(e.comp.Browser().FocusHandler())
+	b := e.comp.Browser()
+	if tab, ok := b.FocusTab(); ok && tab.URI().Equal(uri) {
+		return true
+	}
+	// Such as a prompt, whose content tells nothing of the uri.
+	if win, ok := e.statusWindows[uri.String()]; ok && b.Owns(win) {
+		focused, _ := win.Focus()
+		return focused
+	}
+	seen, ok := statusURIOf(b.FocusHandler())
 	return ok && seen.Equal(uri)
 }
 

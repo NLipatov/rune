@@ -32,6 +32,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/ide/idehistory"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -55,7 +56,8 @@ type WorkspaceStatus interface {
 	// such a terminal floats over its workspace.
 	InSight(ws, uri workspaceapi.URI) bool
 	// Seen reports whether Rune is in focus and the focused window of
-	// the workspace at ws, itself in focus, shows uri, which is no tab.
+	// the workspace at ws, itself in focus, shows uri: the tab at uri,
+	// or what reported at uri outside of a tab. Seen implies InSight.
 	Seen(ws, uri workspaceapi.URI) bool
 	// Notify raises a notification of msg at level in the workspace at
 	// ws and returns its id, or "" when the workspace is closed.
@@ -89,12 +91,17 @@ type NotifyConfig struct {
 	// same program; the latest state wins.
 	Interval time.Duration
 	// Messages notifies every new message a program reports, in sight
-	// or not.
+	// or not, but a blocked one while seen.
 	Messages bool
+	// Sounds maps a state to the name of the sound a program entering it
+	// plays, in sight or not, each time it enters it. A state it leaves
+	// out, or maps to "", plays none.
+	Sounds map[programstatus.State]string
 }
 
 // DefaultNotifyConfig notifies every message, and the blocked, error and
-// done states at most every two seconds per program.
+// done states at most every two seconds per program. Entering them plays
+// the warning, error and success sounds.
 func DefaultNotifyConfig() NotifyConfig {
 	return NotifyConfig{
 		States: map[programstatus.State]bool{
@@ -104,6 +111,11 @@ func DefaultNotifyConfig() NotifyConfig {
 		},
 		Interval: 2 * time.Second,
 		Messages: true,
+		Sounds: map[programstatus.State]string{
+			programstatus.Blocked: sounds.Warning,
+			programstatus.Error:   sounds.Error,
+			programstatus.Done:    sounds.Success,
+		},
 	}
 }
 
@@ -118,6 +130,7 @@ type Store struct {
 	host        WorkspaceStatus
 	cfg         browser.TabStatusConfig
 	notify      NotifyConfig
+	player      sounds.Player
 	style       InboxStyle
 	interrupter term.Interrupter
 	schedule    func(func()) bool
@@ -132,18 +145,20 @@ type Store struct {
 }
 
 // New returns an empty Store over the workspaces of host. cfg styles the
-// statuses, notify selects what is notified, and style styles the
-// inbox. schedule must run a function on a later tick of the host event
-// loop. interrupter, if not nil, wakes the host to keep open inboxes
-// live; without it, they stand still.
+// statuses, notify selects what is notified, player plays the sounds it
+// names, and style styles the inbox. schedule must run a function on a
+// later tick of the host event loop. interrupter, if not nil, wakes the
+// host to keep open inboxes live; without it, they stand still.
 func New(
-	host WorkspaceStatus, cfg browser.TabStatusConfig, notify NotifyConfig,
+	host WorkspaceStatus, cfg browser.TabStatusConfig,
+	notify NotifyConfig, player sounds.Player,
 	style InboxStyle, schedule func(func()) bool, interrupter term.Interrupter,
 ) *Store {
 	return &Store{
 		host:          host,
 		cfg:           cfg,
 		notify:        notify,
+		player:        player,
 		style:         style,
 		interrupter:   interrupter,
 		schedule:      schedule,
@@ -211,7 +226,8 @@ func (s *Store) TabRemoved(ws, uri workspaceapi.URI) {
 		return
 	}
 	delete(s.sources, key)
-	s.closeWorking(ws, key)
+	s.closeNote(ws, key, programstatus.Working)
+	s.closeNote(ws, key, programstatus.Blocked)
 	s.forgetNotes(func(k statusKey) bool { return k == key })
 	if len(src.status.Records) > 0 {
 		s.host.Changed(ws)
@@ -445,10 +461,21 @@ func (s *Store) update(src *statusSource, status programstatus.Summary) {
 func (s *Store) announce(src *statusSource, prev programstatus.Summary) {
 	key, status := src.key(), src.status
 	s.followWorking(src, prev)
+	if prev.State == programstatus.Blocked && status.State != programstatus.Blocked {
+		s.closeNote(src.ws, key, programstatus.Blocked)
+	}
+	if name := s.notify.Sounds[status.State]; name != "" && prev.State != status.State {
+		s.player.Play(name)
+	}
 	announced := false
 	if s.notify.Messages {
-		// In sight or not, as nothing else shows the message.
+		// In sight or not, as nothing else shows the message, but for a
+		// blocked one seen: the window shows what the program asks.
+		seen := s.host.Seen(src.ws, src.uri)
 		for _, rec := range newStatusMessages(prev, status) {
+			if seen && rec.State == programstatus.Blocked {
+				continue
+			}
 			s.post(src, rec.State, statusSourceLabel(s.name(src), rec.App)+": "+rec.Msg)
 			announced = announced || rec.State == status.State
 		}
@@ -536,7 +563,7 @@ func (s *Store) followWorking(src *statusSource, prev programstatus.Summary) {
 	switch {
 	case src.status.State != programstatus.Working:
 		if prev.State == programstatus.Working {
-			s.closeWorking(src.ws, src.key())
+			s.closeNote(src.ws, src.key(), programstatus.Working)
 		}
 	case src.status.Progress != prev.Progress:
 		progress, total := notificationProgress(src.status.Progress)
@@ -546,14 +573,15 @@ func (s *Store) followWorking(src *statusSource, prev programstatus.Summary) {
 	}
 }
 
-func (s *Store) closeWorking(ws workspaceapi.URI, key statusKey) {
-	note := noteKey{key, programstatus.Working}
+// closeNote closes the notification of key in state, which a working
+// one, pinned to follow the progress, never does on its own.
+func (s *Store) closeNote(ws workspaceapi.URI, key statusKey, state programstatus.State) {
+	note := noteKey{key, state}
 	id, ok := s.notes[note]
 	if !ok {
 		return
 	}
 	delete(s.notes, note)
-	// Pinned to follow the progress, it never closes on its own.
 	s.host.UpdateNotification(ws, id, "", 1, 1)
 }
 

@@ -160,6 +160,9 @@ func (t *bashTool) Execute(ctx context.Context, arguments string) agent.ToolResu
 		Stdout:  &buf,
 		Stderr:  &buf,
 		Watcher: watcher,
+		// The workspace shows it when it asks the user to authorize the
+		// command.
+		Description: args.Description,
 	}
 
 	_, err := t.exec.Start(ctx, cmd)

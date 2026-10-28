@@ -262,12 +262,14 @@ func newGUIBenchSession(tb testing.TB, cfg guiBenchConfig) *guiBenchSession {
 		tb.Fatalf("load config: %v", err)
 	}
 
+	soundOutput := gui.NewSounds()
+	soundOutput.SetMuted(true)
 	root, err := newBootstrapHandler(
 		s.dataDir, configPath, s.workDir, "", /* shellRCDir */
 		hostenv.New(s.dataDir, ""), files,
 		nil /* launchCmd */, ide.FuncExtensionsRunner(testE2EExtensionsRunner),
 		s.mu, publishEvent, cellPixelSize,
-		func(*url.URL) error { return nil }, clipboard.NewInMemory(),
+		func(*url.URL) error { return nil }, clipboard.NewInMemory(), soundOutput,
 		s.dataDir /* installBackupDir */, rootCfg,
 		pkgtrust.NewStore(),
 	)

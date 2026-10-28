@@ -52,6 +52,7 @@ import (
 	"unstable.build/rune/internal/ide/idenag"
 	"unstable.build/rune/internal/ide/idepkg"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/text"
 	"unstable.build/rune/internal/workspace"
 	"unstable.build/rune/internal/workspace/workspacessh"
@@ -72,6 +73,9 @@ type IDE struct {
 	storage          storageapi.Service
 	// playIntro is whether Ready plays the intro of the wallpaper.
 	playIntro bool
+	// soundRegistry resolves the names ideConfig.sounds plays. Only the
+	// IDE sets its entries, from the user config on every reload.
+	soundRegistry *sounds.Registry
 }
 
 // EventPublisher is a function that publishes the given event back
@@ -102,7 +106,7 @@ func New(
 // user config (config["terminal"][...] = ...) resolve against the full tree.
 func Config(cfgfilename string, def DefaultConfig, opts ...Option) (config.Config, error) {
 	op := newOptions(append([]Option{def.option()}, opts...)...)
-	cfg, err := loadIDEConfig(cfgfilename, op)
+	cfg, err := loadIDEConfig(cfgfilename, op, sounds.Silent)
 	return config.MapConfig(cfg.cfg), err
 }
 
@@ -213,6 +217,19 @@ func (i *IDE) SetDefaultAttributes(defAttr term.Attributes) {
 // Config returns the configuration loaded by this IDE.
 func (i *IDE) Config() config.Config {
 	return config.MapConfig(i.ideConfig.cfg)
+}
+
+// Sounds returns the player for the sounds defined in the `sounds`
+// section of the user config, the packages merged into it, and the
+// built-in sounds.
+func (i *IDE) Sounds() sounds.Player {
+	return i.ideConfig.sounds
+}
+
+// SoundNames returns the names Sounds can play, including silenced
+// ones, sorted.
+func (i *IDE) SoundNames() []string {
+	return i.soundRegistry.Names()
 }
 
 // Ready returns the root Handler of this IDE,
@@ -511,8 +528,10 @@ func (i *IDE) init(
 	i.options = op
 
 	defaultCfg := newDefaultConfig(op)
+	i.soundRegistry = sounds.NewRegistry(op.soundOutput)
 	var configErr error
-	i.ideConfig, configErr = loadIDEConfig(cfgfilename, op)
+	i.ideConfig, configErr = loadIDEConfig(cfgfilename, op, i.soundRegistry)
+	i.ideConfig.applySounds(i.soundRegistry, dataDir)
 
 	i.storage = storage
 	i.ideConfig.storage = storageapi.WithPartition(i.storage, "ide")
@@ -643,8 +662,11 @@ func (i *IDE) init(
 		i.ideConfig.notificationsConfig(), i.ideConfig, i.storage, dataDir,
 		i.publishEvent,
 		op.extensionRunner, trust, i.locker, op.extensions, func() (ideConfig, error) {
+			// Every reload applies the user config's sounds, which is
+			// how workspacereload and package installs pick them up.
 			cfg, err := reloadConfig(cfgfilename,
-				op.logo, defaultCfg, op.bell, op.scheduleFn)
+				op.logo, defaultCfg, i.soundRegistry, op.scheduleFn)
+			cfg.applySounds(i.soundRegistry, dataDir)
 			cfg.storage = i.ideConfig.storage
 			cfg.cellPixelSize = op.cellPixelSize
 			cfg.clip = op.clip
@@ -770,10 +792,12 @@ func newDefaultConfig(op options) DefaultConfig {
 	}
 }
 
-func loadIDEConfig(cfgfilename string, op options) (ideConfig, error) {
+func loadIDEConfig(
+	cfgfilename string, op options, player sounds.Player,
+) (ideConfig, error) {
 	var cfg ideConfig
 	err := loadConfig(&cfg, cfgfilename,
-		op.logo, newDefaultConfig(op), op.bell,
+		op.logo, newDefaultConfig(op), player,
 		op.scheduleFn)
 	cfg.cellPixelSize = op.cellPixelSize
 	cfg.clip = op.clip

@@ -132,12 +132,16 @@ func (t *Component) Init(
 		t.ptyIn = q
 	}
 
-	if cfg.ScheduleNextTick == nil || cfg.RingBell == nil {
-		panic("nil schedule/bell function(s)")
+	if cfg.ScheduleNextTick == nil || cfg.Sounds == nil {
+		panic("nil schedule function or sound player")
 	}
 
+	bell := func() {}
+	if cfg.BellSound != "" {
+		bell = func() { cfg.Sounds.Play(cfg.BellSound) }
+	}
 	t.parserHandler = newParserHandler(
-		&t.mu, t.ptyIn, t, tm, t.clipboard, cfg.scheduleBell, t.uri,
+		&t.mu, t.ptyIn, t, tm, t.clipboard, bell, t.uri,
 		cfg.NeedsAttentionAttributes, cfg.DynamicTabName, cfg.MaxLines, cfg.MinWidth,
 		cfg.CellPixelSize, cfg.FileSystem, cfg.TempDir)
 	t.keyboard = t.parserHandler.keyboard

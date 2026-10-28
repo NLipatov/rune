@@ -33,6 +33,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/ide/idehistory"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 )
 
@@ -67,6 +68,7 @@ type statusStoreTestHost struct {
 	tabs       map[statusKey]*browser.Tab
 	previews   map[statusKey]Preview
 	seen       map[statusKey]bool
+	inSight    bool
 	notified   []string
 	// shownNotes holds the notifications on screen by id, as a
 	// notifications.Container keeps them: the id stands for the message
@@ -112,7 +114,7 @@ func (h *statusStoreTestHost) TabIcon(ws, uri workspaceapi.URI) (rune, bool) {
 	}
 	return 'x', true
 }
-func (h *statusStoreTestHost) InSight(workspaceapi.URI, workspaceapi.URI) bool { return false }
+func (h *statusStoreTestHost) InSight(workspaceapi.URI, workspaceapi.URI) bool { return h.inSight }
 func (h *statusStoreTestHost) Seen(ws, uri workspaceapi.URI) bool {
 	return h.seen[statusKey{ws.String(), uri.String()}]
 }
@@ -221,7 +223,7 @@ func newStatusStoreTestWith(
 		shownNotes: make(map[string]*statusTestNote),
 	}
 	host.addWorkspace(ws, "1 home")
-	return host, New(host, cfg, NotifyConfig{}, statusTestStyle(), host.schedule, interrupter), ws
+	return host, New(host, cfg, NotifyConfig{}, sounds.Silent, statusTestStyle(), host.schedule, interrupter), ws
 }
 
 type statusStoreDetachedTest struct {
@@ -476,7 +478,8 @@ func TestStatusStoreNotifications(t *testing.T) {
 	b := browser.NewComponent(cfg)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	uri := statusStoreTestURI(t, "rune-agent://model/rolling-fox")
-	host.names[statusKey{ws.String(), uri.String()}] = "rolling-fox"
+	key := statusKey{ws.String(), uri.String()}
+	host.names[key] = "rolling-fox"
 	h := &statusStoreTestHandler{}
 	tab := b.NewTab(uri, 'x', "rolling-fox", h, h)
 	tabs := statusStoreTestTabs{component: b}
@@ -543,22 +546,18 @@ func TestStatusStoreNotifications(t *testing.T) {
 		},
 		want: []statusTestNote{note(browserapi.LevelWarn, "rolling-fox (claude): edit main.go?")},
 	}, {
-		name:   "each state has its own",
+		name:   "leaving blocked closes it, as what it asked is settled",
 		report: new(report(programstatus.Done, -1, "ok")),
-		want: []statusTestNote{
-			note(browserapi.LevelWarn, "rolling-fox (claude): edit main.go?"),
-			note(browserapi.LevelSuccess, "rolling-fox: ok"),
-		},
+		want:   []statusTestNote{note(browserapi.LevelSuccess, "rolling-fox: ok")},
 	}, {
-		name:   "error too",
+		name:   "each other state has its own",
 		report: new(report(programstatus.Error, -1, "boom")),
 		want: []statusTestNote{
-			note(browserapi.LevelWarn, "rolling-fox (claude): edit main.go?"),
 			note(browserapi.LevelError, "rolling-fox: boom"),
 			note(browserapi.LevelSuccess, "rolling-fox: ok"),
 		},
 	}, {
-		name: "blocked closes on its own like the rest",
+		name: "they close on their own",
 		do:   host.expire,
 	}, {
 		name:   "a transition without a message names the state",
@@ -569,7 +568,26 @@ func TestStatusStoreNotifications(t *testing.T) {
 		report: new(report(programstatus.Done, -1, "shipped")),
 		want:   []statusTestNote{note(browserapi.LevelSuccess, "rolling-fox: shipped")},
 	}, {
-		name:   "working again",
+		name: "a blocked message in the window the user looks at is not notified",
+		do:   func() { host.inSight, host.seen[key] = true, true },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindQuestion,
+			Progress: -1, App: "claude", Msg: "which database?",
+		},
+		want: []statusTestNote{note(browserapi.LevelSuccess, "rolling-fox: shipped")},
+	}, {
+		name: "out of sight, it is",
+		do:   func() { host.inSight, host.seen[key] = false, false },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindQuestion,
+			Progress: -1, App: "claude", Msg: "which table?",
+		},
+		want: []statusTestNote{
+			note(browserapi.LevelWarn, "rolling-fox (claude): which table?"),
+			note(browserapi.LevelSuccess, "rolling-fox: shipped"),
+		},
+	}, {
+		name:   "working again closes it",
 		report: new(report(programstatus.Working, 10, "Again")),
 		want: []statusTestNote{
 			working("rolling-fox: Again", 10, 100),
@@ -589,6 +607,17 @@ func TestStatusStoreNotifications(t *testing.T) {
 		assert.Equal(t, step.want, host.onScreen(), step.name)
 	}
 	assert.Empty(t, store.notes, "a removed tab leaves no notification behind")
+
+	shipped := note(browserapi.LevelSuccess, "rolling-fox: shipped")
+	tab = b.NewTab(uri, 'x', "rolling-fox", h, h)
+	require.NoError(t, store.SetTabStatus(ws, tabs, uri, programstatus.Report{
+		State: programstatus.Blocked, Kind: programstatus.KindQuestion, Progress: -1, Msg: "which database?",
+	}))
+	assert.Equal(t, []statusTestNote{shipped, note(browserapi.LevelWarn, "rolling-fox: which database?")},
+		host.onScreen())
+	require.True(t, b.RemoveTab(tab))
+	assert.Equal(t, []statusTestNote{shipped}, host.onScreen(), "a removed tab asks nothing anymore")
+	assert.Empty(t, store.notes)
 
 	// A terminal that is no tab, which goes once it holds no record.
 	pty := statusStoreTestURI(t, "file:///dev/ttys001")
@@ -657,6 +686,72 @@ func TestStatusStoreNotifyInterval(t *testing.T) {
 	send(report(programstatus.Error, ""), programstatus.Report{State: programstatus.Clear})
 	waitInterval()
 	assert.Empty(t, newNotes(), "a state gone before its deferred notification is not reported")
+}
+
+func TestStatusStoreSounds(t *testing.T) {
+	host, store, ws := newStatusStoreTest(t)
+	var played []string
+	store.player = sounds.PlayerFunc(func(name string) { played = append(played, name) })
+	store.notify = DefaultNotifyConfig()
+	uri := statusStoreTestURI(t, "file:///dev/ttys001")
+	key := statusKey{ws.String(), uri.String()}
+	report := func(state programstatus.State, msg string) *programstatus.Report {
+		return &programstatus.Report{State: state, Progress: -1, App: "make", Msg: msg}
+	}
+
+	for _, step := range []struct {
+		name   string
+		do     func()
+		report *programstatus.Report
+		want   []string
+	}{{
+		name:   "working plays nothing by default",
+		report: report(programstatus.Working, "building"),
+	}, {
+		name:   "done plays success",
+		report: report(programstatus.Done, ""),
+		want:   []string{sounds.Success},
+	}, {
+		name:   "staying done plays nothing",
+		report: report(programstatus.Done, "shipped"),
+	}, {
+		name: "blocked plays warning, within the notify interval",
+		do:   func() { store.lastNotified[key] = time.Now() },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindPermission, Progress: -1,
+		},
+		want: []string{sounds.Warning},
+	}, {
+		name:   "error plays error, in sight and seen",
+		do:     func() { host.inSight, host.seen[key] = true, true },
+		report: report(programstatus.Error, "boom"),
+		want:   []string{sounds.Error},
+	}, {
+		name: "a state mapped to a sound plays it, one mapped to none plays nothing",
+		do: func() {
+			store.notify.Sounds = map[programstatus.State]string{
+				programstatus.Working: "tick", programstatus.Done: "",
+			}
+		},
+		report: report(programstatus.Working, "again"),
+		want:   []string{"tick"},
+	}, {
+		name:   "unmapped",
+		report: report(programstatus.Done, ""),
+	}, {
+		name: "a disabled status plays nothing",
+		do:   func() { store.notify = NotifyConfig{} },
+		report: &programstatus.Report{
+			State: programstatus.Blocked, Kind: programstatus.KindQuestion, Progress: -1,
+		},
+	}} {
+		played = nil
+		if step.do != nil {
+			step.do()
+		}
+		require.NoError(t, store.SetTabStatus(ws, nil, uri, *step.report), step.name)
+		assert.Equal(t, step.want, played, step.name)
+	}
 }
 
 func TestStatusStoreRestore(t *testing.T) {
@@ -1068,12 +1163,15 @@ func TestStatusStoreUpdateDetachedSeen(t *testing.T) {
 		seen   bool
 		state  programstatus.State
 		listed bool
+		// quiet is whether its message goes unnotified.
+		quiet bool
 	}{
 		{name: "done seen", seen: true, state: programstatus.Done},
 		{name: "error seen", seen: true, state: programstatus.Error},
 		{name: "idle seen", seen: true, state: programstatus.Idle},
 		{name: "working seen", seen: true, state: programstatus.Working, listed: true},
-		{name: "blocked seen", seen: true, state: programstatus.Blocked, listed: true},
+		{name: "blocked seen", seen: true, state: programstatus.Blocked, listed: true, quiet: true},
+		{name: "blocked out of sight", state: programstatus.Blocked, listed: true},
 		{name: "error out of sight", state: programstatus.Error, listed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1086,15 +1184,20 @@ func TestStatusStoreUpdateDetachedSeen(t *testing.T) {
 				s.Apply(programstatus.Report{State: tc.state, Progress: -1, App: "make", Msg: "boom"})
 			})
 
-			assert.Equal(t, []string{"make: boom"}, host.notified, "its message is notified all the same")
+			want := []string{"make: boom"}
+			if tc.quiet {
+				want = nil
+			}
+			assert.Equal(t, want, host.notified,
+				"its message is notified all the same, unless the window shows what blocks it")
 			_, listed := store.Status(ws, uri)
 			assert.Equal(t, tc.listed, listed)
 			sum, _ := store.Rollup(ws)
-			want := programstatus.Idle
+			wantState := programstatus.Idle
 			if tc.listed {
-				want = tc.state
+				wantState = tc.state
 			}
-			assert.Equal(t, want, sum.State)
+			assert.Equal(t, wantState, sum.State)
 		})
 	}
 }

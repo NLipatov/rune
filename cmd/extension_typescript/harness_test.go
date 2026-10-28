@@ -214,19 +214,26 @@ type scriptedCmd struct {
 // fakeExecutor implements workspaceapi.Executor, dispatching on the
 // space-joined (cmd.Path, cmd.Args...) key. Unknown commands fail like a
 // missing binary. It records the directory of every command it runs.
+// LookPath answers from paths.
 type fakeExecutor struct {
 	mu        sync.Mutex
 	responses map[string]scriptedCmd
+	paths     map[string]string
 	calls     []string
 	dirs      []string
 }
 
 func newFakeExecutor() *fakeExecutor {
-	return &fakeExecutor{responses: map[string]scriptedCmd{}}
+	return &fakeExecutor{responses: map[string]scriptedCmd{}, paths: map[string]string{}}
 }
 
 func (e *fakeExecutor) respond(key string, r scriptedCmd) *fakeExecutor {
 	e.responses[key] = r
+	return e
+}
+
+func (e *fakeExecutor) onPath(name, bin string) *fakeExecutor {
+	e.paths[name] = bin
 	return e
 }
 
@@ -543,6 +550,12 @@ func (l *requestLSP) recorded() []semanticapi.ExecuteRequestParams {
 	return append([]semanticapi.ExecuteRequestParams(nil), l.requests...)
 }
 
-func (*fakeExecutor) LookPath(context.Context, string, string) (string, error) {
-	return "", errors.ErrUnsupported
+func (e *fakeExecutor) LookPath(_ context.Context, name, _ string) (string, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	bin, ok := e.paths[name]
+	if !ok {
+		return "", fmt.Errorf("look up %s: %w", name, iofs.ErrNotExist)
+	}
+	return bin, nil
 }

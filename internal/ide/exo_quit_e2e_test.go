@@ -35,6 +35,7 @@ import (
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/handler/handlertest"
 	"unstable.build/rune/internal/ide/idepkg/pkgtrust"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/text"
 )
@@ -92,7 +93,7 @@ command:
 	i, err := New(dir, configPath, dataDir, pkgtrust.NewStore(), newTestStorage(t, dataDir),
 		WithLocker(mu),
 		WithScheduleNextTick(scheduleNextTick),
-		WithBell(func() {}),
+		WithSoundBackend(sounds.BackendFunc(func(sounds.Sound) {})),
 		WithStreamingOpen(true),
 		WithPublishEvent(publish),
 	)

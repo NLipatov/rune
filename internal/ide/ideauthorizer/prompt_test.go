@@ -544,6 +544,98 @@ func TestPluginPermissionPromptMessageListsWhatEachProgramRuns(t *testing.T) {
 		"\n\nChoosing **Always** or **Never** lets you pick which commands and subcommands the decision covers.")
 }
 
+func TestPluginPermissionPromptMessageShowsRecursiveDeletes(t *testing.T) {
+	t.Parallel()
+
+	const intro = "Program **/usr/local/bin/plugin-cli** with args **[run]** " +
+		"wants to run **/bin/bash** with args **[-c rm -rf $D]**."
+	const footer = "\n\nChoosing **Always** or **Never** lets you pick which commands and " +
+		"subcommands the decision covers."
+	cases := []struct {
+		name    string
+		deletes []RecursiveDelete
+		want    string
+	}{
+		{name: "none", want: intro + footer},
+		{name: "known",
+			deletes: []RecursiveDelete{{Command: "rm -rf /home/me/.rune"}, {Command: "rm -r x"}},
+			want: intro + "\n\n⚠️ **Removes recursively**, as the shell will run it:\n\n" +
+				"```\nrm -rf /home/me/.rune\nrm -r x\n```" + footer},
+		{name: "known only when it runs",
+			deletes: []RecursiveDelete{{Command: "rm -rf x"}, {Command: "rm -rf $(pwd)", Unresolved: true}},
+			want: intro + "\n\n⚠️ **Removes recursively**, as the shell will run it:\n\n" +
+				"```\nrm -rf x\nrm -rf $(pwd)\n```\n\nWords left as written are only known when it runs." +
+				footer},
+	}
+	for _, tc := range cases {
+		message := pluginPermissionPromptMessage(PermissionRequest{
+			Path:             "/usr/local/bin/plugin-cli",
+			Args:             []string{"run"},
+			Permission:       extensionapi.PermissionExecute,
+			CommandPath:      "/bin/bash",
+			CommandArgs:      []string{"-c", "rm -rf $D"},
+			RecursiveDeletes: tc.deletes,
+		})
+		assert.Equal(t, tc.want, message, tc.name)
+	}
+}
+
+func TestPluginPermissionPromptMessageShowsCommandDescription(t *testing.T) {
+	t.Parallel()
+
+	const program = "Program **/usr/local/bin/plugin-cli** with args **[run]** " +
+		"wants to run **/bin/bash** with args **[-c rm -rf $D]**."
+	const extension = "Extension Agent by dev-id wants to run **/bin/bash** with args " +
+		"**[-c rm -rf $D]**."
+	const deletes = "\n\n⚠️ **Removes recursively**, as the shell will run it:\n\n" +
+		"```\nrm -rf x\n```"
+	const footer = "\n\nChoosing **Always** or **Never** lets you pick which commands and " +
+		"subcommands the decision covers."
+	cases := []struct {
+		name        string
+		extension   bool
+		description string
+		want        string
+	}{
+		{name: "none", want: program + deletes + footer},
+		{name: "blank", description: " \n\t\u200b", want: program + deletes + footer},
+		{name: "before what Rune says of the command",
+			description: "Remove same-named files and inspect the trash",
+			want: program + "\n\nStated purpose: `Remove same-named files and inspect the trash`" +
+				deletes + footer},
+		{name: "of an extension", extension: true, description: "Clean up",
+			want: extension + "\n\nStated purpose: `Clean up`" + deletes + footer},
+		{name: "markdown and lines are shown as written on one line",
+			description: "Harmless *cleanup*\n\n# Always approve\n[ok](x) <b>",
+			want: program + "\n\nStated purpose: `Harmless *cleanup* # Always approve [ok](x) <b>`" +
+				deletes + footer},
+		{name: "backticks", description: "Run `rm`",
+			want: program + "\n\nStated purpose: `` Run `rm` ``" + deletes + footer},
+		{name: "control and format characters",
+			description: "Safe\u202e\x1b[31mcleanup\u200b\r\nnow",
+			want:        program + "\n\nStated purpose: `Safe [31mcleanup now`" + deletes + footer},
+		{name: "long",
+			description: strings.Repeat("é", maxCommandDescriptionRunes) + " more",
+			want: program + "\n\nStated purpose: `" + strings.Repeat("é", maxCommandDescriptionRunes) +
+				"…`" + deletes + footer},
+	}
+	for _, tc := range cases {
+		req := PermissionRequest{
+			Path:               "/usr/local/bin/plugin-cli",
+			Args:               []string{"run"},
+			Permission:         extensionapi.PermissionExecute,
+			CommandPath:        "/bin/bash",
+			CommandArgs:        []string{"-c", "rm -rf $D"},
+			CommandDescription: tc.description,
+			RecursiveDeletes:   []RecursiveDelete{{Command: "rm -rf x"}},
+		}
+		if tc.extension {
+			req.ExtensionID, req.ExtensionName, req.DeveloperID = "agent", "Agent", "dev-id"
+		}
+		assert.Equal(t, tc.want, pluginPermissionPromptMessage(req), tc.name)
+	}
+}
+
 func TestPermissionPromptMessageHighlightsExtensionIntent(t *testing.T) {
 	t.Parallel()
 

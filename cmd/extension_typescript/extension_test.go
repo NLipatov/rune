@@ -28,12 +28,14 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/extensionapi"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
+	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/extension/langext/langexttest"
 )
 
 func TestNewExtensionMetadata(t *testing.T) {
 	_, meta := NewExtension()
 	assert.Equal(t, "typescript", meta.ExtensionID)
+	assert.Equal(t, debug.Tag, meta.ExtensionVersion)
 	for _, p := range []extensionapi.Permission{
 		extensionapi.PermissionLSP,
 		extensionapi.PermissionPackages,

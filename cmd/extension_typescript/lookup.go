@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -174,7 +175,7 @@ func findPackaged(
 // hostServer looks name up on the workspace host and accepts it only if
 // it is TypeScript 7 or later: an older tsc does not serve LSP.
 func hostServer(ctx context.Context, exec workspaceapi.Executor, name string) (string, bool) {
-	bin, err := probeShellLookup(ctx, exec, name)
+	bin, err := lookPath(ctx, exec, name)
 	if err != nil {
 		return "", false
 	}
@@ -197,22 +198,18 @@ func isNativeVersion(out string) bool {
 	return err == nil && n >= minServerMajor
 }
 
-func probeShellLookup(
-	ctx context.Context, exec workspaceapi.Executor, name string,
-) (string, error) {
-	out, err := commandOutput(ctx, exec, "sh", "-lc", "command -v "+name)
+// lookPath returns the absolute path name resolves to on the workspace
+// host's PATH. It runs no command, so the user is not asked to approve
+// one.
+func lookPath(ctx context.Context, exec workspaceapi.Executor, name string) (string, error) {
+	bin, err := exec.LookPath(ctx, name, "")
 	if err != nil {
 		return "", err
 	}
-	// command -v may print multiple lines for aliases/functions; take
-	// the first absolute path it printed.
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "/") {
-			return line, nil
-		}
+	if !path.IsAbs(bin) {
+		return "", fmt.Errorf("%s resolved to %q, not an absolute path", name, bin)
 	}
-	return "", fmt.Errorf("shell probe produced no absolute path: %q", out)
+	return bin, nil
 }
 
 // commandOutput runs bin with args and returns its stdout, draining

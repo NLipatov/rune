@@ -45,6 +45,7 @@ import (
 	"unstable.build/rune/internal/handler/command"
 	"unstable.build/rune/internal/ide/ideauthorizer"
 	"unstable.build/rune/internal/ide/idepkg"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/text"
 )
 
@@ -307,10 +308,13 @@ func (d DefaultConfig) option() Option {
 	return WithDefaultConfigStarlark(d.src, d.modal, d.tui)
 }
 
-// WithBell sets the default mechanism to ring the system bell.
-func WithBell(bell func()) Option {
+// WithSoundBackend sets where the IDE plays its sounds, such as a
+// terminal ringing the bell, once it has resolved their names from the
+// `sounds` config. The default rings the host terminal's bell for every
+// sound.
+func WithSoundBackend(o sounds.Backend) Option {
 	return func(opts *options) {
-		opts.bell = bell
+		opts.soundOutput = o
 	}
 }
 
@@ -572,7 +576,7 @@ type options struct {
 	workspaceConfig      string
 	logo                 *Logo
 	defaultConfig        string
-	bell                 func()
+	soundOutput          sounds.Backend
 	scheduleFn           func(func()) bool
 	cellPixelSize        func() (int, int)
 	clip                 clipboard.Register
@@ -631,7 +635,7 @@ func defaultOptions() options {
 		extensions:         make(map[string]Extension),
 		workspaceConfig:    ".iderc",
 		defaultConfig:      "config = {}",
-		bell:               term.RingBell,
+		soundOutput:        terminalSounds,
 		scheduleFn:         term.ScheduleNextTick,
 		afterFunc:          time.AfterFunc,
 		workspacesBarFrame: true,
@@ -674,3 +678,10 @@ func (n nopExtensionsRunner) Close() error {
 func (n nopExtensionsRunner) WaitReady(ctx context.Context, id string) error {
 	return nil
 }
+
+// terminalSounds rings the host terminal's bell, which is the only
+// sound a terminal can make. It publishes the bell rather than ringing
+// it directly because Play may be called off the event loop.
+var terminalSounds = sounds.BackendFunc(func(sounds.Sound) {
+	term.PublishBell()
+})
