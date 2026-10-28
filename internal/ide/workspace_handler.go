@@ -3862,7 +3862,16 @@ func (s statusWorkspaces) Seen(ws, uri workspaceapi.URI) bool {
 	if s.h.unfocused || e == nil || s.h.focusEx() != e {
 		return false
 	}
-	seen, ok := statusURIOf(e.comp.Browser().FocusHandler())
+	b := e.comp.Browser()
+	if tab, ok := b.FocusTab(); ok && tab.URI().Equal(uri) {
+		return true
+	}
+	// Such as a prompt, whose content tells nothing of the uri.
+	if win, ok := e.statusWindows[uri.String()]; ok && b.Owns(win) {
+		focused, _ := win.Focus()
+		return focused
+	}
+	seen, ok := statusURIOf(b.FocusHandler())
 	return ok && seen.Equal(uri)
 }
 

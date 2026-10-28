@@ -1196,9 +1196,14 @@ func TestTabStatusNotifications(t *testing.T) {
 	assert.Equal(t, []string{sounds.Warning}, newSounds(), "but plays its sound")
 
 	send(seen, report(programstatus.Blocked, "approve?"))
-	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve?"), newNotes(),
-		"a message comes through in sight")
+	assert.Empty(t, newNotes(), "nor is a blocked message, as the tab shows what it asks")
 	assert.Empty(t, newSounds(), "a message in the same state plays nothing")
+
+	m.Handle(term.Event{Type: term.EventUnfocus})
+	send(seen, report(programstatus.Blocked, "approve again?"))
+	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve again?"), newNotes(),
+		"with Rune out of focus, it comes through")
+	m.Handle(term.Event{Type: term.EventFocus})
 
 	send(chat, report(programstatus.Error, ""))
 	assert.Equal(t, note(browserapi.LevelError, "rolling-fox: error"), newNotes(),
@@ -9208,7 +9213,23 @@ func (r *authorizerCapturingRunner) authorizer(uri workspaceapi.URI) extensionv2
 	return r.authorizers[uri.String()]
 }
 
-func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
+// commandAuthorizerTest drives the command authorizer of a file
+// workspace, the one in focus, as an extension running tool, an
+// executable on PATH.
+type commandAuthorizerTest struct {
+	m *testWorkspaceManagerHandler
+	h *safeHandler
+	// authorize asks to run tool with args, and returns the outcome.
+	authorize func(args ...string) <-chan error
+	// waitFor waits for text to be on screen.
+	waitFor func(text string)
+	// await waits for the outcome done holds.
+	await  func(done <-chan error) error
+	screen func() string
+}
+
+func newCommandAuthorizerTest(t *testing.T) commandAuthorizerTest {
+	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o755))
@@ -9273,26 +9294,73 @@ func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 		return err
 	}
+	return commandAuthorizerTest{
+		m: m, h: h, authorize: authorize, waitFor: waitFor, await: await, screen: screen,
+	}
+}
 
-	done := authorize("sub", "arg")
-	waitFor("Choosing Always or Never lets you pick")
-	h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
-	waitFor("From now on, extension Test Extension may run the")
-	picker := screen()
+func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
+	a := newCommandAuthorizerTest(t)
+	done := a.authorize("sub", "arg")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
+	a.waitFor("From now on, extension Test Extension may run the")
+	picker := a.screen()
 	assert.Contains(t, picker, "│ \U000F012E  tool *")
 	assert.Contains(t, picker, "│ └─ \U000F0132  tool sub *")
 	assert.Contains(t, picker, "│    └─ \U000F0132  tool sub arg")
-	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
-	require.NoError(t, await(done))
-	assert.NotContains(t, screen(), "From now on")
+	a.h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	require.NoError(t, a.await(done))
+	assert.NotContains(t, a.screen(), "From now on")
 
-	require.NoError(t, await(authorize("sub", "other")),
+	require.NoError(t, a.await(a.authorize("sub", "other")),
 		"the picked scope covers the subcommand")
-	done = authorize("other")
-	waitFor("Choosing Always or Never lets you pick")
-	h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
-	require.ErrorIs(t, await(done), blueauth.ErrForbidden,
+	done = a.authorize("other")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
+	require.ErrorIs(t, a.await(done), blueauth.ErrForbidden,
 		"the scope that was not picked is not covered")
+}
+
+func TestBuildExtensionsCommandAuthorizerNotifiesUnseenPrompts(t *testing.T) {
+	a := newCommandAuthorizerTest(t)
+	notes := &recordingNotifications{}
+	a.m.locked(func() {
+		w := a.m.workspaces[a.m.focus]
+		notes.inner = w.notifications
+		w.notifications = notes
+	})
+	warnings := func() []capturedNote {
+		return slices.DeleteFunc(notes.snapshot(), func(n capturedNote) bool {
+			return n.level != browserapi.LevelWarn
+		})
+	}
+
+	done := a.authorize("sub")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
+	a.waitFor("From now on, extension Test Extension may run the")
+	a.h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	require.NoError(t, a.await(done))
+	assert.Empty(t, warnings(), "neither the prompt nor the picker in focus is notified")
+
+	warned := len(warnings())
+	a.h.Handle(term.Event{Type: term.EventUnfocus})
+	done = a.authorize("other")
+	a.waitFor("Choosing Always or Never lets you pick")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		a.m.quiesce()
+		got := warnings()[warned:]
+		if assert.Len(c, got, 1) {
+			assert.Contains(c, got[0].msg, "User authorization required for")
+		}
+	}, 5*time.Second, 10*time.Millisecond, "with Rune out of focus, the prompt is notified")
+	updates := len(notes.updatesSnapshot())
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
+	require.ErrorIs(t, a.await(done), blueauth.ErrForbidden)
+	a.m.quiesce()
+	assert.Contains(t, notes.updatesSnapshot()[updates:],
+		capturedUpdate{progress: 1, total: 1, ok: true}, "answered, its notification closes")
 }
 
 func TestWorkspaceReadyCommand(t *testing.T) {
