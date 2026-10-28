@@ -196,16 +196,16 @@ html[data-rune-theme="auge"] {
   --rune-lilac:   #FF9966;
 }
 html[data-rune-theme="ritchie"] {
-  --rune-bg:      #101421;
-  --rune-fg:      #FFFBF6;
-  --rune-fg-high: #FFFFFF;
-  --rune-hair:    #565656;
-  --rune-orange:  #49A4F8;
-  --rune-brick:   #EC5357;
-  --rune-gold:    #F6C744;
-  --rune-olive:   #ABE047;
-  --rune-teal:    #99FAF2;
-  --rune-lilac:   #A47DE9;
+  --rune-bg:      #F8F8F8;
+  --rune-fg:      #2A2B33;
+  --rune-fg-high: #3A3A3A;
+  --rune-hair:    #C6C6C6;
+  --rune-orange:  #2F5AF3;
+  --rune-brick:   #DE3D35;
+  --rune-gold:    #D2B67B;
+  --rune-olive:   #3E953A;
+  --rune-teal:    #3E953A;
+  --rune-lilac:   #A00095;
 }
 html[data-rune-theme="kelleher"] {
   --rune-bg:      #000000;
@@ -1468,7 +1468,7 @@ html[data-rune-theme="hopper"]     .intro-screenshot { background-image: image-s
 html[data-rune-theme="kernighan"]  .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_kernighan.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_kernighan.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_kernighan.png") type("image/png")); }
 html[data-rune-theme="wozniak"]    .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_wozniak.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_wozniak.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_wozniak.png") type("image/png")); }
 html[data-rune-theme="auge"]       .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_auge.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_auge.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_auge.png") type("image/png")); }
-html[data-rune-theme="ritchie"]    .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie.png") type("image/png")); }
+html[data-rune-theme="ritchie"]    .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie_v2.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie_v2.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_ritchie_v2.png") type("image/png")); }
 html[data-rune-theme="kelleher"]   .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_kelleher.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_kelleher.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_kelleher.png") type("image/png")); }
 html[data-rune-theme="sanfilippo"] .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_sanfilippo.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_sanfilippo.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_sanfilippo.png") type("image/png")); }
 html[data-rune-theme="frost"]      .intro-screenshot { background-image: image-set(url("https://assets.rune.build/images/screenshots/screenshot_1_frost.avif") type("image/avif"), url("https://assets.rune.build/images/screenshots/screenshot_1_frost.webp") type("image/webp"), url("https://assets.rune.build/images/screenshots/screenshot_1_frost.png") type("image/png")); }

@@ -36,7 +36,7 @@ const THEMES: ThemeDef[] = [
   {id: 'kernighan', label: 'Kernighan', swatch: '#3B78FF'},
   {id: 'wozniak', label: 'Wozniak', swatch: '#6346FF'},
   {id: 'auge', label: 'Auge', swatch: '#FFCC33'},
-  {id: 'ritchie', label: 'Ritchie', swatch: '#49A4F8'},
+  {id: 'ritchie', label: 'Ritchie', swatch: '#2F5AF3'},
   {id: 'kelleher', label: 'Kelleher', swatch: '#9D65FF'},
   {id: 'sanfilippo', label: 'Sanfilippo', swatch: '#C1E3FE'},
   {id: 'frost', label: 'Frost', swatch: '#D7AFFF'},
