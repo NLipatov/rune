@@ -2409,6 +2409,7 @@ func (h *workspaceManagerHandler) buildExtensions(
 			OnPromptWindow:                 ex.setStatusWindow,
 			WorkspaceConfigs:               h.workspaceTrust,
 			Notifications:                  notifications,
+			DataDir:                        installDir,
 		})
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("new command authorizer: %w", err)
