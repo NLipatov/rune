@@ -117,7 +117,8 @@ func (s *Server) StartCommand(stream workspacerpc.Executor_StartCommandServer) e
 	ctx, cancelCtx := context.WithCancel(s.ctx)
 	ctx = processctx.DeriveCommandContext(ctx, stream.Context())
 	streamer, err := newServerCommandStreamer(
-		ctx, cancelCtx, stream, start.GetName(), start.GetDir(), start.GetArgs(), start.GetEnv(),
+		ctx, cancelCtx, stream, start.GetName(), start.GetDir(), start.GetDescription(),
+		start.GetArgs(), start.GetEnv(),
 		start.GetStdin(), start.GetStdout(), start.GetStderr(),
 		start.GetStdinFd(), start.GetStdoutFd(), start.GetStderrFd(),
 		start.GetStdinName(), start.GetStdoutName(), start.GetStderrName(),

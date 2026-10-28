@@ -67,8 +67,9 @@ func TestRunCommandTranslatesArgs(t *testing.T) {
 	got := decode(t, base.lastArgs)
 	assert.Equal(t, "go test ./...", got["command"])
 	assert.Equal(t, "/repo/pkg", got["working_dir"])
-	// bash requires a description; synthesize it from the command.
-	assert.Equal(t, "go test ./...", got["description"])
+	// The authorization prompt shows the description as what the command
+	// is for, and Antigravity gives none.
+	assert.NotContains(t, got, "description")
 
 	assert.Equal(t, "go test ./...", tool.Summary(`{"CommandLine":"go test ./...","Cwd":"/"}`))
 }

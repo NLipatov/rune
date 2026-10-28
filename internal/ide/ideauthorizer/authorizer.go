@@ -74,6 +74,10 @@ type PermissionRequest struct {
 	CommandPath   string
 	CommandArgs   []string
 	CommandDir    string
+	// CommandDescription is what the requester says the command is for,
+	// or "". The requester writes it, so prompts show it as a claim and
+	// no decision depends on it.
+	CommandDescription string
 	// Programs are the programs the command runs, shells and wrappers
 	// before the programs they run.
 	Programs []ProgramSummary
@@ -457,6 +461,7 @@ func (a *Authorizer) AuthorizeCommand(
 	req.CommandPath = command.Path
 	req.CommandArgs = append([]string(nil), command.Args...)
 	req.CommandDir = command.Dir
+	req.CommandDescription = cmd.Description
 	req.Programs = c.programSummaries()
 	req.CommandRemember = c.remember()
 	req.CommandOnceReason = c.plan.Reason

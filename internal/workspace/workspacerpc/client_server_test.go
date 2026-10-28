@@ -424,6 +424,7 @@ func TestServerStartCommandAuthorizer(t *testing.T) {
 				assert.Equal(t, "six", cmd.Path)
 				assert.Equal(t, []string{"arg1"}, cmd.Args)
 				assert.Equal(t, "/tmp", cmd.Dir)
+				assert.Equal(t, "Run six on arg1", cmd.Description)
 				return nil
 			}))
 		defer cleanup()
@@ -436,9 +437,10 @@ func TestServerStartCommandAuthorizer(t *testing.T) {
 			})
 
 		pid, err := client.StartCommand(context.Background(), workspaceapi.Cmd{
-			Path: "six",
-			Args: []string{"arg1"},
-			Dir:  "/tmp",
+			Path:        "six",
+			Args:        []string{"arg1"},
+			Dir:         "/tmp",
+			Description: "Run six on arg1",
 		})
 		require.NoError(t, err)
 		assert.Equal(t, workspaceapi.Pid(1), pid)

@@ -2002,6 +2002,30 @@ func TestAuthorizerAuthorizeStartCommandOnceDecisionIncludesPeerAndCommand(t *te
 	}
 }
 
+func TestAuthorizerAuthorizeCommandShowsDescriptionButDoesNotDecideOnIt(t *testing.T) {
+	t.Parallel()
+
+	opener := &stubPromptOpener{decision: PermissionAllowOnce}
+	a := newTestAuthorizerCore(opener, storagestub.NewInMemoryService())
+	ctx := contextWithPeerProcess(context.Background(), peerprocess.Process{
+		PID:  123,
+		UID:  501,
+		Exe:  "/usr/local/bin/plugin-cli",
+		Argv: []string{"plugin-cli", "run"},
+	})
+	ctx = blueauth.ContextWithClaims(ctx, blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
+
+	for _, description := range []string{"Find foo", "Something else entirely", ""} {
+		require.NoError(t, a.AuthorizeCommand(ctx, workspaceapi.Cmd{
+			Path: "/bin/grep", Args: []string{"foo"}, Dir: "/tmp", Description: description,
+		}))
+	}
+
+	require.Equal(t, 1, opener.calls)
+	assert.Contains(t, opener.messages[0], "\n\nStated purpose: `Find foo`")
+	assert.Len(t, a.once, 1)
+}
+
 // blockingPromptOpener blocks every Prompt call on a trigger channel
 // until the test calls release(). It records the PromptHandler of the
 // first prompt it observes so the test can simulate the user approving
