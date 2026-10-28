@@ -12738,7 +12738,7 @@ func TestNormalPageScrolls(t *testing.T) {
 			name:          "ctrl-f move screen down one page, cursor to first line",
 			setCursor:     term.Coordinates{Y: 1},
 			inputSequence: term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'f'},
-			expect:        "X\ne\nf\ng",
+			expect:        "X\nd\ne\nf",
 		},
 		{
 			name:          "ctrl-u move screen up half page, cursor to last line",
@@ -12771,6 +12771,87 @@ func TestNormalPageScrolls(t *testing.T) {
 			w.Flush()
 			assert.Equal(t, tcase.expect, w.String())
 
+		})
+	}
+}
+
+func TestNormalPageScrollsViewport(t *testing.T) {
+	content := strings.TrimSuffix(strings.Repeat("abcd\n", 100), "\n")
+	for _, tc := range []struct {
+		name       string
+		width      int
+		height     int
+		offset     int
+		key        rune
+		wrap       bool
+		fold       bool
+		wantOffset int
+		wantCursor term.Coordinates
+	}{
+		{name: "forward", width: 80, height: 46, key: 'f',
+			wantOffset: 44, wantCursor: term.Coordinates{Y: 44}},
+		{name: "backward", width: 80, height: 46, offset: 44, key: 'b',
+			wantOffset: 0, wantCursor: term.Coordinates{Y: 45}},
+		{name: "forward near end", width: 80, height: 46, offset: 44, key: 'f',
+			wantOffset: 54, wantCursor: term.Coordinates{Y: 54}},
+		{name: "forward at end", width: 80, height: 46, offset: 54, key: 'f',
+			wantOffset: 54, wantCursor: term.Coordinates{Y: 99}},
+		{name: "backward near start", width: 80, height: 46, offset: 10, key: 'b',
+			wantOffset: 0, wantCursor: term.Coordinates{Y: 45}},
+		{name: "backward at start", width: 80, height: 46, key: 'b',
+			wantOffset: 0, wantCursor: term.Coordinates{}},
+		{name: "forward one row", width: 80, height: 1, key: 'f',
+			wantOffset: 1, wantCursor: term.Coordinates{Y: 1}},
+		{name: "backward one row", width: 80, height: 1, offset: 1, key: 'b',
+			wantOffset: 0, wantCursor: term.Coordinates{}},
+		{name: "forward two rows", width: 80, height: 2, key: 'f',
+			wantOffset: 1, wantCursor: term.Coordinates{Y: 1}},
+		{name: "backward two rows", width: 80, height: 2, offset: 1, key: 'b',
+			wantOffset: 0, wantCursor: term.Coordinates{Y: 1}},
+		{name: "forward wrapped lines", width: 2, height: 6, key: 'f', wrap: true,
+			wantOffset: 4, wantCursor: term.Coordinates{Y: 2}},
+		{name: "backward wrapped lines", width: 2, height: 6, offset: 4, key: 'b', wrap: true,
+			wantOffset: 0, wantCursor: term.Coordinates{X: 2, Y: 2}},
+		{name: "forward folded lines", width: 80, height: 6, key: 'f', fold: true,
+			wantOffset: 4, wantCursor: term.Coordinates{Y: 12}},
+		{name: "backward folded lines", width: 80, height: 6, offset: 4, key: 'b', fold: true,
+			wantOffset: 0, wantCursor: term.Coordinates{Y: 13}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, row := range []int{0, tc.height / 2, max(0, tc.height-2), tc.height - 1} {
+				t.Run(fmt.Sprintf("cursor row %d", row+1), func(t *testing.T) {
+					vi := setupVi(t, content, 2, WithWrap(tc.wrap))
+					vi.Resize(tc.width, tc.height)
+					if tc.fold {
+						require.True(t, vi.less.Scroll().MarkHidden(1, 9))
+					}
+					vi.less.Scroll().SetOffset(term.Coordinates{Y: tc.offset})
+					vi.Draw(term.NoopWriter{})
+					vi.cursor.MoveToWindow(term.Coordinates{Y: row})
+					require.Equal(t, tc.offset, vi.less.Scroll().SeekOffset())
+					require.Equal(t, row, vi.cursor.Coordinates().Y)
+
+					before := vi.cursorAtScroll()
+					_, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: tc.key})
+					if tc.offset != tc.wantOffset || before != tc.wantCursor {
+						assert.True(t, handled)
+					}
+					assert.Equal(t, tc.wantOffset, vi.less.Scroll().SeekOffset())
+					assert.Equal(t, tc.wantCursor, vi.cursorAtScroll())
+				})
+			}
+		})
+	}
+}
+
+func TestNormalPageScrollsBeforeResize(t *testing.T) {
+	for _, ch := range []rune{'f', 'b'} {
+		t.Run(string(ch), func(t *testing.T) {
+			vi := setupVi(t, "a\nb\nc", 2)
+			_, handled := vi.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: ch})
+			assert.False(t, handled)
+			assert.Zero(t, vi.less.Scroll().SeekOffset())
+			assert.Equal(t, term.Coordinates{}, vi.cursorAtScroll())
 		})
 	}
 }

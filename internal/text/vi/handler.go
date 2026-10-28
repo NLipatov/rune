@@ -909,16 +909,36 @@ func (vi *viHandlerImpl) handleNormal(ev term.Event) (quit, handled bool) {
 				}
 			}
 		case 'f':
-			by := vi.less.Scroll().SizeHeight() - pagePadding
-			handled = vi.cursor.MoveDownLines(by)
+			scroll := vi.less.Scroll()
+			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
+				break
+			}
+			for range max(1, scroll.SizeHeight()-pagePadding) {
+				if !scroll.SeekDown() {
+					break
+				}
+				handled = true
+			}
 			if handled {
-				vi.cursor.RepositionTop()
+				vi.cursor.MoveToWindowTop()
+			} else {
+				handled = vi.cursor.MoveToWindowBottom()
 			}
 		case 'b':
-			by := vi.less.Scroll().SizeHeight() - pagePadding
-			handled = vi.cursor.MoveUpLines(by)
+			scroll := vi.less.Scroll()
+			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
+				break
+			}
+			for range max(1, scroll.SizeHeight()-pagePadding) {
+				if !scroll.SeekUp() {
+					break
+				}
+				handled = true
+			}
 			if handled {
-				vi.cursor.RepositionBottom()
+				vi.cursor.MoveToWindowBottom()
+			} else {
+				handled = vi.cursor.MoveToWindowTop()
 			}
 		case 'd':
 			handled = vi.cursor.MoveDownLines(vi.less.Scroll().SizeHeight() / 2)
