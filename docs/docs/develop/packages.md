@@ -299,6 +299,24 @@ After install, the tutorial is available like any other. See the
 [Tutorials guide](./tutorials.md) for how to author one and register it
 additively.
 
+### Registering sounds
+
+A package can ship audio files and register them as named
+[sounds](../learn/sounds.md). Include the files in the package and add
+`sounds.<name>` entries that point at them with the install-location
+variables:
+
+```yaml title="config.yaml"
+sounds:
+  <name>: '$RUNE_DATADIR/lib/$RUNE_PKG_ID/<file>.wav'
+```
+
+The sounds are available as soon as the package is installed. Users play
+them by referencing their names from their own configuration, for example
+`terminal.bell: <name>`, or by pointing a built-in sound at them, such as
+`sounds.warning: <name>`. Prefer names that start with your package's
+name so they do not collide with other packages' sounds.
+
 ## The on-disk package format
 
 Whichever way a package is delivered, Rune installs it into the same layout

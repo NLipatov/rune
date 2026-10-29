@@ -80,6 +80,7 @@ import (
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/vctrl/testgit"
 	"unstable.build/rune/internal/localstorage"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vtereservoir"
 	"unstable.build/rune/internal/text"
@@ -701,12 +702,15 @@ func TestSetTabNameWithAttrIntegration(t *testing.T) {
 
 	cfg := defaultConfigWithWrap(false)
 	bellRung := make(chan struct{}, 8)
-	cfg.ringBell = func() {
+	cfg.sounds = sounds.PlayerFunc(func(name string) {
+		if name != sounds.Warning {
+			return
+		}
 		select {
 		case bellRung <- struct{}{}:
 		default:
 		}
-	}
+	})
 	mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 	manager := workspace.NewManager(config.NopConfig(), sched)
 	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -1055,6 +1059,21 @@ func TestTabStatusNotifications(t *testing.T) {
 	cfg := defaultConfigWithWrap(false)
 	// idestatus covers the rate limiting.
 	cfg.cfg["terminal"] = map[string]any{"status": map[string]any{"notify_interval": "0s"}}
+	cfg.cfg["program_status"] = map[string]any{"sounds": map[string]any{"working": sounds.Info}}
+	var soundsMu sync.Mutex
+	var played []string
+	cfg.sounds = sounds.PlayerFunc(func(name string) {
+		soundsMu.Lock()
+		defer soundsMu.Unlock()
+		played = append(played, name)
+	})
+	newSounds := func() []string {
+		soundsMu.Lock()
+		defer soundsMu.Unlock()
+		ret := played
+		played = nil
+		return ret
+	}
 	m, slot := newActivityTestManager(t, cfg)
 	chat, err := workspaceapi.ParseURI("rune-agent://model/rolling-fox")
 	require.NoError(t, err)
@@ -1108,6 +1127,7 @@ func TestTabStatusNotifications(t *testing.T) {
 
 	send(chat, report(programstatus.Working, ""))
 	assert.Empty(t, newNotes(), "working without a message is not notified")
+	assert.Equal(t, []string{sounds.Info}, newSounds(), "program_status.sounds adds working")
 
 	send(chat, report(programstatus.Working, "Compiling"))
 	assert.Equal(t, note(browserapi.LevelInfo, "rolling-fox: Compiling"), newNotes(),
@@ -1132,6 +1152,7 @@ func TestTabStatusNotifications(t *testing.T) {
 	assert.Contains(t, newUpdates(),
 		capturedUpdate{msg: "rolling-fox (go): ok ./internal", progress: 0, total: 1, ok: true},
 		"messages of child records come through")
+	assert.Empty(t, newSounds(), "staying working plays nothing")
 
 	send(chat, programstatus.Report{
 		State: programstatus.Blocked, Kind: programstatus.KindPermission,
@@ -1143,18 +1164,21 @@ func TestTabStatusNotifications(t *testing.T) {
 		"leaving working closes the working notification")
 	assert.Equal(t, pendingNotifications{2, browserapi.LevelWarn, warn}, w.notifs,
 		"an unfocused workspace counts every notification")
+	assert.Equal(t, []string{sounds.Warning}, newSounds())
 
 	send(chat, report(programstatus.Done, "ok"), report(programstatus.Error, "boom"))
 	assert.Equal(t, []capturedNote{
 		{level: browserapi.LevelSuccess, msg: "rolling-fox: ok"},
 		{level: browserapi.LevelError, msg: "rolling-fox: boom"},
 	}, newNotes(), "messages are never rate limited")
+	assert.Equal(t, []string{sounds.Success, sounds.Error}, newSounds())
 
 	send(chat, report(programstatus.Done, ""))
 	assert.Equal(t, note(browserapi.LevelSuccess, "rolling-fox: done"), newNotes(),
 		"a transition without a message names the state")
 	send(chat, programstatus.Report{State: programstatus.Clear})
 	assert.Empty(t, newNotes(), "clearing is not notified")
+	assert.Equal(t, []string{sounds.Success}, newSounds(), "clearing plays nothing")
 
 	require.True(t, m.switchToWorkspace(slot))
 	win, err := comp.Focus()
@@ -1169,10 +1193,17 @@ func TestTabStatusNotifications(t *testing.T) {
 
 	send(seen, report(programstatus.Blocked, ""))
 	assert.Empty(t, newNotes(), "a transition in sight is not notified")
+	assert.Equal(t, []string{sounds.Warning}, newSounds(), "but plays its sound")
 
 	send(seen, report(programstatus.Blocked, "approve?"))
-	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve?"), newNotes(),
-		"a message comes through in sight")
+	assert.Empty(t, newNotes(), "nor is a blocked message, as the tab shows what it asks")
+	assert.Empty(t, newSounds(), "a message in the same state plays nothing")
+
+	m.Handle(term.Event{Type: term.EventUnfocus})
+	send(seen, report(programstatus.Blocked, "approve again?"))
+	assert.Equal(t, note(browserapi.LevelWarn, "seen: approve again?"), newNotes(),
+		"with Rune out of focus, it comes through")
+	m.Handle(term.Event{Type: term.EventFocus})
 
 	send(chat, report(programstatus.Error, ""))
 	assert.Equal(t, note(browserapi.LevelError, "rolling-fox: error"), newNotes(),
@@ -2958,7 +2989,7 @@ func assertExoDelegatesMarkdown(t *testing.T, fileName string, readOnly bool) {
 		"command": `vim -Nu NONE -n {file}`,
 		"goto":    "<esc>:{line}<enter>{col}|",
 	}
-	cfg.ringBell = func() {}
+	cfg.sounds = sounds.Silent
 	require.Equal(t, "exo", cfg.editorMode())
 
 	uri, err := workspaceapi.ParseURI("file://" + dir)
@@ -4906,7 +4937,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		})
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -4999,7 +5030,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 	t.Run("tabs opened by workspaceready before the restore stay focusable", func(t *testing.T) {
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -5064,7 +5095,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		})
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
 		manager := workspace.NewManager(config.NopConfig(), sched)
 		require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
@@ -5197,7 +5228,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 
 		cfg := defaultConfigWithWrap(false)
 		cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-		cfg.ringBell = func() {}
+		cfg.sounds = sounds.Silent
 		m := newTestWorkspaceManagerHandlerWithDir(t, cfg, dir, nopShutdownShaderConfig())
 
 		ex1 := m.exHandler(m.focusHandler())
@@ -5249,7 +5280,7 @@ func TestWorkspaceManagerRestoresOpenTerminalSessions(t *testing.T) {
 		newCfg := func() ideConfig {
 			cfg := defaultConfigWithWrap(false)
 			cfg.cfg["workspace"] = map[string]any{"auto_restore": true}
-			cfg.ringBell = func() {}
+			cfg.sounds = sounds.Silent
 			cfg.scheduleNextTick = sched
 			return cfg
 		}
@@ -7656,6 +7687,7 @@ func defaultCfg() ideConfig {
 		},
 	},
 		configPath: "not-empty",
+		sounds:     sounds.Silent,
 	}
 }
 
@@ -9181,7 +9213,23 @@ func (r *authorizerCapturingRunner) authorizer(uri workspaceapi.URI) extensionv2
 	return r.authorizers[uri.String()]
 }
 
-func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
+// commandAuthorizerTest drives the command authorizer of a file
+// workspace, the one in focus, as an extension running tool, an
+// executable on PATH.
+type commandAuthorizerTest struct {
+	m *testWorkspaceManagerHandler
+	h *safeHandler
+	// authorize asks to run tool with args, and returns the outcome.
+	authorize func(args ...string) <-chan error
+	// waitFor waits for text to be on screen.
+	waitFor func(text string)
+	// await waits for the outcome done holds.
+	await  func(done <-chan error) error
+	screen func() string
+}
+
+func newCommandAuthorizerTest(t *testing.T) commandAuthorizerTest {
+	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o755))
@@ -9246,26 +9294,73 @@ func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
 		}, 5*time.Second, 10*time.Millisecond)
 		return err
 	}
+	return commandAuthorizerTest{
+		m: m, h: h, authorize: authorize, waitFor: waitFor, await: await, screen: screen,
+	}
+}
 
-	done := authorize("sub", "arg")
-	waitFor("Choosing Always or Never lets you pick")
-	h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
-	waitFor("From now on, extension Test Extension may run the")
-	picker := screen()
+func TestBuildExtensionsCommandAuthorizerAsksWhatAlwaysCovers(t *testing.T) {
+	a := newCommandAuthorizerTest(t)
+	done := a.authorize("sub", "arg")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
+	a.waitFor("From now on, extension Test Extension may run the")
+	picker := a.screen()
 	assert.Contains(t, picker, "│ \U000F012E  tool *")
 	assert.Contains(t, picker, "│ └─ \U000F0132  tool sub *")
 	assert.Contains(t, picker, "│    └─ \U000F0132  tool sub arg")
-	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
-	require.NoError(t, await(done))
-	assert.NotContains(t, screen(), "From now on")
+	a.h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	require.NoError(t, a.await(done))
+	assert.NotContains(t, a.screen(), "From now on")
 
-	require.NoError(t, await(authorize("sub", "other")),
+	require.NoError(t, a.await(a.authorize("sub", "other")),
 		"the picked scope covers the subcommand")
-	done = authorize("other")
-	waitFor("Choosing Always or Never lets you pick")
-	h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
-	require.ErrorIs(t, await(done), blueauth.ErrForbidden,
+	done = a.authorize("other")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
+	require.ErrorIs(t, a.await(done), blueauth.ErrForbidden,
 		"the scope that was not picked is not covered")
+}
+
+func TestBuildExtensionsCommandAuthorizerNotifiesUnseenPrompts(t *testing.T) {
+	a := newCommandAuthorizerTest(t)
+	notes := &recordingNotifications{}
+	a.m.locked(func() {
+		w := a.m.workspaces[a.m.focus]
+		notes.inner = w.notifications
+		w.notifications = notes
+	})
+	warnings := func() []capturedNote {
+		return slices.DeleteFunc(notes.snapshot(), func(n capturedNote) bool {
+			return n.level != browserapi.LevelWarn
+		})
+	}
+
+	done := a.authorize("sub")
+	a.waitFor("Choosing Always or Never lets you pick")
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'A'})
+	a.waitFor("From now on, extension Test Extension may run the")
+	a.h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	require.NoError(t, a.await(done))
+	assert.Empty(t, warnings(), "neither the prompt nor the picker in focus is notified")
+
+	warned := len(warnings())
+	a.h.Handle(term.Event{Type: term.EventUnfocus})
+	done = a.authorize("other")
+	a.waitFor("Choosing Always or Never lets you pick")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		a.m.quiesce()
+		got := warnings()[warned:]
+		if assert.Len(c, got, 1) {
+			assert.Contains(c, got[0].msg, "User authorization required for")
+		}
+	}, 5*time.Second, 10*time.Millisecond, "with Rune out of focus, the prompt is notified")
+	updates := len(notes.updatesSnapshot())
+	a.h.Handle(term.Event{Type: term.EventKey, Ch: 'N'})
+	require.ErrorIs(t, a.await(done), blueauth.ErrForbidden)
+	a.m.quiesce()
+	assert.Contains(t, notes.updatesSnapshot()[updates:],
+		capturedUpdate{progress: 1, total: 1, ok: true}, "answered, its notification closes")
 }
 
 func TestWorkspaceReadyCommand(t *testing.T) {
@@ -11387,7 +11482,7 @@ func swapDirIDEConfig(t *testing.T, enabled bool) ideConfig {
 	var cfg ideConfig
 	require.NoError(t, loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 	return cfg
 }
 
@@ -11457,7 +11552,7 @@ func TestSwapDirectory(t *testing.T) {
 
 func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 	var cfg ideConfig
-	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+	initDefaultConfig(&cfg, nil, sounds.Silent, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
 	require.NoError(t, err)
@@ -11472,7 +11567,7 @@ func TestTextOptsInstallSyntaxTrees(t *testing.T) {
 
 func TestTextOptsEnableMarkdownImages(t *testing.T) {
 	var cfg ideConfig
-	initDefaultConfig(&cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+	initDefaultConfig(&cfg, nil, sounds.Silent, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 	uri, err := workspaceapi.ParseURI("file:///Users/x/src/proj")
 	require.NoError(t, err)
@@ -11537,7 +11632,7 @@ func newHandlerWithDataDir(
 ) *testWorkspaceManagerHandler {
 	t.Helper()
 	cc := defaultConfigWithWrap(false)
-	cc.ringBell = func() {}
+	cc.sounds = sounds.Silent
 	mu, sched, drain := buildTestSchedulerForCfg(t, &cc)
 	manager := workspace.NewManager(config.NopConfig(), sched)
 	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,

@@ -16,7 +16,8 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/dustinkirkland/golang-petname v0.0.0-20260215035315-f0c533e9ce9b
-	github.com/ebitengine/purego v0.9.0
+	github.com/ebitengine/oto/v3 v3.5.1
+	github.com/ebitengine/purego v0.11.0
 	github.com/ernestrc/dom v0.2.5-0.20201125033726-789c946aa938
 	github.com/ernestrc/go-multierror v1.1.2
 	github.com/ernestrc/logd-go v0.0.0-20180509171507-65871c1d5504
@@ -49,7 +50,7 @@ require (
 	github.com/unstablebuild/blue v1.85.2
 	github.com/unstablebuild/notify v0.10.4
 	github.com/unstablebuild/pty v1.3.1
-	github.com/unstablebuild/rune-go-sdk v0.19.0
+	github.com/unstablebuild/rune-go-sdk v0.20.0
 	github.com/unstablebuild/tcell/v3 v3.6.5
 	github.com/yuin/goldmark v1.7.17
 	github.com/zalando/go-keyring v0.2.8
@@ -68,7 +69,7 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
-	mvdan.cc/sh/v3 v3.12.0
+	mvdan.cc/sh/v3 v3.14.1
 	oras.land/oras-go/v2 v2.6.2
 	tailscale.com v1.102.3
 )
@@ -144,6 +145,7 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
+	github.com/hajimehoshi/go-mp3 v0.3.4 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
@@ -153,6 +155,9 @@ require (
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/jellydator/ttlcache/v3 v3.1.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
+	github.com/jfreymuth/oggvorbis v1.0.5 // indirect
+	github.com/jfreymuth/pulse v0.1.3 // indirect
+	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jsimonetti/rtnetlink v1.4.1 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect

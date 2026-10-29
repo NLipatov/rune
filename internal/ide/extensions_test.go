@@ -315,6 +315,37 @@ func TestAfterPackageConfigMerge(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "tutorial boom")
 	})
+
+	t.Run("sounds reload the config and go live", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newHandler(t, nil)
+		var reloads int
+		h.reloadConfig = func() (ideConfig, error) {
+			reloads++
+			return ideConfig{}, nil
+		}
+		event := idepkg.ConfigMergeEvent{
+			Diff: mustYAMLDoc(t, "sounds:\n  ding: $RUNE_DATADIR/lib/pkg/ding.wav\n"),
+		}
+		result, err := h.afterPackageConfigMerge(event)
+		require.NoError(t, err)
+		assert.ElementsMatch(t, [][]string{{"sounds"}}, result.LivePaths)
+		assert.Equal(t, 1, reloads)
+	})
+
+	t.Run("sounds stay pending when the reload fails", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newHandler(t, nil)
+		h.reloadConfig = func() (ideConfig, error) {
+			return ideConfig{}, errors.New("reload boom")
+		}
+		event := idepkg.ConfigMergeEvent{
+			Diff: mustYAMLDoc(t, "sounds:\n  ding: /ding.wav\n"),
+		}
+		result, err := h.afterPackageConfigMerge(event)
+		require.ErrorContains(t, err, "reload boom")
+		assert.Empty(t, result.LivePaths)
+	})
 }
 
 func TestPkgInstallStartsExtensionWithPackageEnv(t *testing.T) {

@@ -1285,6 +1285,25 @@ func TestAuthorizerAuthorizeStartCommandPromptsWithCommandDetails(t *testing.T) 
 		"commands and subcommands the decision covers.")
 }
 
+func TestAuthorizerAuthorizeCommandShowsRecursiveDeletesWithTheHostDataDir(t *testing.T) {
+	t.Parallel()
+
+	opener := &stubPromptOpener{decision: PermissionAllowOnce}
+	a := newTestAuthorizerCore(opener, storagestub.NewInMemoryService())
+	a.config.DataDir = "/host/.rune"
+	ctx := blueauth.ContextWithClaims(context.Background(),
+		blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
+
+	err := a.AuthorizeCommand(ctx, workspaceapi.Cmd{
+		Path: "bash",
+		Args: []string{"-c", `rm -rf $RUNE_DATADIR/cache; X=/tmp/x; rm -r "$X"; sudo rm -r /tmp/x`},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, opener.calls)
+	assert.Contains(t, opener.messages[0], "⚠️ **Removes recursively**, as the shell will run it:"+
+		"\n\n```\nrm -rf /host/.rune/cache\nrm -r /tmp/x\n```")
+}
+
 const moveTestsScript = `M=/tmp/movetests/movetests; D=internal/workspace/vtescheme; set -e
 $M -src $D/vte_scheme_test.go -dst $D/vte_scheme_e2e_test.go -names TestServerSchemeOwnsTerminals,TestServerChroot,TestClientSchemesShareTheMachineServer,TestLoopbackOwnsTerminalsInProcess
 $M -src $D/vteclient_test.go -dst $D/vteclient_e2e_test.go -names TestClientVTERendersCanonicalStream,TestClientVTEReplicasConverge,TestClientVTEConvergesAfterResize,TestClientVTEReportsTitleToItsOwnUI,TestClientVTEIsNotASecondResponder,TestClientVTEDeliversOSCToEveryClient
@@ -1981,6 +2000,30 @@ func TestAuthorizerAuthorizeStartCommandOnceDecisionIncludesPeerAndCommand(t *te
 		assert.Equal(t, extensionapi.PermissionExecute, decision.Permission)
 		assert.Equal(t, "/bin/grep", decision.Command.Path)
 	}
+}
+
+func TestAuthorizerAuthorizeCommandShowsDescriptionButDoesNotDecideOnIt(t *testing.T) {
+	t.Parallel()
+
+	opener := &stubPromptOpener{decision: PermissionAllowOnce}
+	a := newTestAuthorizerCore(opener, storagestub.NewInMemoryService())
+	ctx := contextWithPeerProcess(context.Background(), peerprocess.Process{
+		PID:  123,
+		UID:  501,
+		Exe:  "/usr/local/bin/plugin-cli",
+		Argv: []string{"plugin-cli", "run"},
+	})
+	ctx = blueauth.ContextWithClaims(ctx, blueauth.UserClaims[Extension]{Extra: testPluginExtension(nil)})
+
+	for _, description := range []string{"Find foo", "Something else entirely", ""} {
+		require.NoError(t, a.AuthorizeCommand(ctx, workspaceapi.Cmd{
+			Path: "/bin/grep", Args: []string{"foo"}, Dir: "/tmp", Description: description,
+		}))
+	}
+
+	require.Equal(t, 1, opener.calls)
+	assert.Contains(t, opener.messages[0], "\n\nStated purpose: `Find foo`")
+	assert.Len(t, a.once, 1)
 }
 
 // blockingPromptOpener blocks every Prompt call on a trigger channel

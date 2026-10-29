@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
@@ -45,6 +46,10 @@ const (
 // fingerprintPreviewLength is how many hex digits of an executable's
 // SHA-256 prompts show.
 const fingerprintPreviewLength = 12
+
+// maxCommandDescriptionRunes is how much of the description of a command
+// prompts show.
+const maxCommandDescriptionRunes = 200
 
 type permissionPrompter struct {
 	promptOpener     PromptOpener
@@ -263,7 +268,7 @@ func pluginPermissionPromptMessage(req PermissionRequest) string {
 		if !command.block {
 			message += "."
 		}
-		return message + commandScopeNote
+		return message + commandDescriptionNote(req) + recursiveDeleteNote(req) + commandScopeNote
 	}
 	if req.ExtensionID != "" && req.ExtensionName != "" {
 		return fmt.Sprintf("Extension %s by %s wants to %s.",
@@ -280,7 +285,7 @@ func pluginPermissionPromptMessage(req PermissionRequest) string {
 		if !command.block {
 			message += "."
 		}
-		return message + commandScopeNote
+		return message + commandDescriptionNote(req) + recursiveDeleteNote(req) + commandScopeNote
 	}
 	program := programPromptFragment(req.Path, req.Args, false, false)
 	if req.LauncherPath != "" {
@@ -454,6 +459,53 @@ func joinAdjacentPromptFragments(left promptFragment, right promptFragment) prom
 		separator = "\n\n"
 	}
 	return promptFragment{text: left.text + separator + right.text, block: right.block}
+}
+
+// commandDescriptionNote shows what the requester says the command is
+// for. The requester writes it, so it is shown as its claim and verbatim
+// on one line, without the characters that would change how the prompt
+// reads, and cut short, so that it can neither pass for what Rune says of
+// the command nor push it out of sight.
+func commandDescriptionNote(req PermissionRequest) string {
+	description := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsControl(r):
+			return ' '
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, req.CommandDescription)
+	description = strings.Join(strings.Fields(description), " ")
+	if description == "" {
+		return ""
+	}
+	if runes := []rune(description); len(runes) > maxCommandDescriptionRunes {
+		description = strings.TrimSpace(string(runes[:maxCommandDescriptionRunes])) + "…"
+	}
+	return "\n\nStated purpose: " + inlineCode(description)
+}
+
+// recursiveDeleteNote shows the user the recursive rms of the command with
+// the variables the shell expands in them as it will expand them, since
+// the command as written may not tell. It says nothing of what the rm that
+// runs does with the files, which Rune cannot know.
+func recursiveDeleteNote(req PermissionRequest) string {
+	if len(req.RecursiveDeletes) == 0 {
+		return ""
+	}
+	commands := make([]string, len(req.RecursiveDeletes))
+	unresolved := false
+	for i, d := range req.RecursiveDeletes {
+		commands[i] = d.Command
+		unresolved = unresolved || d.Unresolved
+	}
+	note := "\n\n⚠️ **Removes recursively**, as the shell will run it:\n\n" +
+		fencedPromptCodeBlock(strings.Join(commands, "\n"))
+	if unresolved {
+		note += "\n\nWords left as written are only known when it runs."
+	}
+	return note
 }
 
 // commandScopeNote tells the user which files a command runs, so that a

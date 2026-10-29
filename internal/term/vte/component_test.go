@@ -38,6 +38,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/handler/handlertest"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte/vteparser"
 	"unstable.build/rune/internal/workspace/workspacetest"
@@ -1685,6 +1686,38 @@ func TestComponentRestoreFromSnapshotDrivesSetPtySize(t *testing.T) {
 	require.NoError(t, comp.Resize(w, h))
 	assert.Empty(t, exe.setPtySize,
 		"follow-up Resize at the same size is a legitimate no-op")
+}
+
+func TestComponentBellSound(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		desc      string
+		bellSound string
+		want      []string
+	}{
+		{desc: "default bell plays a warning", bellSound: sounds.Warning,
+			want: []string{sounds.Warning}},
+		{desc: "bell plays a registered sound", bellSound: "ding",
+			want: []string{"ding"}},
+		{desc: "empty bell sound plays nothing", bellSound: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			t.Parallel()
+			var played []string
+			cfg := DefaultConfig()
+			cfg.BellSound = test.bellSound
+			cfg.Sounds = sounds.PlayerFunc(func(name string) {
+				played = append(played, name)
+			})
+			exe := &recordingExecutor{}
+			comp, err := NewComponent(exe, exe, &mockTabManager{}, cfg)
+			require.NoError(t, err)
+
+			comp.parserHandler.Bell()
+			assert.Equal(t, test.want, played)
+		})
+	}
 }
 
 func TestComponentResizeDrivesPixelSize(t *testing.T) {

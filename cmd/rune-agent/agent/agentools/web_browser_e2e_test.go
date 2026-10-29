@@ -20,7 +20,8 @@ package agentools
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +108,10 @@ func TestWebBrowserDrivesHeadlessChrome(t *testing.T) {
 	assert.True(t, failed.IsError)
 }
 
-func (hostExec) LookPath(context.Context, string, string) (string, error) {
-	return "", errors.ErrUnsupported
+func (hostExec) LookPath(_ context.Context, name, _ string) (string, error) {
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", fs.ErrNotExist, err)
+	}
+	return p, nil
 }

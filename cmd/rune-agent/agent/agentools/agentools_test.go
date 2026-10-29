@@ -1293,6 +1293,21 @@ func TestBash_env_is_nil_so_host_inherits(t *testing.T) {
 		"Env must be nil so the host executor inherits its own environment")
 }
 
+func TestBash_tells_the_executor_its_description(t *testing.T) {
+	var recorded workspaceapi.Cmd
+	rec := &recordingExec{startFn: func(_ context.Context, cmd workspaceapi.Cmd) (workspaceapi.Pid, error) {
+		recorded = cmd
+		if cmd.Watcher != nil {
+			cmd.Watcher.WatchProcess() <- nil
+		}
+		return 1, nil
+	}}
+	tool := newBash(rec, dirURI("/workspace"), configedit.NopConfig())
+	tool.Execute(context.Background(), `{"command": "rm -f a", "description": "Remove a"}`)
+
+	assert.Equal(t, "Remove a", recorded.Description)
+}
+
 func TestBash(t *testing.T) {
 	tests := []struct {
 		name     string

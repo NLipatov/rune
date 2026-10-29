@@ -39,6 +39,7 @@ import (
 	"unstable.build/rune/internal/handler"
 	"unstable.build/rune/internal/ide/idepreset"
 	"unstable.build/rune/internal/ide/idestatus"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/workspace"
 )
 
@@ -373,7 +374,7 @@ func TestRuneStarFixture(t *testing.T) {
 			c.checks(t, cfg)
 
 			var ide ideConfig
-			initConfig(&ide, cfg, nil, term.RingBell, term.ScheduleNextTick, "")
+			initConfig(&ide, cfg, nil, sounds.Silent, term.ScheduleNextTick, "")
 			status := ide.tabStatusConfig()
 			assert.False(t, status.ContentTab.Progress)
 			ct := status.ContentTab
@@ -443,7 +444,7 @@ func TestRuneStarAsDefaultConfig(t *testing.T) {
 			modal: true,
 			tui:   false,
 		},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 	assert.Equal(t, "vim", cfg.editorMode())
 	assert.False(t, cfg.editorAutoPair())
 	assert.False(t, cfg.editorAutoSave())
@@ -647,7 +648,7 @@ func TestLoadConfigStarUserOverlayPreservesEmbeddedRuneStar(t *testing.T) {
 			modal: true,
 			tui:   false,
 		},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 
 	assert.Equal(t, "debug", cfg.cfg["log_level"])
 	// Defaults from cmd/rune/rune.star survive the top-level rebind.
@@ -743,7 +744,7 @@ func TestHelixPresetLoads(t *testing.T) {
 	var cfg ideConfig
 	require.NoError(t, loadConfig(&cfg, path, nil,
 		DefaultConfig{src: string(readRuneStar(t)), modal: true},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 
 	aliases, err := cfg.parseAliasCommands()
 	require.NoError(t, err)
@@ -812,7 +813,7 @@ func loadTestUserConfig(t *testing.T) ideConfig {
 	var cfg ideConfig
 	require.NoError(t, loadConfig(&cfg, filepath.Join(t.TempDir(), "config.yaml"), nil,
 		DefaultConfig{src: string(readRuneStar(t)), modal: true},
-		term.RingBell, term.ScheduleNextTick))
+		sounds.Silent, term.ScheduleNextTick))
 	return cfg
 }
 
@@ -1024,7 +1025,7 @@ config["editor"]["modal"]["message_bar"] = {"attr": {"fg": "white", "bg": "navy"
 		var cfg ideConfig
 		require.NoError(t, loadConfig(&cfg, userPath, nil,
 			DefaultConfig{src: string(runeStar), modal: true},
-			term.RingBell, term.ScheduleNextTick))
+			sounds.Silent, term.ScheduleNextTick))
 		if ws.name == "" {
 			return cfg
 		}
@@ -1081,7 +1082,7 @@ func TestVimSettingsSectionMalformed(t *testing.T) {
 			var cfg ideConfig
 			require.NoError(t, loadConfig(&cfg, path, nil,
 				DefaultConfig{src: string(runeStar), modal: true},
-				term.RingBell, term.ScheduleNextTick))
+				sounds.Silent, term.ScheduleNextTick))
 			cfg.vimAttr()
 			if tt.wantErr {
 				assert.Error(t, cfg.errors[editorSectionVim])

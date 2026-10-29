@@ -53,6 +53,8 @@ func NewExtension() (extensionapi.WorkspaceExtension, extensionapi.Metadata) {
 		DeveloperKey:   "064D4ABCFA6D9338",
 		ExtensionID:    "typescript",
 		ExtensionName:  "TypeScript Language Extension",
+		// debug.Tag is stamped by the rune-language-typescript build with the package's release tag.
+		ExtensionVersion: debug.Tag,
 		Permissions: extensionapi.NewPermissions(
 			extensionapi.PermissionLSP,
 			extensionapi.PermissionEditor,

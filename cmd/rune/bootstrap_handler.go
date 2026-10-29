@@ -77,6 +77,7 @@ type bootstrapHandler struct {
 	cellPixelSize     func() (int, int)
 	openBrowser       func(*url.URL) error
 	clip              clipboard.Register
+	soundOutput       *gui.Sounds
 	installBackupDir  string
 	preIDE            *ide.IDE
 	realIDE           *ide.IDE
@@ -121,6 +122,7 @@ func newBootstrapHandler(
 	cellPixelSize func() (int, int),
 	openBrowser func(*url.URL) error,
 	clip clipboard.Register,
+	soundOutput *gui.Sounds,
 	installBackupDir string,
 	rootCfg config.Config,
 	trust *pkgtrust.Store,
@@ -141,6 +143,7 @@ func newBootstrapHandler(
 		cellPixelSize:    cellPixelSize,
 		openBrowser:      openBrowser,
 		clip:             clip,
+		soundOutput:      soundOutput,
 		installBackupDir: installBackupDir,
 	}
 	bh.recent = newRecentWorkspaces(bh.storage)
@@ -196,7 +199,7 @@ func (b *bootstrapHandler) buildPreIDE() (*ide.IDE, error) {
 		ide.WithWorkspacesIcon('1'),
 		ide.WithWorkspacesBarFrame(false),
 		ide.WithStreamingOpen(true),
-		ide.WithBell(func() {}),
+		ide.WithSoundBackend(b.soundOutput),
 		ide.WithPublishEvent(b.publishEvent),
 		ide.WithScheduleNextTick(b.scheduleNextTick),
 		ide.WithCellPixelSize(b.cellPixelSize),
@@ -238,7 +241,7 @@ func (b *bootstrapHandler) buildConfiguredIDE(
 		ide.WithWorkspacesIcon('1'),
 		ide.WithWorkspacesBarFrame(false),
 		ide.WithDefaultConfigStarlark(defaultStarlarkConfig, true, false),
-		ide.WithBell(func() {}),
+		ide.WithSoundBackend(b.soundOutput),
 		ide.WithPublishEvent(b.publishEvent),
 		ide.WithScheduleNextTick(b.scheduleNextTick),
 		ide.WithCellPixelSize(b.cellPixelSize),
@@ -326,7 +329,7 @@ func (b *bootstrapHandler) loadQuickMenu() {
 // swap. Must run after attachGUI so b.g is set.
 func (b *bootstrapHandler) setupPreIDE() error {
 	return errors.Join(
-		subscribeGUICommands(b.g, b.preIDE, b.transparentWindow, b.launchCmd),
+		subscribeGUICommands(b.g, b.soundOutput, b.preIDE, b.transparentWindow, b.launchCmd),
 		b.subscribeQuickMenuCommand(b.preIDE),
 	)
 }
@@ -518,7 +521,7 @@ func (b *bootstrapHandler) setupConfiguredIDE(
 			"Could not compile 'animations.cursor.shader': %v", err)
 	}
 
-	if err := subscribeCommands(b.g, client, i,
+	if err := subscribeCommands(b.g, b.soundOutput, client, i,
 		b.transparentWindow, b.configPath, b.launchCmd); err != nil {
 		errs = append(errs, fmt.Errorf("subscribe to GUI commands: %w", err))
 	}

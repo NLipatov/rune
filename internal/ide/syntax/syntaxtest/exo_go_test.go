@@ -35,6 +35,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/ide/syntax"
 	"unstable.build/rune/internal/ide/syntax/treesitter"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/text"
@@ -222,7 +223,7 @@ func newExoGoTestComponent(
 	ws := workspace.NewSchemeWorkspace(uri, scheme, schedule)
 
 	vteCfg := vte.DefaultConfig()
-	vteCfg.RingBell = func() {}
+	vteCfg.Sounds = sounds.Silent
 
 	pkgs := newInstalledPkgManager(t)
 	syntaxCfg := defaultSyntaxConfig(schedule)

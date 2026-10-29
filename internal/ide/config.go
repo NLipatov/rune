@@ -72,6 +72,7 @@ import (
 	"unstable.build/rune/internal/ide/syntax"
 	"unstable.build/rune/internal/ide/vctrl"
 	"unstable.build/rune/internal/llm"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/text"
@@ -112,6 +113,13 @@ const (
 
 	keyGUI       = "gui"
 	keyQuickMenu = "quick_menu"
+
+	keySounds       = "sounds"
+	keyTerminal     = "terminal"
+	keyTerminalBell = "bell"
+
+	keyProgramStatus       = "program_status"
+	keyProgramStatusSounds = "sounds"
 
 	// maxQuickMenuButtons caps the reserved column so a runaway config
 	// cannot produce more buttons than the window can display.
@@ -279,7 +287,7 @@ type ideConfig struct {
 	configPath       string
 	cfg              map[string]any
 	errors           map[string]error
-	ringBell         func()
+	sounds           sounds.Player
 	scheduleNextTick func(func()) bool
 	cellPixelSize    func() (int, int)
 	clip             clipboard.Register
@@ -320,12 +328,12 @@ func overrideConfig(ideConfig, cfg map[string]any) {
 
 func initConfig(
 	c *ideConfig, cfg map[string]any, logo *Logo,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	c.cfg = cfg
 	c.configPath = configPath
-	c.ringBell = ringBell
+	c.sounds = player
 	c.scheduleNextTick = scheduleNextTick
 	c.logo = logo
 	c.errors = make(map[string]error)
@@ -333,11 +341,11 @@ func initConfig(
 
 func initDefaultConfig(
 	c *ideConfig, logo *Logo,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 	configPath string,
 ) {
 	cfg := make(map[string]any)
-	initConfig(c, cfg, logo, ringBell,
+	initConfig(c, cfg, logo, player,
 		scheduleNextTick, configPath)
 }
 
@@ -4798,6 +4806,56 @@ func (c ideConfig) terminalBellTrigger() (ret []byte) {
 	return
 }
 
+// terminalBellSound reads terminal.bell, the name of the sound a
+// program ringing the bell plays; "" plays none.
+func (c ideConfig) terminalBellSound() string {
+	ret := vte.DefaultConfig().BellSound
+	cfg, ok := c.terminal()
+	if !ok {
+		return ret
+	}
+	bell, err := cfg.GetString("bell")
+	if err != nil {
+		if err != config.ErrNotFound {
+			c.errors["terminal.bell"] = err
+		}
+		return ret
+	}
+	return bell
+}
+
+// soundEntries reads the top-level `sounds` map. In file paths,
+// $RUNE_DATADIR names dataDir, other variables come from the process
+// environment, and a file:// URI is reduced to its path.
+func (c ideConfig) soundEntries(dataDir string) map[string]string {
+	raw, ok := c.cfg[keySounds].(map[string]any)
+	if !ok {
+		return nil
+	}
+	ret := make(map[string]string, len(raw))
+	for name, v := range raw {
+		value, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if strings.Contains(value, "/") {
+			value = os.ExpandEnv(hostenv.ExpandDataDir(value, dataDir))
+			if u, err := url.Parse(value); err == nil && u.Scheme == "file" {
+				value = u.Path
+			}
+		}
+		ret[name] = value
+	}
+	return ret
+}
+
+// applySounds replaces the entries of r with this config's sounds.
+func (c ideConfig) applySounds(r *sounds.Registry, dataDir string) {
+	if err := r.Set(c.soundEntries(dataDir)); err != nil {
+		c.errors[keySounds] = err
+	}
+}
+
 func (c ideConfig) initialTerminalCapacity() (ret int) {
 	ret = 1
 	cfg, ok := c.terminal()
@@ -4919,7 +4977,8 @@ func (c ideConfig) terminalConfig() vte.Config {
 	ret.Clipboard = c.clipboard()
 	ret.ClipboardAccess = c.terminalClipboardAccess()
 	ret.ScheduleNextTick = c.scheduleNextTick
-	ret.RingBell = c.ringBell
+	ret.Sounds = c.sounds
+	ret.BellSound = c.terminalBellSound()
 	ret.CellPixelSize = c.cellPixelSize
 	ret.MinWidth = defaultMinWidth
 	ret.Search = c.terminalSearchConfig()
@@ -5147,9 +5206,11 @@ func tabStatusConfigFor(cfg ideConfig) browser.TabStatusConfig {
 // tabStatusNotifyConfig reads terminal.status.notify, the states a tab
 // entering raises a notification for when it is out of sight, and
 // terminal.status.notify_interval, the minimum time between two
-// notifications for the same tab.
+// notifications for the same tab, and program_status.sounds, the sound
+// entering each state plays.
 func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 	ret := idestatus.DefaultNotifyConfig()
+	ret.Sounds = c.programStatusSounds(ret.Sounds)
 	cfg, ok := c.terminalStatus()
 	if !ok {
 		return ret
@@ -5157,16 +5218,9 @@ func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 	if names, err := getStringSlice(cfg, "notify"); err == nil {
 		states := make(map[programstatus.State]bool, len(names))
 		for _, name := range names {
-			switch name {
-			case "blocked":
-				states[programstatus.Blocked] = true
-			case "error":
-				states[programstatus.Error] = true
-			case "done":
-				states[programstatus.Done] = true
-			case "working":
-				states[programstatus.Working] = true
-			default:
+			if state, ok := statusStateNamed(name); ok {
+				states[state] = true
+			} else {
 				c.errors["terminal.status.notify"] = fmt.Errorf(
 					"unknown state %q: expected blocked, error, done or working", name)
 			}
@@ -5181,6 +5235,42 @@ func (c ideConfig) tabStatusNotifyConfig() idestatus.NotifyConfig {
 		c.errors["terminal.status.notify_interval"] = err
 	}
 	return ret
+}
+
+// programStatusSounds reads program_status.sounds, which maps a state to
+// the name of the sound a program entering it plays, or "" for none,
+// over defaults. It skips what validateProgramStatusSounds reports.
+func (c ideConfig) programStatusSounds(
+	defaults map[programstatus.State]string,
+) map[programstatus.State]string {
+	ret := make(map[programstatus.State]string, len(defaults))
+	maps.Copy(ret, defaults)
+	status, _ := c.cfg[keyProgramStatus].(map[string]any)
+	entries, _ := status[keyProgramStatusSounds].(map[string]any)
+	for key, v := range entries {
+		state, ok := statusStateNamed(key)
+		name, isString := v.(string)
+		if ok && isString {
+			ret[state] = name
+		}
+	}
+	return ret
+}
+
+// statusStateNamed returns the state called name among those a program
+// entering is notified of: blocked, error, done and working.
+func statusStateNamed(name string) (programstatus.State, bool) {
+	switch name {
+	case "blocked":
+		return programstatus.Blocked, true
+	case "error":
+		return programstatus.Error, true
+	case "done":
+		return programstatus.Done, true
+	case "working":
+		return programstatus.Working, true
+	}
+	return programstatus.Idle, false
 }
 
 // terminalSearchConfig derives the terminal's scrollback search from
@@ -5538,10 +5628,10 @@ func decodeOverlayConfigFile(
 func reloadConfig(
 	configFilePath string, logo *Logo,
 	defaultConfig DefaultConfig,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 ) (ret ideConfig, err error) {
 	err = loadConfig(&ret, configFilePath,
-		logo, defaultConfig, ringBell,
+		logo, defaultConfig, player,
 		scheduleNextTick)
 	return
 }
@@ -5610,9 +5700,9 @@ func loadConfig(
 	c *ideConfig, configPath string,
 	logo *Logo,
 	defaultConfig DefaultConfig,
-	ringBell func(), scheduleNextTick func(func()) bool,
+	player sounds.Player, scheduleNextTick func(func()) bool,
 ) (err error) {
-	initDefaultConfig(c, logo, ringBell, scheduleNextTick,
+	initDefaultConfig(c, logo, player, scheduleNextTick,
 		configPath)
 
 	cfg, err := decodeDefaultConfig(defaultConfig)
@@ -5620,7 +5710,7 @@ func loadConfig(
 		panic(err)
 	}
 
-	initConfig(c, cfg, logo, ringBell,
+	initConfig(c, cfg, logo, player,
 		scheduleNextTick, configPath)
 
 	if err := loadFileConfig(c, configPath); err != nil {

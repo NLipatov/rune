@@ -30,6 +30,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/tui"
 	"unstable.build/rune/internal/cell"
 	"unstable.build/rune/internal/component"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/vte/vtescreen"
 	"unstable.build/rune/internal/text"
 	"unstable.build/rune/internal/text/vi"
@@ -298,7 +299,7 @@ func (v *viHandler) Edit(ctx context.Context, start, end term.Coordinates, str s
 		v.log(log.DebugLevel, "edit not allowed: last line: [%+v, %+v), "+
 			"start: %+v, end: %+v, endForIntersection: %+v, str: %q",
 			lastLineStart, lastLineEnd, start, end, endForIntersection, str)
-		v.config.RingBell()
+		v.config.Sounds.Play(sounds.Error)
 		return
 	}
 
@@ -334,7 +335,7 @@ func (v *viHandler) Edit(ctx context.Context, start, end term.Coordinates, str s
 		v.log(log.DebugLevel, "edit not allowed after prompt correction: last line: [%+v, %+v), "+
 			"start: %+v, end: %+v, endForIntersection: %+v, str: %q",
 			lastLineStart, lastLineEnd, start, end, endForIntersection, str)
-		v.config.RingBell()
+		v.config.Sounds.Play(sounds.Error)
 		return
 	}
 

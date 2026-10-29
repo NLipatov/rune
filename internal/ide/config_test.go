@@ -56,6 +56,7 @@ import (
 	"unstable.build/rune/internal/ide/idestatus"
 	"unstable.build/rune/internal/ide/plugin"
 	"unstable.build/rune/internal/ide/syntax"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/programstatus"
 	"unstable.build/rune/internal/term/vte"
 	"unstable.build/rune/internal/text"
@@ -354,6 +355,7 @@ terminal:
     shell: sh
     max_lines: 999
     bell_trigger: "\x07"
+    bell: info
     modal: true
     dynamic_tab_name: true
     initial_reservoir: 0
@@ -411,6 +413,10 @@ terminal:
           - blocked
           - error
         notify_interval: 5s
+program_status:
+    sounds:
+        done: ""
+        working: info
 `
 
 func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
@@ -480,10 +486,10 @@ func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
 	assert.Equal(t, expectedBarConfig, barConfig)
 
 	vteConfig := cfg.terminalConfig()
-	assert.NotNil(t, vteConfig.RingBell)
+	assert.NotNil(t, vteConfig.Sounds)
 	assert.NotNil(t, vteConfig.ScheduleNextTick)
 	vteConfig.ScheduleNextTick = nil
-	vteConfig.RingBell = nil
+	vteConfig.Sounds = nil
 	assertTerminalSearchConfig(t, &vteConfig, cfg.standardResultAttr(), selectAttr)
 	assert.Equal(t, vte.Config{
 		Clipboard:                cfg.clipboard(),
@@ -494,6 +500,7 @@ func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
 		ClipboardRegister:        clipboard.DefaultRegisterID,
 		MaxLines:                 10_000,
 		MinWidth:                 defaultMinWidth,
+		BellSound:                sounds.Warning,
 	}, vteConfig)
 	assert.True(t, cfg.tabStatusEnabled())
 	assert.Equal(t, browser.DefaultTabStatusConfig(), cfg.tabStatusConfig())
@@ -531,7 +538,7 @@ func assertDefaultConfig(t *testing.T, cfg *ideConfig) {
 func TestConfigDefault(t *testing.T) {
 	ret := new(ideConfig)
 	initDefaultConfig(ret, nil,
-		term.RingBell, term.ScheduleNextTick, "")
+		sounds.Silent, term.ScheduleNextTick, "")
 	assertDefaultConfig(t, ret)
 }
 
@@ -703,7 +710,7 @@ terminal:
 `))
 	require.NoError(t, err)
 	var cfg ideConfig
-	initConfig(&cfg, m, nil, term.RingBell, term.ScheduleNextTick, "")
+	initConfig(&cfg, m, nil, sounds.Silent, term.ScheduleNextTick, "")
 	def := browser.DefaultTabStatusConfig()
 	got := cfg.tabStatusConfig()
 	assert.Equal(t, def.DoneIcon, got.DoneIcon)
@@ -1103,6 +1110,178 @@ func TestTerminalClipboardAccess(t *testing.T) {
 	}
 }
 
+func TestTerminalBellSound(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal map[string]any
+		want     string
+	}{
+		{name: "unset plays a warning", want: sounds.Warning},
+		{name: "named sound", terminal: map[string]any{"bell": "ding"}, want: "ding"},
+		{name: "empty plays nothing", terminal: map[string]any{"bell": ""}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := map[string]any{}
+			if tc.terminal != nil {
+				m["terminal"] = tc.terminal
+			}
+			cfg := &ideConfig{cfg: m, errors: map[string]error{}}
+			assert.Equal(t, tc.want, cfg.terminalConfig().BellSound)
+			assert.Empty(t, cfg.errors)
+		})
+	}
+}
+
+func TestValidateSounds(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cfg        map[string]any
+		wantSounds map[string]any
+		wantBell   any
+		// wantStatus is what is left of program_status.sounds.
+		wantStatus any
+		wantErrs   []string
+	}{
+		{
+			name:     "no sounds and a reserved bell",
+			cfg:      map[string]any{"terminal": map[string]any{"bell": "info"}},
+			wantBell: "info",
+		},
+		{
+			name: "bell names a configured sound",
+			cfg: map[string]any{
+				"sounds":   map[string]any{"ding": "/ding.wav", "chime": "ding"},
+				"terminal": map[string]any{"bell": "chime"},
+			},
+			wantSounds: map[string]any{"ding": "/ding.wav", "chime": "ding"},
+			wantBell:   "chime",
+		},
+		{
+			name:     "empty bell is silent",
+			cfg:      map[string]any{"terminal": map[string]any{"bell": ""}},
+			wantBell: "",
+		},
+		{
+			name: "invalid entries are dropped",
+			cfg: map[string]any{"sounds": map[string]any{
+				"ok": "/ok.wav", "typo": "warnign", "number": 3,
+			}},
+			wantSounds: map[string]any{"ok": "/ok.wav"},
+			wantErrs: []string{`'sounds.number' must be a file path`,
+				`sound "typo": refers to unknown sound "warnign"`},
+		},
+		{
+			name:       "sounds is not a map",
+			cfg:        map[string]any{"sounds": "ding.wav"},
+			wantSounds: map[string]any{},
+			wantErrs:   []string{`'sounds' must map sound names`},
+		},
+		{
+			name: "unknown bell resets to warning",
+			cfg: map[string]any{
+				"sounds":   map[string]any{"typo": "warnign"},
+				"terminal": map[string]any{"bell": "typo"},
+			},
+			wantSounds: map[string]any{},
+			wantBell:   sounds.Warning,
+			wantErrs:   []string{`'terminal.bell' names unknown sound "typo"`},
+		},
+		{
+			name:     "bell of the wrong type resets to warning",
+			cfg:      map[string]any{"terminal": map[string]any{"bell": false}},
+			wantBell: sounds.Warning,
+			wantErrs: []string{`'terminal.bell' must be a sound name or "", got bool`},
+		},
+		{
+			name: "program status sounds name states and known sounds",
+			cfg: map[string]any{
+				"sounds": map[string]any{"chime": "/chime.wav"},
+				"program_status": map[string]any{"sounds": map[string]any{
+					"done": "chime", "error": "", "working": "info",
+				}},
+			},
+			wantSounds: map[string]any{"chime": "/chime.wav"},
+			wantStatus: map[string]any{"done": "chime", "error": "", "working": "info"},
+		},
+		{
+			name: "invalid program status sounds are dropped",
+			cfg: map[string]any{"program_status": map[string]any{"sounds": map[string]any{
+				"done": "chmie", "idle": "info", "blocked": 1, "error": "error",
+			}}},
+			wantStatus: map[string]any{"error": "error"},
+			wantErrs: []string{
+				`'program_status.sounds.done' names unknown sound "chmie"`,
+				`'program_status.sounds.idle': unknown state`,
+				`'program_status.sounds.blocked' must be a sound name or "", got int`,
+			},
+		},
+		{
+			name:       "program status sounds is not a map",
+			cfg:        map[string]any{"program_status": map[string]any{"sounds": "chime"}},
+			wantStatus: nil,
+			wantErrs:   []string{`'program_status.sounds' must map states to sound names`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSounds(tc.cfg)
+			if len(tc.wantErrs) == 0 {
+				require.NoError(t, err)
+			}
+			for _, want := range tc.wantErrs {
+				assert.ErrorContains(t, err, want)
+			}
+			if tc.wantSounds == nil {
+				assert.NotContains(t, tc.cfg, "sounds")
+			} else {
+				assert.Equal(t, tc.wantSounds, tc.cfg["sounds"])
+			}
+			if terminal, ok := tc.cfg["terminal"].(map[string]any); ok {
+				assert.Equal(t, tc.wantBell, terminal["bell"])
+			}
+			if status, ok := tc.cfg["program_status"].(map[string]any); ok {
+				assert.Equal(t, tc.wantStatus, status["sounds"])
+			}
+		})
+	}
+}
+
+func TestSoundEntries(t *testing.T) {
+	t.Setenv("RUNE_TEST_SOUNDS", "/home/rune/sounds")
+	cfg := &ideConfig{cfg: map[string]any{"sounds": map[string]any{
+		"pkg":     "$RUNE_DATADIR/lib/pkg/ding.wav",
+		"env":     "$RUNE_TEST_SOUNDS/chime.ogg",
+		"uri":     "file:///opt/sounds/pop.mp3",
+		"alias":   "pkg",
+		"silent":  "",
+		"ignored": 3,
+	}}, errors: map[string]error{}}
+	assert.Equal(t, map[string]string{
+		"pkg":    "/data/lib/pkg/ding.wav",
+		"env":    "/home/rune/sounds/chime.ogg",
+		"uri":    "/opt/sounds/pop.mp3",
+		"alias":  "pkg",
+		"silent": "",
+	}, cfg.soundEntries("/data"))
+}
+
+func TestApplySounds(t *testing.T) {
+	var played []sounds.Sound
+	registry := sounds.NewRegistry(sounds.BackendFunc(func(s sounds.Sound) {
+		played = append(played, s)
+	}))
+	cfg := &ideConfig{cfg: map[string]any{"sounds": map[string]any{
+		"ding":         "$RUNE_DATADIR/ding.wav",
+		sounds.Warning: "ding",
+	}}, errors: map[string]error{}}
+	cfg.applySounds(registry, "/data")
+	require.Empty(t, cfg.errors)
+
+	registry.Play(sounds.Warning)
+	assert.Equal(t, []sounds.Sound{
+		{Name: sounds.Warning, Path: "/data/ding.wav", BuiltIn: sounds.Warning},
+	}, played)
+}
+
 func TestTerminalModalDefaultFromEditorMode(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -1447,7 +1626,7 @@ func TestConfigDecodeError(t *testing.T) {
 			"wallpaper_ascii": "notEmpty",
 		},
 	}
-	ret.ringBell = term.RingBell
+	ret.sounds = sounds.Silent
 	ret.scheduleNextTick = term.ScheduleNextTick
 	err = loadFileConfig(&ret, f.Name())
 	assert.Error(t, err)
@@ -1460,7 +1639,7 @@ func TestConfigSetting(t *testing.T) {
 
 	var cfg ideConfig
 	initConfig(&cfg, m, nil,
-		term.RingBell, term.ScheduleNextTick, "")
+		sounds.Silent, term.ScheduleNextTick, "")
 	cfg.storage = storagestub.NewInMemoryService()
 
 	assert.Equal(t, 4, cfg.editorTabspaces())
@@ -1804,8 +1983,8 @@ func TestConfigSetting(t *testing.T) {
 	vteConfig := cfg.terminalConfig()
 	assert.NotNil(t, vteConfig.ScheduleNextTick)
 	vteConfig.ScheduleNextTick = nil
-	assert.NotNil(t, vteConfig.RingBell)
-	vteConfig.RingBell = nil
+	assert.NotNil(t, vteConfig.Sounds)
+	vteConfig.Sounds = nil
 	assertTerminalSearchConfig(t, &vteConfig, cfg.standardResultAttr(),
 		term.Attributes{Fg: term.ColorGreen, Bg: term.ColorTeal})
 	expectedEmulatorConfig := vte.Config{
@@ -1820,6 +1999,7 @@ func TestConfigSetting(t *testing.T) {
 		DynamicTabName:           true,
 		MaxLines:                 999,
 		Bell:                     []byte{0x07},
+		BellSound:                sounds.Info,
 		MinWidth:                 defaultMinWidth,
 	}
 	assert.Equal(t, expectedEmulatorConfig, vteConfig)
@@ -1863,6 +2043,12 @@ func TestConfigSetting(t *testing.T) {
 		},
 		Interval: 5 * time.Second,
 		Messages: true,
+		Sounds: map[programstatus.State]string{
+			programstatus.Blocked: sounds.Warning,
+			programstatus.Error:   sounds.Error,
+			programstatus.Done:    "",
+			programstatus.Working: sounds.Info,
+		},
 	}, cfg.tabStatusNotifyConfig())
 
 	expectedPrompt := browser.PromptConfig{
@@ -1931,9 +2117,9 @@ func TestConfigSetting(t *testing.T) {
 	assert.Equal(t, "fuzzy_search", extensionCfgStruct.id)
 	cfg.cfg["workspace"].(map[string]any)["wallpaper_ascii"] = ""
 	extensionCfgStruct.parent.cfg["workspace"].(map[string]any)["wallpaper_ascii"] = ""
-	cfg.ringBell = nil
+	cfg.sounds = nil
 	cfg.scheduleNextTick = nil
-	extensionCfgStruct.parent.ringBell = nil
+	extensionCfgStruct.parent.sounds = nil
 	extensionCfgStruct.parent.scheduleNextTick = nil
 	assert.Equal(t, &cfg, extensionCfgStruct.parent)
 
@@ -2306,7 +2492,7 @@ func TestLoadEmbededConfig(t *testing.T) {
 	var cfg ideConfig
 	err := loadConfig(&cfg, "nonExistent", nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 }
 
@@ -2397,7 +2583,7 @@ func TestShellMaxHistoryFromConfig(t *testing.T) {
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Equal(t, 7, cfg.consoleMaxHistory())
 }
@@ -2418,7 +2604,7 @@ func TestShellModalStartInsertFromConfig(t *testing.T) {
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.False(t, cfg.consoleModalStartInsert())
 }
@@ -2439,7 +2625,7 @@ func TestShellModalStartInsertDefaultsTrue(t *testing.T) {
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.True(t, cfg.consoleModalStartInsert())
 }
@@ -2460,7 +2646,7 @@ func TestConsolePromptFromConfig(t *testing.T) {
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Equal(t, "rune> ", cfg.consolePrompt())
 	assert.Equal(t, "rune> ", cfg.consoleCfg().prompt)
@@ -2482,7 +2668,7 @@ func TestConsolePromptDefaultsEmpty(t *testing.T) {
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Empty(t, cfg.consolePrompt())
 }
@@ -2540,7 +2726,7 @@ command:
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "alias cycle detected")
 	aliases, _ := cfg.parseAliasCommands()
@@ -2561,7 +2747,7 @@ editor:
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Equal(t, 2, cfg.editorTabspaces())
 }
@@ -2580,7 +2766,7 @@ editor:
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Equal(t, 2048, cfg.editorMaxSizeForSyntax())
 }
@@ -2614,7 +2800,7 @@ func TestEditorSwapDir(t *testing.T) {
 			var cfg ideConfig
 			err = loadConfig(&cfg, f.Name(), nil,
 				DefaultConfig{src: "config = {}"},
-				term.RingBell, term.ScheduleNextTick)
+				sounds.Silent, term.ScheduleNextTick)
 			require.NoError(t, err)
 
 			assert.Equal(t, tcase.want, cfg.editorSwapDir())
@@ -2643,7 +2829,7 @@ editor:
 	var cfg ideConfig
 	err = loadConfig(&cfg, f.Name(), nil,
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick)
+		sounds.Silent, term.ScheduleNextTick)
 	require.NoError(t, err)
 	assert.Equal(t, text.IndentConfig{
 		"yaml": text.IndentRuneSpace,

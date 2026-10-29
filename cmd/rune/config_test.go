@@ -24,12 +24,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"go.uber.org/mock/gomock"
 
 	"unstable.build/rune/internal/browser/browsertest"
 	"unstable.build/rune/internal/ide"
+	"unstable.build/rune/internal/sounds"
 	"unstable.build/rune/internal/term/gui"
 )
 
@@ -456,4 +458,49 @@ func TestGetGUIFontSize(t *testing.T) {
 		got := getGUIFontSize(b, cfg)
 		assert.Equal(t, float64(15), got)
 	})
+}
+
+func TestGetGUISoundVolume(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  map[string]any
+		want float64
+		warn bool
+	}{
+		{name: "absent", cfg: map[string]any{}, want: 1},
+		{name: "in range", cfg: map[string]any{"sound_volume": 0.4}, want: 0.4},
+		{name: "mute", cfg: map[string]any{"sound_volume": 0}, want: 0},
+		{name: "above range", cfg: map[string]any{"sound_volume": 3}, want: 1, warn: true},
+		{name: "below range", cfg: map[string]any{"sound_volume": -1}, want: 0, warn: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			b := browsertest.NewMockBrowser(ctrl)
+			if tc.warn {
+				b.EXPECT().Notify(browserapi.LevelWarn, gomock.Any(), gomock.Any()).
+					Return("", nil)
+			}
+			assert.Equal(t, tc.want, getGUISoundVolume(b, config.MapConfig(tc.cfg)))
+		})
+	}
+}
+
+func TestSoundDefaults(t *testing.T) {
+	cfg := mustLoadConfig(t, filepath.Join(t.TempDir(), "missing.yaml"))
+	guiCfg, err := cfg.GetConfig("gui")
+	require.NoError(t, err)
+	volume, err := guiCfg.GetFloat("sound_volume")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, volume)
+
+	terminalCfg, err := cfg.GetConfig("terminal")
+	require.NoError(t, err)
+	bell, err := terminalCfg.GetString("bell")
+	require.NoError(t, err)
+	assert.Equal(t, sounds.Warning, bell)
+
+	entries, err := cfg.GetMap("sounds")
+	require.NoError(t, err)
+	assert.Empty(t, entries)
 }
