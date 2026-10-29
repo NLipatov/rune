@@ -226,22 +226,6 @@ func (s *Scroll) SeekDown() (ok bool) {
 	return
 }
 
-// SeekRows scrolls by n visible rows: positive down, negative up, respecting
-// InvertOffset. Movement stops at the boundary in that direction. An offset
-// already past the end can move back toward the content, but not farther away.
-// It reports whether the offset changed and publishes at most one seek event.
-func (s *Scroll) SeekRows(n int) bool {
-	if s.InvertOffset {
-		n = -n
-	}
-	if n > 0 {
-		n = min(n, max(0, s.getMaxYOffset()-s.offset.Y))
-	} else {
-		n = max(n, -s.offset.Y)
-	}
-	return s.seekVertical(s.offset.Y + n)
-}
-
 // SeekLeft shifts the contents of this scroll one column left.
 func (s *Scroll) SeekLeft() (ok bool) {
 	if ok = s.CanSeekLeft(); ok {

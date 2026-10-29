@@ -867,63 +867,6 @@ Love isn't love 'til you give it_away.
 	}
 }
 
-func TestScrollSeekRows(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		offset int
-		rows   int
-		want   int
-	}{
-		{name: "down", offset: 2, rows: 5, want: 7},
-		{name: "up", offset: 7, rows: -5, want: 2},
-		{name: "clamp down", offset: 7, rows: 20, want: 16},
-		{name: "clamp up", offset: 7, rows: -20, want: 0},
-		{name: "at bottom", offset: 16, rows: 5, want: 16},
-		{name: "at top", offset: 0, rows: -5, want: 0},
-		{name: "zero", offset: 7, want: 7},
-		{name: "past bottom down", offset: 19, rows: 5, want: 19},
-		{name: "past bottom up", offset: 19, rows: -2, want: 17},
-		{name: "past bottom back into content", offset: 19, rows: -6, want: 13},
-	} {
-		for _, invert := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/invert=%t", tc.name, invert), func(t *testing.T) {
-				scroll := newScroll(4, false, 2, 4)
-				_, err := scroll.Buffer().ReadFrom(strings.NewReader(strings.TrimSuffix(strings.Repeat("abcd\n", 20), "\n")))
-				require.NoError(t, err)
-				scroll.InvertOffset = invert
-				from := term.Coordinates{X: 1, Y: tc.offset}
-				to := term.Coordinates{X: 1, Y: tc.want}
-				scroll.SetOffset(from)
-				var events []string
-				scroll.Subscribe(subscriber{
-					expectWillSeek: func(pos term.Coordinates) {
-						assert.Equal(t, from, pos)
-						assert.Equal(t, from, scroll.Offset())
-						events = append(events, "will")
-					},
-					expectDidSeek: func(old, next term.Coordinates) {
-						assert.Equal(t, from, old)
-						assert.Equal(t, to, next)
-						assert.Equal(t, to, scroll.Offset())
-						events = append(events, "did")
-					},
-				})
-				rows := tc.rows
-				if invert {
-					rows = -rows
-				}
-				assert.Equal(t, from != to, scroll.SeekRows(rows))
-				assert.Equal(t, to, scroll.Offset())
-				if from != to {
-					assert.Equal(t, []string{"will", "did"}, events)
-				} else {
-					assert.Empty(t, events)
-				}
-			})
-		}
-	}
-}
-
 func TestScrollDraw(t *testing.T) {
 	width, height := 8, 2
 	tabspaces := 4

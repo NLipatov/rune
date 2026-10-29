@@ -913,22 +913,34 @@ func (vi *viHandlerImpl) handleNormal(ev term.Event) (quit, handled bool) {
 			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
 				break
 			}
-			handled = scroll.SeekRows(max(1, scroll.SizeHeight()-pagePadding))
-			if handled {
-				vi.cursor.MoveToWindowTop()
+			by := max(1, scroll.SizeHeight()-pagePadding)
+			offset := scroll.Offset()
+			if scroll.InvertOffset {
+				offset.Y = max(0, offset.Y-by)
 			} else {
-				handled = vi.cursor.MoveToWindowBottom()
+				last, _ := scroll.ScrollToWindowCoordinates(term.Coordinates{Y: max(0, scroll.Buffer().Rows()-1)})
+				if last.Y < scroll.SizeHeight() {
+					by = max(0, last.Y)
+				}
+				offset.Y += by
+			}
+			if handled = scroll.SetOffset(offset); handled {
+				vi.cursor.MoveToWindowTop()
 			}
 		case 'b':
 			scroll := vi.less.Scroll()
 			if scroll.Width() == 0 || scroll.SizeHeight() == 0 {
 				break
 			}
-			handled = scroll.SeekRows(-max(1, scroll.SizeHeight()-pagePadding))
-			if handled {
-				vi.cursor.MoveToWindowBottom()
+			by := max(1, scroll.SizeHeight()-pagePadding)
+			offset := scroll.Offset()
+			if scroll.InvertOffset {
+				offset.Y = min(scroll.MaxSeekOffset(), offset.Y+by)
 			} else {
-				handled = vi.cursor.MoveToWindowTop()
+				offset.Y = max(0, offset.Y-by)
+			}
+			if handled = scroll.SetOffset(offset); handled {
+				vi.cursor.MoveToWindowBottom()
 			}
 		case 'd':
 			handled = vi.cursor.MoveDownLines(vi.less.Scroll().SizeHeight() / 2)
